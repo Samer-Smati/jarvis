@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>J.A.R.V.I.S</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700&family=Rajdhani:wght@300;400;500&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --cyan: #17d1ff;
+      --cyan-dim: rgba(23, 209, 255, 0.45);
+      --gold: #ffb04c;
+      --bg: #02060f;
+      --panel: rgba(4, 14, 28, 0.72);
+      --border: rgba(23, 209, 255, 0.22);
+      --glow: rgba(23, 209, 255, 0.55);
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: "Rajdhani", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: #c8e8ff;
+    }
+
+    #particles {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+    }
+
+    .vignette {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse 80% 60% at 50% 45%, transparent 30%, rgba(0, 0, 0, 0.75) 100%),
+        linear-gradient(rgba(23, 209, 255, 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(23, 209, 255, 0.025) 1px, transparent 1px);
+      background-size: auto, 56px 56px, 56px 56px;
+    }
+
+    .scanline {
+      position: fixed;
+      inset: 0;
+      z-index: 2;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 0, 0, 0.08) 2px,
+        rgba(0, 0, 0, 0.08) 4px
+      );
+      opacity: 0.35;
+    }
+
+    .hud-frame {
+      position: relative;
+      z-index: 3;
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      padding: 1.5rem 2rem 1.75rem;
+    }
+
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: "Orbitron", sans-serif;
+      font-size: 0.58rem;
+      letter-spacing: 0.32em;
+      color: var(--cyan-dim);
+    }
+
+    .top-bar .live {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--cyan);
+    }
+
+    .live-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--cyan);
+      box-shadow: 0 0 10px var(--glow);
+      animation: blink 1.4s ease-in-out infinite;
+    }
+
+    .center-stage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1.75rem;
+      padding: 1rem 0;
+    }
+
+    /* ---- 3D Arc Reactor ---- */
+    .reactor-scene {
+      perspective: 900px;
+      width: 240px;
+      height: 240px;
+      position: relative;
+    }
+
+    .reactor-scene::before {
+      content: "";
+      position: absolute;
+      inset: 10%;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(23, 209, 255, 0.18) 0%, transparent 70%);
+      filter: blur(24px);
+      animation: glow-breathe 3s ease-in-out infinite;
+    }
+
+    .reactor-3d {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      transform-style: preserve-3d;
+      animation: reactor-float 8s ease-in-out infinite;
+    }
+
+    .orbit {
+      position: absolute;
+      inset: 0;
+      transform-style: preserve-3d;
+    }
+
+    .orbit-tilt {
+      width: 100%;
+      height: 100%;
+      transform-style: preserve-3d;
+    }
+
+    .orbit-ring {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      border: 1.5px solid transparent;
+      border-top-color: var(--cyan);
+      border-right-color: rgba(23, 209, 255, 0.15);
+      box-shadow: 0 0 12px rgba(23, 209, 255, 0.2), inset 0 0 12px rgba(23, 209, 255, 0.08);
+    }
+
+    .orbit-1 { transform: rotateX(72deg); }
+    .orbit-2 { transform: rotateY(68deg); }
+    .orbit-3 { transform: rotateX(35deg) rotateY(55deg); }
+    .orbit-4 { inset: 18%; transform: rotateX(90deg); }
+
+    .orbit-1 .orbit-tilt { animation: spin-y 6s linear infinite; }
+    .orbit-2 .orbit-tilt { animation: spin-y 4.5s linear infinite reverse; }
+    .orbit-3 .orbit-tilt { animation: spin-y 7s linear infinite; }
+    .orbit-4 .orbit-tilt { animation: spin-y 10s linear infinite; }
+    .orbit-4 .orbit-ring {
+      border-top-color: var(--gold);
+      border-right-color: rgba(255, 176, 76, 0.2);
+      box-shadow: 0 0 10px rgba(255, 176, 76, 0.25);
+    }
+
+    .core-stack {
+      position: absolute;
+      inset: 32%;
+      transform-style: preserve-3d;
+      animation: core-spin 12s linear infinite;
+    }
+
+    .core-sphere {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 35% 30%, #ffffff 0%, #17d1ff 18%, #0a5a6e 55%, #020810 100%);
+      box-shadow:
+        0 0 30px rgba(23, 209, 255, 0.9),
+        0 0 60px rgba(23, 209, 255, 0.45),
+        inset 0 0 20px rgba(255, 255, 255, 0.35);
+      transform: translateZ(20px);
+      animation: core-pulse 2.2s ease-in-out infinite;
+    }
+
+    .core-inner {
+      position: absolute;
+      inset: 22%;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255, 255, 255, 0.95) 0%, rgba(23, 209, 255, 0.6) 100%);
+      transform: translateZ(36px);
+      animation: core-pulse 2.2s ease-in-out infinite 0.15s;
+    }
+
+    .core-plate {
+      position: absolute;
+      inset: -8%;
+      border-radius: 50%;
+      border: 2px solid rgba(23, 209, 255, 0.35);
+      transform: rotateX(90deg) translateZ(-8px);
+      background: conic-gradient(from 0deg, transparent, rgba(23, 209, 255, 0.12), transparent);
+    }
+
+    /* ---- Title block ---- */
+    .title-block { text-align: center; }
+
+    .brand {
+      font-family: "Orbitron", sans-serif;
+      font-size: 2.1rem;
+      font-weight: 500;
+      letter-spacing: 0.38em;
+      margin-right: -0.38em;
+      color: var(--cyan);
+      text-shadow: 0 0 24px var(--glow), 0 0 48px rgba(23, 209, 255, 0.25);
+      animation: title-in 1s ease-out;
+    }
+
+    .tagline {
+      margin-top: 0.45rem;
+      font-size: 0.72rem;
+      letter-spacing: 0.28em;
+      color: rgba(184, 228, 255, 0.45);
+      text-transform: uppercase;
+    }
+
+    /* ---- Status panel ---- */
+    .status-panel {
+      width: min(520px, 92vw);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(16px);
+      padding: 1.1rem 1.35rem;
+      position: relative;
+      clip-path: polygon(
+        0 8px, 8px 0, calc(100% - 8px) 0, 100% 8px,
+        100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px)
+      );
+    }
+
+    .status-panel::before,
+    .status-panel::after {
+      content: "";
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border: 1px solid var(--cyan);
+      opacity: 0.5;
+    }
+    .status-panel::before { top: 6px; left: 6px; border-right: none; border-bottom: none; }
+    .status-panel::after { bottom: 6px; right: 6px; border-left: none; border-top: none; }
+
+    #status {
+      font-family: "Orbitron", sans-serif;
+      font-size: 0.78rem;
+      letter-spacing: 0.12em;
+      text-align: center;
+      color: #e0f4ff;
+    }
+    #status.error { color: #ff8a80; text-shadow: 0 0 12px rgba(255, 100, 90, 0.5); }
+
+    .progress-wrap {
+      margin-top: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+
+    .progress-track {
+      flex: 1;
+      height: 3px;
+      background: rgba(23, 209, 255, 0.12);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--cyan), var(--gold));
+      box-shadow: 0 0 12px var(--glow);
+      transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+      border-radius: 2px;
+    }
+
+    .progress-pct {
+      font-family: "Orbitron", sans-serif;
+      font-size: 0.65rem;
+      letter-spacing: 0.15em;
+      color: var(--cyan);
+      min-width: 2.5rem;
+      text-align: right;
+    }
+
+    /* ---- Metrics row ---- */
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.75rem;
+      width: min(520px, 92vw);
+      margin-top: 0.25rem;
+    }
+
+    .metric {
+      background: rgba(3, 10, 20, 0.6);
+      border: 1px solid rgba(23, 209, 255, 0.14);
+      padding: 0.55rem 0.7rem;
+      text-align: center;
+    }
+
+    .metric-label {
+      font-family: "Orbitron", sans-serif;
+      font-size: 0.48rem;
+      letter-spacing: 0.2em;
+      color: var(--cyan-dim);
+      margin-bottom: 0.3rem;
+    }
+
+    .metric-val {
+      font-size: 1.05rem;
+      font-weight: 500;
+      color: var(--cyan);
+      text-shadow: 0 0 10px rgba(23, 209, 255, 0.4);
+    }
+
+    /* ---- Boot log ---- */
+    .bottom-panel {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 1.5rem;
+      align-items: end;
+    }
+
+    .boot-log {
+      font-family: "Consolas", "Courier New", monospace;
+      font-size: 0.68rem;
+      letter-spacing: 0.06em;
+      color: rgba(23, 209, 255, 0.5);
+      max-height: 5.5rem;
+      overflow: hidden;
+    }
+
+    .boot-log span {
+      display: block;
+      margin: 0.2rem 0;
+      opacity: 0;
+      transform: translateX(-8px);
+      animation: log-in 0.4s ease forwards;
+    }
+
+    .boot-log .ok { color: rgba(100, 230, 160, 0.9); }
+    .boot-log .pending { color: rgba(255, 176, 76, 0.75); }
+
+    .version-tag {
+      font-family: "Orbitron", sans-serif;
+      font-size: 0.5rem;
+      letter-spacing: 0.25em;
+      color: rgba(23, 209, 255, 0.3);
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .dots::after {
+      content: "";
+      animation: dots 1.5s steps(4, end) infinite;
+    }
+
+    @keyframes spin-y { to { transform: rotateY(360deg); } }
+    @keyframes reactor-float {
+      0%, 100% { transform: rotateX(8deg) rotateY(-12deg); }
+      50% { transform: rotateX(-6deg) rotateY(10deg); }
+    }
+    @keyframes core-spin {
+      to { transform: rotateY(360deg); }
+    }
+    @keyframes core-pulse {
+      0%, 100% { transform: translateZ(20px) scale(1); filter: brightness(1); }
+      50% { transform: translateZ(28px) scale(1.06); filter: brightness(1.15); }
+    }
+    @keyframes glow-breathe {
+      0%, 100% { opacity: 0.6; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.08); }
+    }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+    @keyframes title-in {
+      from { opacity: 0; letter-spacing: 0.6em; }
+      to { opacity: 1; letter-spacing: 0.38em; }
+    }
+    @keyframes log-in {
+      to { opacity: 1; transform: translateX(0); }
+    }
+    @keyframes dots {
+      0% { content: ""; }
+      25% { content: "."; }
+      50% { content: ".."; }
+      75% { content: "..."; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="particles"></canvas>
+  <div class="vignette"></div>
+  <div class="scanline"></div>
+
+  <div class="hud-frame">
+    <header class="top-bar">
+      <span>// STARK INDUSTRIES</span>
+      <span class="live"><span class="live-dot"></span> SYSTEM BOOT</span>
+    </header>
+
+    <main class="center-stage">
+      <div class="reactor-scene">
+        <div class="reactor-3d">
+          <div class="orbit orbit-1"><div class="orbit-tilt"><div class="orbit-ring"></div></div></div>
+          <div class="orbit orbit-2"><div class="orbit-tilt"><div class="orbit-ring"></div></div></div>
+          <div class="orbit orbit-3"><div class="orbit-tilt"><div class="orbit-ring"></div></div></div>
+          <div class="orbit orbit-4"><div class="orbit-tilt"><div class="orbit-ring"></div></div></div>
+          <div class="core-stack">
+            <div class="core-plate"></div>
+            <div class="core-sphere"></div>
+            <div class="core-inner"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="title-block">
+        <h1 class="brand">J.A.R.V.I.S</h1>
+        <p class="tagline">Just A Rather Very Intelligent System</p>
+      </div>
+
+      <div class="status-panel">
+        <p id="status">Initializing<span class="dots"></span></p>
+        <div class="progress-wrap">
+          <div class="progress-track">
+            <div class="progress-fill" id="progress"></div>
+          </div>
+          <span class="progress-pct" id="progressPct">0%</span>
+        </div>
+      </div>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">ARC REACTOR</div>
+          <div class="metric-val" id="mReactor">—</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">NEURAL CORE</div>
+          <div class="metric-val" id="mNeural">—</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">VOICE SYS</div>
+          <div class="metric-val" id="mVoice">—</div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="bottom-panel">
+      <div class="boot-log" id="boot"></div>
+      <div class="version-tag" id="appVersion">MK-IV · loading…</div>
+    </footer>
+  </div>
+
+  <script>
+    const boot = document.getElementById('boot');
+    const progressEl = document.getElementById('progress');
+    const progressPct = document.getElementById('progressPct');
+    let bootCount = 0;
+    let currentProgress = 0;
+
+    const metricMap = {
+      reactor: document.getElementById('mReactor'),
+      neural: document.getElementById('mNeural'),
+      voice: document.getElementById('mVoice'),
+    };
+
+    window.setStatus = (text, isError) => {
+      const el = document.getElementById('status');
+      el.className = isError ? 'error' : '';
+      el.innerHTML = text + (isError ? '' : '<span class="dots"></span>');
+    };
+
+    window.setProgress = (pct) => {
+      currentProgress = Math.min(100, Math.max(0, pct));
+      progressEl.style.width = currentProgress + '%';
+      progressPct.textContent = Math.round(currentProgress) + '%';
+      if (currentProgress >= 100) {
+        particlesRunning = false;
+      }
+    };
+
+    window.setMetric = (key, val) => {
+      if (metricMap[key]) metricMap[key].textContent = val;
+    };
+
+    window.setVersion = (text) => {
+      const el = document.getElementById('appVersion');
+      if (el) el.textContent = text;
+    };
+
+    window.addBootLine = (text, ok) => {
+      const span = document.createElement('span');
+      span.textContent = (ok ? '✓ ' : '› ') + text;
+      if (ok) span.className = 'ok';
+      boot.appendChild(span);
+      bootCount += 1;
+      window.setProgress(Math.min(92, 12 + bootCount * 14));
+      if (text.toLowerCase().includes('lm studio')) {
+        window.setMetric('neural', 'ONLINE');
+        window.setProgress(35);
+      }
+      if (text.toLowerCase().includes('backend') || text.toLowerCase().includes('neural')) {
+        window.setMetric('reactor', '100%');
+      }
+      if (text.toLowerCase().includes('port') || text.toLowerCase().includes('connecting')) {
+        window.setMetric('neural', 'SYNC');
+      }
+      if (text.toLowerCase().includes('online') || text.toLowerCase().includes('hud')) {
+        window.setMetric('neural', 'ONLINE');
+        window.setMetric('voice', 'READY');
+        window.setProgress(88);
+      }
+      while (boot.children.length > 5) {
+        boot.removeChild(boot.firstChild);
+      }
+    };
+
+    window.setMetric('reactor', 'BOOT');
+    window.setProgress(8);
+
+    /* ---- 3D particle field (canvas) ---- */
+    const canvas = document.getElementById('particles');
+    const ctx = canvas.getContext('2d');
+    let W, H, particles = [];
+    const COUNT = 40;
+    let particlesRunning = true;
+
+    function resize() {
+      W = canvas.width = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+    }
+
+    function initParticles() {
+      particles = [];
+      for (let i = 0; i < COUNT; i++) {
+        particles.push({
+          x: (Math.random() - 0.5) * 2,
+          y: (Math.random() - 0.5) * 2,
+          z: Math.random(),
+          size: Math.random() * 1.2 + 0.3,
+        });
+      }
+    }
+
+    let angleY = 0;
+    let angleX = 0.4;
+
+    function drawParticles() {
+      if (!particlesRunning) {
+        return;
+      }
+      ctx.fillStyle = 'rgba(2, 6, 15, 0.35)';
+      ctx.fillRect(0, 0, W, H);
+
+      angleY += 0.002;
+      angleX = 0.35 + Math.sin(Date.now() * 0.0004) * 0.08;
+
+      const cx = W / 2;
+      const cy = H / 2;
+      const scale = Math.min(W, H) * 0.38;
+      const projected = [];
+
+      for (const p of particles) {
+        let x = p.x, y = p.y, z = p.z * 2 - 1;
+
+        const cosY = Math.cos(angleY), sinY = Math.sin(angleY);
+        const nx = x * cosY - z * sinY;
+        const nz = x * sinY + z * cosY;
+        x = nx; z = nz;
+
+        const cosX = Math.cos(angleX), sinX = Math.sin(angleX);
+        const ny = y * cosX - z * sinX;
+        const nz2 = y * sinX + z * cosX;
+        y = ny; z = nz2;
+
+        const fov = 1.8 / (z + 2.2);
+        projected.push({
+          sx: cx + x * scale * fov,
+          sy: cy + y * scale * fov,
+          r: p.size * fov * 2.2,
+          a: Math.min(1, (z + 1.5) * 0.45),
+          z,
+        });
+      }
+
+      projected.sort((a, b) => a.z - b.z);
+
+      for (let i = 0; i < projected.length; i++) {
+        const a = projected[i];
+        ctx.beginPath();
+        ctx.arc(a.sx, a.sy, a.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(23, 209, 255, ${a.a * 0.7})`;
+        ctx.fill();
+
+        for (let j = i + 1; j < Math.min(i + 4, projected.length); j++) {
+          const b = projected[j];
+          const dist = Math.hypot(a.sx - b.sx, a.sy - b.sy);
+          if (dist < 55) {
+            ctx.beginPath();
+            ctx.moveTo(a.sx, a.sy);
+            ctx.lineTo(b.sx, b.sy);
+            ctx.strokeStyle = `rgba(23, 209, 255, ${0.06 * (1 - dist / 55)})`;
+            ctx.lineWidth = 0.5;
+            ctx.stroke();
+          }
+        }
+      }
+
+      requestAnimationFrame(drawParticles);
+    }
+
+    resize();
+    initParticles();
+    window.addEventListener('resize', () => { resize(); initParticles(); });
+    drawParticles();
+
+    /* Animate metrics during idle boot */
+    let tick = 0;
+    setInterval(() => {
+      tick += 1;
+      if (metricMap.reactor.textContent === 'BOOT') {
+        metricMap.reactor.textContent = (tick % 3 === 0 ? '▸▸▸' : '▸▸ ') + ' INIT';
+      }
+    }, 600);
+  </script>
+</body>
+</html>

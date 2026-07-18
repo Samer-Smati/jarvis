@@ -1,0 +1,47 @@
+<div class="shell">
+  <nav class="sidebar">
+    <div class="reactor-wrap" [class.speaking]="speaking$ | async" [class.listening]="listening$ | async">
+      <div class="reactor">
+        <div class="ring ring-outer"></div>
+        <div class="ring ring-mid"></div>
+        <div class="ring ring-ticks"></div>
+        <div class="core"></div>
+      </div>
+    </div>
+
+    <div class="brand">
+      <span class="name">J.A.R.V.I.S</span>
+      <span class="tagline">Just A Rather Very<br />Intelligent System</span>
+    </div>
+
+    <div class="nav-links">
+      <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">
+        <i class="pi pi-comments"></i><span>Interface</span>
+      </a>
+      <a routerLink="/dashboard" routerLinkActive="active">
+        <i class="pi pi-th-large"></i><span>Systems</span>
+      </a>
+      <a routerLink="/settings" routerLinkActive="active">
+        <i class="pi pi-cog"></i><span>Protocols</span>
+      </a>
+    </div>
+
+    <div class="sys-status">
+      <div class="status-line">
+        <span class="dot"></span>
+        <span *ngIf="listening$ | async; else speakCheck">LISTENING</span>
+        <ng-template #speakCheck>
+          <span *ngIf="speaking$ | async; else online">SPEAKING</span>
+        </ng-template>
+        <ng-template #online><span>SYSTEM ONLINE</span></ng-template>
+      </div>
+      <div class="clock">{{ now | date: 'HH:mm:ss' }}</div>
+      <div class="clock-date">{{ now | date: 'EEE dd MMM yyyy' | uppercase }}</div>
+    </div>
+  </nav>
+
+  <main class="content">
+    <router-outlet></router-outlet>
+  </main>
+</div>
+<p-toast position="top-right"></p-toast>

@@ -1,0 +1,218 @@
+@use "primeicons/primeicons.css";
+
+:root {
+  --jarvis-cyan: #17d1ff;
+  --jarvis-cyan-soft: rgba(23, 209, 255, 0.55);
+  --jarvis-cyan-faint: rgba(23, 209, 255, 0.14);
+  --jarvis-gold: #ffb04c;
+  --jarvis-bg: #030811;
+  --jarvis-panel: rgba(7, 21, 38, 0.82);
+  --jarvis-border: rgba(23, 209, 255, 0.28);
+  --jarvis-text: #d7f4ff;
+  --jarvis-text-dim: #6ea6c2;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  font-family: "Rajdhani", "Segoe UI", system-ui, sans-serif;
+  font-size: 17px;
+  letter-spacing: 0.02em;
+  color: var(--jarvis-text);
+  background:
+    radial-gradient(ellipse 80% 60% at 50% -10%, rgba(23, 209, 255, 0.10), transparent 60%),
+    radial-gradient(ellipse 60% 50% at 85% 110%, rgba(23, 209, 255, 0.07), transparent 60%),
+    var(--jarvis-bg);
+}
+
+/* Holographic grid overlay */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(rgba(23, 209, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(23, 209, 255, 0.035) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: radial-gradient(ellipse 90% 80% at 50% 40%, black 30%, transparent 100%);
+}
+
+/* Scanline sweep */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(23, 209, 255, 0.04) 50%,
+    transparent 100%
+  );
+  background-size: 100% 220px;
+  animation: scan 9s linear infinite;
+  opacity: 0.7;
+}
+
+@keyframes scan {
+  from { background-position: 0 -220px; }
+  to { background-position: 0 100vh; }
+}
+
+h1, h2, h3, .hud-title {
+  font-family: "Orbitron", sans-serif;
+  letter-spacing: 0.14em;
+}
+
+/* --- HUD panel: shared holographic frame with corner brackets --- */
+.hud-panel {
+  position: relative;
+  background: var(--jarvis-panel);
+  border: 1px solid var(--jarvis-border);
+  box-shadow:
+    0 0 18px rgba(23, 209, 255, 0.08),
+    inset 0 0 24px rgba(23, 209, 255, 0.045);
+  backdrop-filter: blur(6px);
+  clip-path: polygon(
+    14px 0, calc(100% - 14px) 0, 100% 14px,
+    100% calc(100% - 14px), calc(100% - 14px) 100%,
+    14px 100%, 0 calc(100% - 14px), 0 14px
+  );
+}
+
+.hud-corners {
+  position: relative;
+}
+
+.hud-corners::before,
+.hud-corners::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--jarvis-cyan-soft);
+  pointer-events: none;
+}
+
+.hud-corners::before {
+  top: -1px;
+  left: -1px;
+  border-right: none;
+  border-bottom: none;
+}
+
+.hud-corners::after {
+  bottom: -1px;
+  right: -1px;
+  border-left: none;
+  border-top: none;
+}
+
+.hud-label {
+  font-family: "Orbitron", sans-serif;
+  font-size: 0.68rem;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--jarvis-cyan);
+  text-shadow: 0 0 8px var(--jarvis-cyan-soft);
+}
+
+/* --- PrimeNG overrides toward the HUD look --- */
+.p-card {
+  background: var(--jarvis-panel) !important;
+  border: 1px solid var(--jarvis-border);
+  border-radius: 4px !important;
+  box-shadow: 0 0 18px rgba(23, 209, 255, 0.07), inset 0 0 24px rgba(23, 209, 255, 0.04) !important;
+  backdrop-filter: blur(6px);
+
+  .p-card-title {
+    font-family: "Orbitron", sans-serif;
+    font-size: 0.85rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--jarvis-cyan);
+    text-shadow: 0 0 10px var(--jarvis-cyan-soft);
+  }
+}
+
+.p-button {
+  font-family: "Rajdhani", sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  border-radius: 3px;
+}
+
+.p-tag {
+  border-radius: 2px;
+  font-family: "Rajdhani", sans-serif;
+  letter-spacing: 0.06em;
+}
+
+.p-datatable {
+  font-size: 0.95rem;
+
+  .p-datatable-thead > tr > th,
+  .p-datatable-tbody > tr {
+    background: transparent !important;
+  }
+}
+
+.p-toast .p-toast-message {
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--jarvis-border);
+}
+
+.jarvis-select-panel {
+  z-index: 1100 !important;
+  background: var(--jarvis-panel) !important;
+  border: 1px solid var(--jarvis-border) !important;
+  box-shadow: 0 0 18px rgba(23, 209, 255, 0.12), inset 0 0 24px rgba(23, 209, 255, 0.04) !important;
+  backdrop-filter: blur(6px);
+}
+
+textarea,
+input {
+  font-family: "Rajdhani", sans-serif !important;
+  letter-spacing: 0.03em;
+}
+
+/* Slim glowing scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(23, 209, 255, 0.35) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(23, 209, 255, 0.35);
+  border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::after {
+    animation: none;
+  }
+}
+
+body.performance-mode::after {
+  animation: none;
+  opacity: 0.25;
+}
+
+body.performance-mode .ring-outer,
+body.performance-mode .ring-mid,
+body.performance-mode .ring-ticks {
+  animation: none !important;
+}
+
+body.performance-mode .core {
+  animation: none !important;
+}

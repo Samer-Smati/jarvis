@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+backend/.env
+
+# Build outputs
+dist/
+**/dist/
+backend/public/
+release/
+release-*/
+release-staging-*/
+*.exe
+*.blockmap
+win-unpacked/
+
+# Data & caches
+data/
+*.sqlite
+*.sqlite-journal
+backend/data/
+**/whisper-cache/
+**/piper-cache/
+
+# Logs
+*.log
+npm-debug.log*
+boot.log
+
+# IDE & OS
+.idea/
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+
+# Angular
+frontend/.angular/
+frontend/coverage/
+
+# Electron
+.electron-gyp/
+
+# Vercel
+.vercel/
+
+# Misc
+coverage/
+*.tsbuildinfo
+.cursor/

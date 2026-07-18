@@ -1,0 +1,35 @@
+{
+  "name": "jarvis",
+  "version": "1.0.27",
+  "private": true,
+  "description": "J.A.R.V.I.S — personal AI assistant (Iron Man style)",
+  "main": "desktop/main.js",
+  "author": "JARVIS",
+  "scripts": {
+    "dev": "node scripts/ensure-ai.js && concurrently -k -n BACK,FRONT -c cyan,magenta \"npm run start:dev --prefix backend\" \"npm run start --prefix frontend\"",
+    "dev:quick": "concurrently -k -n BACK,FRONT -c cyan,magenta \"npm run start:dev --prefix backend\" \"npm run start --prefix frontend\"",
+    "boot": "node scripts/ensure-ai.js",
+    "backend": "npm run start:dev --prefix backend",
+    "frontend": "npm run start --prefix frontend",
+    "build": "npm run build --prefix backend && npm run build --prefix frontend",
+    "build:desktop": "npm run build --prefix frontend && node scripts/copy-frontend.js && npm run ensure:backend-dev && npm run build --prefix backend",
+    "bump:version": "node scripts/bump-version.js",
+    "build:desktop:pack": "node scripts/bump-version.js && npm run build:desktop && npm prune --omit=dev --prefix backend && node scripts/prepare-desktop-pack.js && node scripts/rebuild-electron-native.js && node scripts/verify-native-pack.js",
+    "rebuild:electron": "node scripts/rebuild-electron-native.js",
+    "ensure:backend-dev": "node scripts/ensure-backend-dev.js",
+    "desktop:dev": "npm run build:desktop && electron desktop/main.js",
+    "desktop:dev:fast": "electron desktop/main.js",
+    "desktop:pack:dir": "npm run build:desktop:pack && node scripts/pre-pack-release.js && npx electron-builder --dir --win --config electron-builder.json && node scripts/create-desktop-launcher.js && npm install --prefix backend",
+    "desktop:pack": "npm run build:desktop:pack && node scripts/pre-pack-release.js && node scripts/pack-with-progress.js --win portable --config electron-builder.json && npm install --prefix backend",
+    "desktop:pack:fast": "npm run desktop:pack:dir",
+    "desktop:pack:all": "node scripts/pack-all.js",
+    "desktop:pack:setup": "npm run build:desktop:pack && node scripts/pre-pack-release.js && node scripts/pack-with-progress.js --win nsis --config electron-builder.json && npm install --prefix backend",
+    "test": "npm test --prefix backend"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.2",
+    "concurrently": "^9.2.0",
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.8"
+  }
+}

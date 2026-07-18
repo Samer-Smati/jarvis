@@ -1,0 +1,119 @@
+<div class="chat-page">
+  <header class="hud-header">
+    <span class="hud-label">// Voice Interface</span>
+    <div class="header-actions">
+      <button
+        type="button"
+        class="hud-icon-btn hands-free-btn"
+        *ngIf="sttSupported"
+        [class.on]="handsFree"
+        (click)="toggleHandsFree()"
+        [title]="handsFree ? 'Hands-free conversation on' : 'Hands-free conversation off'">
+        <i class="pi pi-headphones"></i>
+        <span>{{ handsFree ? 'HANDS-FREE' : 'MANUAL' }}</span>
+      </button>
+      <button
+        type="button"
+        class="hud-icon-btn"
+        [class.on]="voiceEnabled"
+        (click)="toggleVoice()"
+        [title]="voiceEnabled ? 'Voice output on' : 'Voice output muted'">
+        <i class="pi" [ngClass]="voiceEnabled ? 'pi-volume-up' : 'pi-volume-off'"></i>
+      </button>
+    </div>
+  </header>
+
+  <div class="messages" #scrollPane>
+    <div *ngIf="recapLoading || sessionRecap" class="recap-panel hud-panel">
+      <div class="avatar">
+        <span class="mini-core"></span>
+      </div>
+      <div class="recap-body">
+        <span class="hud-label">// Session recap</span>
+        <p *ngIf="recapLoading" class="recap-text loading">Reviewing last exchange, sir…</p>
+        <p *ngIf="sessionRecap" class="recap-text">{{ sessionRecap }}</p>
+      </div>
+    </div>
+
+    <div *ngIf="!messages.length" class="empty-state" [class.welcome-active]="welcomeActive" [class.speaking]="speaking$ | async">
+      <div class="arc-reactor" *ngIf="welcomeActive">
+        <span class="core"></span>
+        <span class="ring"></span>
+      </div>
+      <div class="boot-lines">
+        <span [class.live]="bootStep === 0" [class.done]="bootStep > 0">&gt; ARC REACTOR .............. ONLINE</span>
+        <span [class.live]="bootStep === 1" [class.done]="bootStep > 1">&gt; NEURAL CORE ............... ONLINE</span>
+        <span [class.live]="bootStep === 2" [class.done]="bootStep > 2">&gt; VOICE SYNTHESIS ........... READY</span>
+      </div>
+      <h2 [class.reveal]="bootStep >= 3">At your service, sir.</h2>
+      <p [class.reveal]="welcomeComplete">Speak or type in any language — English, French, Tunisian Arabic, and more.</p>
+    </div>
+
+    <div *ngFor="let message of messages" class="message" [class.user]="message.role === 'user'">
+      <div class="avatar" *ngIf="message.role === 'assistant'">
+        <span class="mini-core"></span>
+      </div>
+      <div class="bubble hud-corners">
+        <span class="msg-time" *ngIf="message.createdAt">{{ formatMessageDate(message.createdAt) }}</span>
+        <div class="tools" *ngIf="message.tools?.length">
+          <p-tag
+            *ngFor="let tool of message.tools"
+            [severity]="toolSeverity(tool)"
+            [icon]="tool.running ? 'pi pi-spin pi-cog' : (tool.success ? 'pi pi-check' : 'pi pi-times')"
+            [value]="tool.toolName"
+            [pTooltip]="tool.output || argsPreview(tool.args)">
+          </p-tag>
+        </div>
+        <div class="content">{{ message.content }}<span class="cursor" *ngIf="message.streaming">▌</span></div>
+      </div>
+    </div>
+
+    <div *ngFor="let request of permissionRequests" class="confirmation permission hud-panel">
+      <i class="pi pi-desktop"></i>
+      <div class="confirmation-body">
+        <span class="hud-label">Device permission required</span>
+        <p><strong>{{ request.title }}</strong></p>
+        <p>{{ request.message }}</p>
+      </div>
+      <div class="confirmation-actions">
+        <p-button label="Allow" icon="pi pi-check" severity="success" (onClick)="respondPermission(request, true)"></p-button>
+        <p-button label="Deny" icon="pi pi-times" severity="danger" [outlined]="true" (onClick)="respondPermission(request, false)"></p-button>
+      </div>
+    </div>
+
+    <div *ngFor="let request of confirmations" class="confirmation hud-panel">
+      <i class="pi pi-shield"></i>
+      <div class="confirmation-body">
+        <span class="hud-label">Authorization required</span>
+        <p>{{ request.description }}</p>
+        <pre>{{ request.arguments | json }}</pre>
+      </div>
+      <div class="confirmation-actions">
+        <p-button label="Authorize" icon="pi pi-check" severity="success" (onClick)="respond(request, true)"></p-button>
+        <p-button label="Deny" icon="pi pi-times" severity="danger" [outlined]="true" (onClick)="respond(request, false)"></p-button>
+      </div>
+    </div>
+  </div>
+
+  <div class="composer hud-panel">
+    <button
+      type="button"
+      class="mic-btn"
+      *ngIf="sttSupported"
+      [class.listening]="listening"
+      [class.transcribing]="transcribing"
+      (click)="toggleMic()"
+      [title]="transcribing ? 'Processing speech...' : (listening ? 'Stop listening' : 'Talk to JARVIS')">
+      <i class="pi pi-microphone"></i>
+      <span class="mic-ring"></span>
+    </button>
+    <textarea
+      pTextarea
+      [(ngModel)]="input"
+      rows="1"
+      [placeholder]="transcribing ? 'Processing your speech...' : (listening ? 'Listening — speak in any language...' : 'Speak or type in any language...')"
+      (keydown.enter)="$event.preventDefault(); send()">
+    </textarea>
+    <p-button icon="pi pi-send" [disabled]="busy || !input.trim()" (onClick)="send()"></p-button>
+  </div>
+</div>

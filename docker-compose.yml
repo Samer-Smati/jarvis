@@ -1,0 +1,35 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+    environment:
+      - LLM_PROVIDER=ollama
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_CHAT_MODEL=llama3.1
+      - OLLAMA_EMBED_MODEL=nomic-embed-text
+      - DATABASE_PATH=/data/jarvis.sqlite
+      - FILES_ROOT=/data/files
+      - CORS_ORIGIN=http://localhost:4200
+    volumes:
+      - backend-data:/data
+    depends_on:
+      - ollama
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "4200:80"
+    depends_on:
+      - backend
+
+volumes:
+  ollama-data:
+  backend-data:

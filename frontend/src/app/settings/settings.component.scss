@@ -1,0 +1,86 @@
+.settings {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 46rem;
+  margin: 0 auto;
+  overflow-y: auto;
+  height: 100%;
+  position: relative;
+  z-index: 1;
+}
+
+.hint {
+  color: var(--jarvis-text-dim);
+  margin-top: 0;
+}
+
+.provider-select,
+.tts-engine-select,
+.stt-engine-select {
+  display: block;
+  width: 100%;
+  max-width: 22rem;
+  margin-top: 0.75rem;
+}
+
+.voice-settings-col {
+  flex: 1;
+  min-width: 0;
+}
+
+.stt-hint {
+  margin-top: 1rem;
+}
+
+.wake-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1rem;
+  max-width: 22rem;
+}
+
+.piper-status {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.voice-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.voice-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-shrink: 0;
+}
+
+.skill-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--p-content-border-color);
+
+  &:first-of-type {
+    border-top: none;
+  }
+
+  p {
+    margin: 0.25rem 0 0;
+    color: var(--jarvis-text-dim);
+    font-size: 0.9rem;
+  }
+}
+
+.skill-info strong {
+  margin-right: 0.5rem;
+}

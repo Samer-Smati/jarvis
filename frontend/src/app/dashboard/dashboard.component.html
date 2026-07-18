@@ -1,0 +1,101 @@
+<div class="dashboard">
+  <div class="hud-row">
+    <p-card styleClass="hud-card">
+      <div class="stat">
+        <i class="pi pi-bolt"></i>
+        <div>
+          <span class="label">Provider</span>
+          <span class="value">{{ status?.provider || '—' }}</span>
+        </div>
+      </div>
+    </p-card>
+    <p-card styleClass="hud-card">
+      <div class="stat">
+        <i class="pi" [ngClass]="status?.llmReady ? 'pi-check-circle' : 'pi-exclamation-triangle'"></i>
+        <div>
+          <span class="label">Neural core</span>
+          <span class="value">{{ status?.llmReady ? (status?.llmModel || 'online') : 'offline' }}</span>
+        </div>
+      </div>
+    </p-card>
+    <p-card styleClass="hud-card">
+      <div class="stat">
+        <i class="pi pi-sync"></i>
+        <div>
+          <span class="label">Active runs</span>
+          <span class="value">{{ status?.activeRuns ?? 0 }}</span>
+        </div>
+      </div>
+    </p-card>
+    <p-card styleClass="hud-card">
+      <div class="stat">
+        <i class="pi pi-shield"></i>
+        <div>
+          <span class="label">Pending confirmations</span>
+          <span class="value">{{ status?.pendingConfirmations?.length ?? 0 }}</span>
+        </div>
+      </div>
+    </p-card>
+    <p-card styleClass="hud-card">
+      <div class="stat">
+        <i class="pi pi-bell"></i>
+        <div>
+          <span class="label">Reminders</span>
+          <span class="value">{{ reminders.length }}</span>
+        </div>
+      </div>
+    </p-card>
+  </div>
+
+  <div class="grid-row">
+    <p-card header="Upcoming reminders">
+      <p-table [value]="reminders" [rows]="5" [paginator]="reminders.length > 5" size="small">
+        <ng-template #body let-reminder>
+          <tr>
+            <td>{{ reminder.text }}</td>
+            <td class="nowrap">{{ reminder.dueAt | date: 'MMM d, HH:mm' }}</td>
+          </tr>
+        </ng-template>
+        <ng-template #emptymessage>
+          <tr><td colspan="2">No pending reminders.</td></tr>
+        </ng-template>
+      </p-table>
+    </p-card>
+
+    <p-card header="Memory facts">
+      <ul class="fact-list">
+        <li *ngFor="let fact of facts">{{ fact.text }}</li>
+        <li *ngIf="!facts.length" class="muted">Nothing remembered yet.</li>
+      </ul>
+    </p-card>
+  </div>
+
+  <div class="grid-row">
+    <p-card header="Audit log">
+      <p-table [value]="audit" [rows]="8" [paginator]="audit.length > 8" size="small">
+        <ng-template #body let-entry>
+          <tr>
+            <td>{{ entry.action }}</td>
+            <td><p-tag [value]="entry.outcome" [severity]="outcomeSeverity(entry.outcome)"></p-tag></td>
+            <td class="detail-cell">{{ entry.detail }}</td>
+            <td class="nowrap">{{ entry.createdAt | date: 'HH:mm:ss' }}</td>
+          </tr>
+        </ng-template>
+        <ng-template #emptymessage>
+          <tr><td colspan="4">No actions logged yet.</td></tr>
+        </ng-template>
+      </p-table>
+    </p-card>
+
+    <p-card header="Recent activity">
+      <ul class="event-list">
+        <li *ngFor="let event of events">
+          <span class="kind">{{ event.kind }}</span>
+          {{ event.summary }}
+          <span class="muted">{{ event.createdAt | date: 'HH:mm' }}</span>
+        </li>
+        <li *ngIf="!events.length" class="muted">No activity yet.</li>
+      </ul>
+    </p-card>
+  </div>
+</div>

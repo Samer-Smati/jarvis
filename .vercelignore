@@ -1,0 +1,10 @@
+backend/
+desktop/
+release/
+release-*/
+release-staging-*/
+scripts/
+electron-builder.json
+*.exe
+data/
+*.sqlite

@@ -1,0 +1,124 @@
+<div class="settings">
+  <span class="hud-label">// Protocols</span>
+
+  <p-card header="Neural core">
+    <p class="hint">Choose which brain JARVIS uses for reasoning. Claude requires an API key on the backend.</p>
+    <p-select
+      class="provider-select"
+      panelStyleClass="jarvis-select-panel"
+      appendTo="body"
+      [options]="providers"
+      [(ngModel)]="selectedProvider"
+      optionLabel="label"
+      optionValue="value"
+      (onChange)="changeProvider($event.value)">
+    </p-select>
+  </p-card>
+
+  <p-card header="Voice synthesis">
+    <div class="voice-row" *ngIf="ttsSupported; else noTts">
+      <div class="voice-settings-col">
+        <p class="hint">
+          <strong>Output:</strong> Piper (local neural, British JARVIS tone) with browser fallback if Piper is not ready.
+        </p>
+        <p-select
+          class="tts-engine-select"
+          panelStyleClass="jarvis-select-panel"
+          appendTo="body"
+          [options]="ttsEngines"
+          [(ngModel)]="ttsEngine"
+          optionLabel="label"
+          optionValue="value"
+          (onChange)="changeTtsEngine($event.value)">
+        </p-select>
+        <p class="hint piper-status" *ngIf="ttsEngine === 'piper'">
+          Piper: {{ piperReady ? ('ready — ' + (piperModel || 'en_GB-alan-medium')) : 'not ready — using browser voice until model loads' }}
+        </p>
+        <p class="hint stt-hint">
+          <strong>Input (mic):</strong> Whisper on the backend by default (multilingual, local). Use browser speech for lower latency if you prefer.
+        </p>
+        <p-select
+          class="stt-engine-select"
+          panelStyleClass="jarvis-select-panel"
+          appendTo="body"
+          [options]="sttEngines"
+          [(ngModel)]="sttEngine"
+          optionLabel="label"
+          optionValue="value"
+          (onChange)="changeSttEngine($event.value)">
+        </p-select>
+        <div class="wake-row">
+          <span class="hint"><strong>Wake word:</strong> say “Hey Jarvis” (uses browser speech; local-only)</span>
+          <p-toggleswitch [(ngModel)]="wakeWordEnabled" (onChange)="toggleWakeWord()"></p-toggleswitch>
+        </div>
+      </div>
+      <div class="voice-actions">
+        <p-toggleswitch [(ngModel)]="voiceEnabled" (onChange)="toggleVoice()"></p-toggleswitch>
+        <p-button label="Test voice" icon="pi pi-volume-up" [outlined]="true" (onClick)="testVoice()"></p-button>
+      </div>
+    </div>
+    <ng-template #noTts>
+      <p class="hint">Speech synthesis is not supported by this browser.</p>
+    </ng-template>
+  </p-card>
+
+  <!--
+    WEB CLIENT: Browser control and PC application control are desktop-only.
+    On web/PWA, JARVIS can only automate this tab (web_tab scope). It cannot
+    open your default browser, launch OS apps, or control other devices from a browser tab.
+  -->
+  <p-card header="Device permissions">
+    <p class="hint" *ngIf="isDesktop">
+      Grant JARVIS permission to control your browser, PC apps, or paired phone. Each category is asked once in chat before first use.
+    </p>
+    <p class="hint web-limit" *ngIf="!isDesktop">
+      You are on the <strong>web client</strong>. Only “This browser tab only” and phone pairing can be enabled here. Install the desktop app for full browser and PC control.
+    </p>
+    <div class="skill-row" *ngFor="let grant of devicePermissions">
+      <div class="skill-info">
+        <strong>{{ grant.label }}</strong>
+        <p-tag *ngIf="permissionDisabled(grant)" value="desktop app required" severity="secondary"></p-tag>
+        <p>{{ grant.description }}</p>
+      </div>
+      <p-toggleswitch
+        [(ngModel)]="grant.granted"
+        [disabled]="permissionDisabled(grant)"
+        (onChange)="togglePermission(grant)">
+      </p-toggleswitch>
+    </div>
+  </p-card>
+
+  <p-card header="Skill matrix">
+    <p class="hint">Disable a skill to hide it from the assistant entirely.</p>
+    <div class="skill-row" *ngFor="let skill of skills">
+      <div class="skill-info">
+        <strong>{{ skill.name }}</strong>
+        <p-tag *ngIf="skill.requiresConfirmation" value="needs authorization" severity="warn"></p-tag>
+        <p>{{ skill.description }}</p>
+      </div>
+      <p-toggleswitch [(ngModel)]="skill.enabled" (onChange)="toggleSkill(skill)"></p-toggleswitch>
+    </div>
+  </p-card>
+
+  <p-card header="Performance">
+    <p class="hint">
+      Keeps CPU and RAM low: no always-on mic, lighter animations, deferred Piper download, and LLM probe-only at boot (no auto model load).
+      LM Studio / Ollama RAM is separate from JARVIS — use a smaller model if memory is tight.
+    </p>
+    <div class="wake-row">
+      <span class="hint"><strong>Performance mode</strong> (recommended)</span>
+      <p-toggleswitch [(ngModel)]="performanceMode" (onChange)="togglePerformanceMode()"></p-toggleswitch>
+    </div>
+    <div class="diag-panel" *ngIf="diagnostics">
+      <span class="hud-label">// Diagnostics</span>
+      <p>Backend RAM: {{ diagnostics.memoryMb.rss }} MB (heap {{ diagnostics.memoryMb.heapUsed }} MB)</p>
+      <p>LLM ensure: {{ diagnostics.llmEnsureMode }} · Piper deferred: {{ diagnostics.deferPiper ? 'yes' : 'no' }}</p>
+      <p>Whisper: {{ diagnostics.whisperModel }} · LLM ready: {{ diagnostics.llmReady ? 'yes' : 'no' }}</p>
+    </div>
+  </p-card>
+
+  <p-card header="Emergency">
+    <p class="hint">Immediately halt any in-progress autonomous action.</p>
+    <p-button label="Kill switch" icon="pi pi-power-off" severity="danger" (onClick)="killSwitch()"></p-button>
+  </p-card>
+</div>

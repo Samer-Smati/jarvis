@@ -1,0 +1,33 @@
+{
+  "appId": "com.jarvis.assistant",
+  "productName": "J.A.R.V.I.S",
+  "directories": {
+    "output": "release",
+    "buildResources": "desktop"
+  },
+  "files": ["desktop/**/*", "package.json"],
+  "extraResources": [
+    { "from": "backend/dist", "to": "backend/dist" },
+    { "from": "backend/public", "to": "backend/public" },
+    { "from": "backend/node_modules", "to": "backend/node_modules" },
+    { "from": "backend/.env", "to": "backend/.env" },
+    { "from": "scripts/ensure-ai.js", "to": "scripts/ensure-ai.js" },
+    { "from": "scripts/ensure-piper.js", "to": "scripts/ensure-piper.js" }
+  ],
+  "win": {
+    "target": [
+      { "target": "portable", "arch": ["x64"] },
+      { "target": "nsis", "arch": ["x64"] }
+    ]
+  },
+  "compression": "store",
+  "portable": {
+    "artifactName": "JARVIS-${version}-portable.exe",
+    "useZip": false
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "artifactName": "JARVIS-${version}-setup.exe"
+  }
+}
