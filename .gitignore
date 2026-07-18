@@ -56,3 +56,5 @@ frontend/coverage/
 coverage/
 *.tsbuildinfo
 .cursor/
+.vercel
+.env*
