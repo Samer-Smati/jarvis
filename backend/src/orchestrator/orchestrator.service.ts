@@ -240,6 +240,10 @@ export class OrchestratorService {
       const action = String(args?.action ?? '');
       return action === 'delete' || action === 'move';
     }
+    if (skill.name === 'self_improve') {
+      const action = String(args?.action ?? '');
+      return action === 'write' || action === 'commit' || action === 'pull_request';
+    }
     return false;
   }
 }

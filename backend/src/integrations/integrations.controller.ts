@@ -1,12 +1,16 @@
 import { Controller, Get } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { GitHubService } from './github.service';
 import { GoogleCalendarService } from './google-calendar.service';
+import { VercelDeployService } from './vercel-deploy.service';
 
 @Controller('api/integrations')
 export class IntegrationsController {
   constructor(
     private readonly config: ConfigService,
     private readonly googleCalendar: GoogleCalendarService,
+    private readonly github: GitHubService,
+    private readonly vercel: VercelDeployService,
   ) {}
 
   @Get('status')
@@ -21,6 +25,12 @@ export class IntegrationsController {
         this.config.get<string>('HOME_ASSISTANT_TOKEN')?.trim()
       ),
       codingSandbox: this.config.get<string>('SANDBOX_ENABLED') !== 'false',
+      selfImprove: {
+        github: this.github.isConfigured(),
+        githubRepo: this.github.repoLabel(),
+        vercelDeployApi: this.vercel.isConfigured(),
+        projectRoot: this.config.get<string>('JARVIS_PROJECT_ROOT')?.trim() || null,
+      },
       wakeWord: true,
       mobilePwa: true,
     };
