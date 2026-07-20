@@ -8,6 +8,7 @@ import { PermissionsService } from '../permissions/permissions.service';
 import { SkillRegistry } from '../skills/skill.registry';
 import { OrchestratorEmitter } from './orchestrator.events';
 import { JARVIS_SYSTEM_PROMPT } from './personality';
+import { buildLanguageHint } from './language.util';
 
 const MAX_TOOL_ITERATIONS = 8;
 
@@ -74,6 +75,7 @@ export class OrchestratorService {
         timeStyle: 'short',
       });
       let systemPrompt = `${JARVIS_SYSTEM_PROMPT}\n\nCurrent date and time: ${now}. Use this when interpreting relative dates like "tomorrow" or "next week".`;
+      systemPrompt += buildLanguageHint(userText);
       if (facts.length) {
         systemPrompt += `\n\nKnown facts about the user:\n${facts.map((f) => `- ${f}`).join('\n')}`;
       }

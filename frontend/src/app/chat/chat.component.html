@@ -46,7 +46,7 @@
         <span [class.live]="bootStep === 2" [class.done]="bootStep > 2">&gt; VOICE SYNTHESIS ........... READY</span>
       </div>
       <h2 [class.reveal]="bootStep >= 3">At your service, sir.</h2>
-      <p [class.reveal]="welcomeComplete">Speak or type in any language — English, French, Tunisian Arabic, and more.</p>
+      <p [class.reveal]="welcomeComplete">7ki bil Derja, bil français, w bil English — JARVIS yfhem w yjawbek bnafs el lougua.</p>
     </div>
 
     <div *ngFor="let message of messages" class="message" [class.user]="message.role === 'user'" [hidden]="!shouldShowMessage(message)">

@@ -2,6 +2,7 @@ import { Injectable, NgZone } from '@angular/core';
 import { BehaviorSubject, firstValueFrom, Observable, Subject } from 'rxjs';
 import { ApiService } from './api.service';
 import { TtsStatus } from './models';
+import { detectSpeechLang } from './language.util';
 import { isDesktopClient } from './platform.util';
 
 interface SpeechRecognitionLike {
@@ -24,6 +25,14 @@ interface SpeechRecognitionEventLike {
 const VOICE_ENABLED_KEY = 'jarvis.voiceEnabled';
 const HANDS_FREE_KEY = 'jarvis.handsFree';
 const TTS_ENGINE_KEY = 'jarvis.ttsEngine';
+
+const PREFERRED_AR_VOICES = [
+  'Microsoft Hoda Online (Natural) - Arabic (Egypt)',
+  'Microsoft Naayf Online (Natural) - Arabic (Saudi Arabia)',
+  'Microsoft Salma Online (Natural) - Arabic (Egypt)',
+  'Google العربية',
+  'Microsoft Hoda - Arabic (Egypt)',
+];
 
 const PREFERRED_JARVIS_VOICES = [
   'Microsoft Aria Online (Natural) - English (United States)',
@@ -49,6 +58,7 @@ const MAX_RECORD_MS = 30000;
 const STREAM_FIRST_MIN = 28;
 const STREAM_MIN_SENTENCE = 16;
 const FAST_STT_KEY = 'jarvis.fastStt';
+const STT_LANG_KEY = 'jarvis.sttLang';
 const WAKE_WORD_KEY = 'jarvis.wakeWord';
 const WAKE_PHRASE = /\b(hey\s+)?jarvis\b/i;
 /** Natural conversational pace (Siri-like), not slow robot. */
@@ -78,6 +88,7 @@ export class VoiceService {
 
   private recognition?: SpeechRecognitionLike;
   private enVoice?: SpeechSynthesisVoice;
+  private arVoice?: SpeechSynthesisVoice;
   private whisperAvailable = true;
   private preferBrowserStt = (() => {
     const saved = localStorage.getItem(FAST_STT_KEY);
@@ -123,7 +134,11 @@ export class VoiceService {
   ) {
     if (typeof speechSynthesis !== 'undefined') {
       this.pickEnglishVoice();
-      speechSynthesis.onvoiceschanged = () => this.pickEnglishVoice();
+      this.pickArabicVoice();
+      speechSynthesis.onvoiceschanged = () => {
+        this.pickEnglishVoice();
+        this.pickArabicVoice();
+      };
     }
   }
 
@@ -371,7 +386,8 @@ export class VoiceService {
     if (!cleaned) {
       return Promise.resolve();
     }
-    return this.enqueueSpeech(cleaned, 'en-GB', true);
+    const lang = detectSpeechLang(cleaned);
+    return this.enqueueSpeech(cleaned, lang, true);
   }
 
   async speakJarvisWelcome(onLine?: (index: number) => void): Promise<void> {
@@ -458,7 +474,7 @@ export class VoiceService {
       return;
     }
     this.recognition = new Ctor();
-    this.recognition.lang = '';
+    this.recognition.lang = this.browserSttLang();
     this.recognition.continuous = false;
     this.recognition.interimResults = true;
 
@@ -773,6 +789,31 @@ export class VoiceService {
     return Math.sqrt(sum / samples.length);
   }
 
+  private browserSttLang(): string {
+    const saved = localStorage.getItem(STT_LANG_KEY);
+    if (saved?.trim()) {
+      return saved.trim();
+    }
+    return 'ar-TN';
+  }
+
+  private pickArabicVoice(): void {
+    const voices = speechSynthesis.getVoices();
+    if (!voices.length) {
+      return;
+    }
+    for (const name of PREFERRED_AR_VOICES) {
+      const match = voices.find((v) => v.name === name);
+      if (match) {
+        this.arVoice = match;
+        return;
+      }
+    }
+    this.arVoice =
+      voices.find((v) => v.lang.toLowerCase().startsWith('ar') && /natural|neural|online|hoda|salma/i.test(v.name)) ??
+      voices.find((v) => v.lang.toLowerCase().startsWith('ar'));
+  }
+
   private pickEnglishVoice(): void {
     const voices = speechSynthesis.getVoices();
     if (!voices.length) {
@@ -814,9 +855,18 @@ export class VoiceService {
   private pickVoiceForLang(lang: string): SpeechSynthesisVoice | undefined {
     const voices = speechSynthesis.getVoices();
     if (!voices.length) {
-      return this.enVoice;
+      return lang.startsWith('ar') ? this.arVoice : this.enVoice;
     }
     const prefix = lang.split('-')[0].toLowerCase();
+    if (prefix === 'ar' && this.arVoice) {
+      return this.arVoice;
+    }
+    for (const name of prefix === 'ar' ? PREFERRED_AR_VOICES : []) {
+      const match = voices.find((v) => v.name === name);
+      if (match) {
+        return match;
+      }
+    }
     const neuralLang = voices.find(
       (v) =>
         v.lang.toLowerCase().startsWith(prefix) && /natural|neural|online/i.test(v.name),
@@ -836,30 +886,19 @@ export class VoiceService {
   }
 
   private detectLang(text: string): string {
-    if (/[\u0600-\u06FF]/.test(text)) {
-      return 'ar-TN';
-    }
-    if (/[àâäçéèêëîïôùûüœæ]/i.test(text)) {
-      return 'fr-FR';
-    }
-    if (/[¿¡ñáéíóúü]/i.test(text)) {
-      return 'es-ES';
-    }
-    return 'en-GB';
+    return detectSpeechLang(text);
   }
 
   private speakUtterance(text: string, lang: string, jarvis: boolean): Promise<void> {
     return new Promise((resolve) => {
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = jarvis || lang.startsWith('en') ? (this.enVoice?.lang || 'en-GB') : lang;
-      const voice = jarvis
-        ? this.enVoice ?? this.pickVoiceForLang('en-GB')
-        : this.pickVoiceForLang(lang);
+      const voice = this.pickVoiceForLang(lang);
       if (voice) {
         utterance.voice = voice;
-        utterance.lang = voice.lang || utterance.lang;
+        utterance.lang = voice.lang || lang;
+      } else {
+        utterance.lang = lang;
       }
-      // Natural assistant cadence — avoid slow/low “robot” settings.
       utterance.rate = lang.startsWith('ar') ? RATE_AR : RATE_NATURAL;
       utterance.pitch = jarvis && lang.startsWith('en') ? 1.04 : PITCH_NATURAL;
       utterance.volume = 1;
@@ -885,11 +924,13 @@ export class VoiceService {
       const voices = speechSynthesis.getVoices();
       if (voices.length) {
         this.pickEnglishVoice();
+        this.pickArabicVoice();
         resolve();
         return;
       }
       const onReady = () => {
         this.pickEnglishVoice();
+        this.pickArabicVoice();
         speechSynthesis.onvoiceschanged = null;
         resolve();
       };
