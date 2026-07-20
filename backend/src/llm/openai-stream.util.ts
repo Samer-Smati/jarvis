@@ -185,26 +185,30 @@ export function resolveModelChain(
   available: Set<string>,
   hardcodedFallbacks: string[],
 ): string[] {
-  const chain = [preferred, ...fallbacks.filter((m) => m !== preferred)].filter(
-    (m) => !available.size || available.has(m),
-  );
-  if (!chain.length) {
-    for (const fallback of hardcodedFallbacks) {
-      if (!available.size || available.has(fallback)) {
-        chain.push(fallback);
-      }
+  const configured = [
+    preferred,
+    ...fallbacks.filter((m) => m !== preferred),
+    ...hardcodedFallbacks.filter((m) => m !== preferred && !fallbacks.includes(m)),
+  ];
+  const unique = [...new Set(configured.filter(Boolean))];
+  if (!available.size) {
+    return unique;
+  }
+  const matched = unique.filter((m) => modelListed(m, available));
+  return matched.length ? matched : unique;
+}
+
+function modelListed(model: string, available: Set<string>): boolean {
+  if (available.has(model)) {
+    return true;
+  }
+  const bare = model.replace(/^models\//, '');
+  for (const id of available) {
+    if (id === model || id.replace(/^models\//, '') === bare) {
+      return true;
     }
   }
-  if (!chain.length && available.size) {
-    const first = [...available][0];
-    if (first) {
-      chain.push(first);
-    }
-  }
-  if (!chain.length) {
-    return [preferred, ...fallbacks.filter((m) => m !== preferred)];
-  }
-  return chain;
+  return false;
 }
 
 export function isRateLimitError(message: string): boolean {
@@ -212,7 +216,12 @@ export function isRateLimitError(message: string): boolean {
 }
 
 export function isModelNotFoundError(message: string): boolean {
-  return message.includes('404') || message.includes('model_not_found') || message.includes('does not exist');
+  return (
+    message.includes('404') ||
+    message.includes('model_not_found') ||
+    message.includes('does not exist') ||
+    message.includes('no longer available')
+  );
 }
 
 export function parseRetryAfterMs(message: string): number | null {

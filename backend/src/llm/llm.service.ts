@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ClaudeProvider } from './claude.provider';
 import { EnsureLlmService } from './ensure-llm.service';
@@ -11,9 +11,12 @@ import { LlmChatOptions, LlmChatResult, LlmProvider } from './llm.types';
 import { LmStudioProvider } from './lmstudio.provider';
 import { OllamaProvider } from './ollama.provider';
 
+const CLOUD_FALLBACK_ORDER = ['gemini', 'openrouter', 'groq', 'claude', 'xai'] as const;
+
 /** Facade over the configured providers; the active one can be switched at runtime. */
 @Injectable()
 export class LlmService implements LlmProvider {
+  private readonly logger = new Logger(LlmService.name);
   private active: LlmProvider;
   private readonly providers: Map<string, LlmProvider>;
   private readyCache: { at: number; value: { ok: boolean; model?: string; error?: string } } | null = null;
@@ -62,7 +65,45 @@ export class LlmService implements LlmProvider {
 
   async chat(options: LlmChatOptions): Promise<LlmChatResult> {
     await this.ensureLocalRuntime();
-    return this.active.chat(options);
+    if (!isServerlessLlmProvider(this.active.name)) {
+      return this.active.chat(options);
+    }
+    return this.chatWithCloudFallback(options);
+  }
+
+  private async chatWithCloudFallback(options: LlmChatOptions): Promise<LlmChatResult> {
+    const order = [
+      this.active.name,
+      ...CLOUD_FALLBACK_ORDER.filter((name) => name !== this.active.name),
+    ];
+    let lastError = 'Cloud LLM request failed';
+
+    for (const name of order) {
+      const provider = this.providers.get(name);
+      if (!provider) {
+        continue;
+      }
+      const probe = provider as LlmProvider & {
+        isReady?: () => Promise<{ ok: boolean; model?: string; error?: string }>;
+      };
+      if (probe.isReady) {
+        const ready = await probe.isReady();
+        if (!ready.ok) {
+          continue;
+        }
+      }
+      try {
+        if (name !== this.active.name) {
+          this.logger.warn(`Cloud fallback: trying ${name}`);
+        }
+        return await provider.chat(options);
+      } catch (error) {
+        lastError = (error as Error).message;
+        this.logger.warn(`${name} failed: ${lastError.slice(0, 200)}`);
+      }
+    }
+
+    throw new Error(lastError);
   }
 
   async isReady(): Promise<{ ok: boolean; model?: string; error?: string }> {

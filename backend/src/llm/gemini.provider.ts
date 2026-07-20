@@ -1,16 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ChatMessage, LlmChatOptions, LlmChatResult, LlmProvider } from './llm.types';
+import { LlmChatOptions, LlmChatResult, LlmProvider } from './llm.types';
 import {
   isModelNotFoundError,
   isRateLimitError,
-  listOpenAiModels,
   parseRetryAfterMs,
-  resolveModelChain,
   sleep,
   streamOpenAiChat,
 } from './openai-stream.util';
 
+/** Verified working on Google AI Studio free tier — do not auto-pick from /models list. */
 const DEFAULT_MODEL = 'gemini-flash-latest';
 const DEFAULT_FALLBACK_MODELS = ['gemini-2.0-flash', 'gemini-2.0-flash-lite'];
 
@@ -41,10 +40,7 @@ export class GeminiProvider implements LlmProvider {
     if (!this.apiKey) {
       return { ok: false, error: 'Set GEMINI_API_KEY (free at aistudio.google.com/apikey)' };
     }
-    const chain = await this.resolveModelChain();
-    if (!chain.length) {
-      return { ok: false, error: 'No Gemini models configured' };
-    }
+    const chain = this.buildModelChain();
     return { ok: true, model: chain[0] };
   }
 
@@ -56,7 +52,7 @@ export class GeminiProvider implements LlmProvider {
   }
 
   private async chatWithFallbacks(options: LlmChatOptions): Promise<LlmChatResult> {
-    const models = await this.resolveModelChain();
+    const models = this.buildModelChain();
     let lastError = 'Gemini request failed';
 
     for (const model of models) {
@@ -74,7 +70,7 @@ export class GeminiProvider implements LlmProvider {
         } catch (error) {
           lastError = (error as Error).message;
           if (isModelNotFoundError(lastError)) {
-            this.resolvedModels = null;
+            this.logger.warn(`Gemini model unavailable: ${model}`);
             break;
           }
           const retryMs = parseRetryAfterMs(lastError);
@@ -97,16 +93,19 @@ export class GeminiProvider implements LlmProvider {
     throw new Error(lastError);
   }
 
-  private async resolveModelChain(): Promise<string[]> {
+  private buildModelChain(): string[] {
     if (this.resolvedModels?.length) {
       return this.resolvedModels;
     }
-    const available = await listOpenAiModels(this.apiKey, this.baseUrl);
-    const chain = resolveModelChain(this.model, this.fallbackModels, available, DEFAULT_FALLBACK_MODELS);
-    this.resolvedModels = chain;
-    if (chain.length) {
-      this.logger.log(`Gemini model chain: ${chain.join(' → ')}`);
-    }
-    return chain;
+    const chain = [
+      this.model,
+      ...this.fallbackModels.filter((m) => m !== this.model),
+      ...DEFAULT_FALLBACK_MODELS.filter(
+        (m) => m !== this.model && !this.fallbackModels.includes(m),
+      ),
+    ];
+    this.resolvedModels = [...new Set(chain.filter(Boolean))];
+    this.logger.log(`Gemini model chain: ${this.resolvedModels.join(' → ')}`);
+    return this.resolvedModels;
   }
 }
