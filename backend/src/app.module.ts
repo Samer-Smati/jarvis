@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -41,13 +41,20 @@ const voiceModules = isServerless ? [] : [VoiceModule];
       useFactory: (config: ConfigService) => {
         if (isServerless) {
           const dbPath = process.env.DATABASE_PATH ?? '/tmp/jarvis.sqlite';
-          mkdirSync(join(dbPath, '..'), { recursive: true });
+          mkdirSync(dirname(dbPath), { recursive: true });
+          const wasmDir = join(process.cwd(), 'node_modules', 'sql.js', 'dist');
           return {
             type: 'sqljs' as const,
             location: dbPath,
             autoSave: true,
             autoLoadEntities: true,
             synchronize: true,
+            sqlJsConfig: {
+              locateFile: (file: string) =>
+                existsSync(join(wasmDir, file))
+                  ? join(wasmDir, file)
+                  : `https://sql.js.org/dist/${file}`,
+            },
           };
         }
         return {

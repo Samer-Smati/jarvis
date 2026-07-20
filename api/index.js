@@ -4,7 +4,9 @@
 const path = require('path');
 const Module = require('module');
 
-const backendRoot = path.join(__dirname, '..', 'backend');
+const backendRoot = [path.join(process.cwd(), 'backend'), path.join(__dirname, '..', 'backend')].find(
+  (dir) => require('fs').existsSync(path.join(dir, 'dist', 'serverless.js')),
+) ?? path.join(process.cwd(), 'backend');
 const backendModules = path.join(backendRoot, 'node_modules');
 
 if (!process.env.NODE_PATH?.includes(backendModules)) {
