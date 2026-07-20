@@ -87,6 +87,12 @@ export class ChatComponent implements OnInit, OnDestroy {
       this.chat.toolStart$.subscribe((event) => {
         const current = this.currentAssistantMessage();
         current.tools = current.tools ?? [];
+        const retryIdx = current.tools.findIndex(
+          (t) => t.toolName === event.toolName && !t.running,
+        );
+        if (retryIdx >= 0) {
+          current.tools.splice(retryIdx, 1);
+        }
         current.tools.push({ toolName: event.toolName, args: event.args, running: true });
         this.scrollToBottom();
         this.cdr.markForCheck();
@@ -109,7 +115,6 @@ export class ChatComponent implements OnInit, OnDestroy {
             window.location.href = url;
           }
         }
-        current.content = '';
         this.voice.speakStreamPauseForTool();
         this.scrollToBottom();
         this.cdr.markForCheck();
@@ -143,16 +148,22 @@ export class ChatComponent implements OnInit, OnDestroy {
         const current = this.currentAssistantMessage();
         current.content = event.finalText || current.content;
         current.streaming = false;
+        current.tools = this.compactToolBadges(current.tools);
         this.busy = false;
+        if (!current.content?.trim()) {
+          this.messages.pop();
+        } else {
+          this.voice.speakStreamFinish(event.finalText || current.content);
+        }
         this.scrollToBottom();
         this.cdr.markForCheck();
-        this.voice.speakStreamFinish(event.finalText || current.content);
       }),
     );
 
     this.subscriptions.add(
       this.chat.error$.subscribe((event) => {
         const current = this.currentAssistantMessage();
+        current.content = event.message || 'Something went wrong, sir.';
         current.streaming = false;
         this.busy = false;
         this.cdr.markForCheck();
@@ -270,6 +281,30 @@ export class ChatComponent implements OnInit, OnDestroy {
       return 'info';
     }
     return tool.success ? 'success' : 'danger';
+  }
+
+  shouldShowMessage(message: ChatMessage): boolean {
+    if (message.role === 'user') {
+      return true;
+    }
+    if (message.streaming) {
+      return true;
+    }
+    if (message.content?.trim()) {
+      return true;
+    }
+    return !!(message.tools?.some((t) => t.running));
+  }
+
+  private compactToolBadges(tools?: ToolActivity[]): ToolActivity[] | undefined {
+    if (!tools?.length) {
+      return tools;
+    }
+    const latest = new Map<string, ToolActivity>();
+    for (const tool of tools) {
+      latest.set(tool.toolName, tool);
+    }
+    return [...latest.values()].filter((t) => t.success || t.running);
   }
 
   private currentAssistantMessage(): ChatMessage {

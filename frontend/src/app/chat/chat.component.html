@@ -49,7 +49,7 @@
       <p [class.reveal]="welcomeComplete">Speak or type in any language — English, French, Tunisian Arabic, and more.</p>
     </div>
 
-    <div *ngFor="let message of messages" class="message" [class.user]="message.role === 'user'">
+    <div *ngFor="let message of messages" class="message" [class.user]="message.role === 'user'" [hidden]="!shouldShowMessage(message)">
       <div class="avatar" *ngIf="message.role === 'assistant'">
         <span class="mini-core"></span>
       </div>
@@ -64,7 +64,10 @@
             [pTooltip]="tool.output || argsPreview(tool.args)">
           </p-tag>
         </div>
-        <div class="content">{{ message.content }}<span class="cursor" *ngIf="message.streaming">▌</span></div>
+        <div class="content">
+          <span *ngIf="!message.content?.trim() && message.streaming" class="thinking">Working, sir…</span>
+          {{ message.content }}<span class="cursor" *ngIf="message.streaming && message.content?.trim()">▌</span>
+        </div>
       </div>
     </div>
 

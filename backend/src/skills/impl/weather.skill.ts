@@ -74,6 +74,34 @@ export class WeatherSkill implements Skill {
     required: ['location'],
   };
 
+type GeoPlace = NonNullable<GeocodeResult['results']>[number];
+
+  private async resolvePlace(location: string): Promise<GeoPlace | undefined> {
+    const queries = [location];
+    const normalized = location.toLowerCase().replace(/\s+/g, '');
+    if (normalized === 'tuns' || normalized === 'tun') {
+      queries.push('Tunis');
+    }
+
+    for (const query of queries) {
+      const geoResponse = await fetch(
+        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=5&language=en&format=json`,
+      );
+      if (!geoResponse.ok) {
+        continue;
+      }
+      const geo = (await geoResponse.json()) as GeocodeResult;
+      const match =
+        geo.results?.find((r) => r.name.toLowerCase() === query.toLowerCase()) ??
+        geo.results?.find((r) => r.name.toLowerCase().includes(query.toLowerCase())) ??
+        geo.results?.[0];
+      if (match) {
+        return match;
+      }
+    }
+    return undefined;
+  }
+
   async execute(args: Record<string, unknown>): Promise<SkillResult> {
     const location = String(args?.location ?? '').trim();
     if (!location) {
@@ -82,14 +110,7 @@ export class WeatherSkill implements Skill {
     const days = Math.min(Math.max(Number(args?.days ?? 3) || 0, 0), 7);
 
     try {
-      const geoResponse = await fetch(
-        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`,
-      );
-      if (!geoResponse.ok) {
-        return { success: false, output: `Geocoding failed with status ${geoResponse.status}.` };
-      }
-      const geo = (await geoResponse.json()) as GeocodeResult;
-      const place = geo.results?.[0];
+      const place = await this.resolvePlace(location);
       if (!place) {
         return { success: false, output: `I couldn't find a place called "${location}".` };
       }
