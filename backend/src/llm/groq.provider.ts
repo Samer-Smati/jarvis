@@ -32,6 +32,14 @@ interface StreamChunk {
   }[];
 }
 
+/** Verified Groq free models — llama-4-scout is not universally available. */
+const DEFAULT_MODEL = 'llama-3.1-8b-instant';
+const DEFAULT_FALLBACK_MODELS = [
+  'llama-3.3-70b-versatile',
+  'openai/gpt-oss-20b',
+  'llama-3.1-70b-versatile',
+];
+
 /** Groq — free-tier cloud LLM (OpenAI-compatible). https://console.groq.com */
 @Injectable()
 export class GroqProvider implements LlmProvider {
@@ -39,11 +47,17 @@ export class GroqProvider implements LlmProvider {
   private readonly logger = new Logger(GroqProvider.name);
   private readonly apiKey: string;
   private readonly model: string;
+  private readonly fallbackModels: string[];
   private readonly baseUrl: string;
+  private resolvedModels: string[] | null = null;
 
   constructor(config: ConfigService) {
     this.apiKey = config.get<string>('GROQ_API_KEY') ?? '';
-    this.model = config.get<string>('GROQ_MODEL') ?? 'openai/gpt-oss-120b';
+    this.model = config.get<string>('GROQ_MODEL') ?? DEFAULT_MODEL;
+    const configuredFallbacks = config.get<string>('GROQ_FALLBACK_MODELS');
+    this.fallbackModels = configuredFallbacks
+      ? configuredFallbacks.split(',').map((m) => m.trim()).filter(Boolean)
+      : DEFAULT_FALLBACK_MODELS;
     this.baseUrl = (config.get<string>('GROQ_BASE_URL') ?? 'https://api.groq.com/openai/v1').replace(/\/$/, '');
   }
 
@@ -59,7 +73,11 @@ export class GroqProvider implements LlmProvider {
       if (!response.ok) {
         return { ok: false, error: `Groq returned ${response.status}` };
       }
-      return { ok: true, model: this.model };
+      const chain = await this.resolveModelChain();
+      if (!chain.length) {
+        return { ok: false, error: 'No supported Groq models available for this API key' };
+      }
+      return { ok: true, model: chain[0] };
     } catch (error) {
       return { ok: false, error: (error as Error).message };
     }
@@ -70,8 +88,94 @@ export class GroqProvider implements LlmProvider {
       throw new Error('GROQ_API_KEY is not set. Get a free key at https://console.groq.com');
     }
 
+    const models = await this.resolveModelChain();
+    if (!models.length) {
+      throw new Error('No Groq models available for your API key. Check console.groq.com');
+    }
+    let lastError = 'Groq request failed';
+
+    for (const model of models) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          return await this.chatWithModel(model, options);
+        } catch (error) {
+          lastError = (error as Error).message;
+          if (isModelNotFoundError(lastError)) {
+            this.logger.warn(`Groq model unavailable: ${model}`);
+            this.resolvedModels = null;
+            break;
+          }
+          const retryMs = parseRetryAfterMs(lastError);
+          if (retryMs != null && attempt < 2) {
+            this.logger.warn(`Groq ${model} rate limited — retry in ${retryMs}ms`);
+            await sleep(retryMs + 200);
+            continue;
+          }
+          if (isRateLimitError(lastError) && model !== models[models.length - 1]) {
+            this.logger.warn(`Groq ${model} rate limited — trying fallback model`);
+            break;
+          }
+          if (model !== models[models.length - 1]) {
+            this.logger.warn(`Groq ${model} failed: ${lastError}`);
+            break;
+          }
+          throw error;
+        }
+      }
+    }
+
+    throw new Error(lastError);
+  }
+
+  private async resolveModelChain(): Promise<string[]> {
+    if (this.resolvedModels?.length) {
+      return this.resolvedModels;
+    }
+    const preferred = [this.model, ...this.fallbackModels.filter((m) => m !== this.model)];
+    const available = await this.listAvailableModelIds();
+    if (!available.size) {
+      return preferred;
+    }
+    const chain = preferred.filter((m) => available.has(m));
+    if (!chain.length) {
+      for (const fallback of DEFAULT_FALLBACK_MODELS) {
+        if (available.has(fallback)) {
+          chain.push(fallback);
+        }
+      }
+    }
+    if (!chain.length) {
+      const first = [...available][0];
+      if (first) {
+        chain.push(first);
+      }
+    }
+    this.resolvedModels = chain;
+    if (chain.length) {
+      this.logger.log(`Groq model chain: ${chain.join(' → ')}`);
+    }
+    return chain;
+  }
+
+  private async listAvailableModelIds(): Promise<Set<string>> {
+    try {
+      const response = await fetch(`${this.baseUrl}/models`, {
+        headers: { Authorization: `Bearer ${this.apiKey}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!response.ok) {
+        return new Set();
+      }
+      const payload = (await response.json()) as { data?: Array<{ id?: string }> };
+      return new Set((payload.data ?? []).map((m) => m.id).filter(Boolean) as string[]);
+    } catch {
+      return new Set();
+    }
+  }
+
+  private async chatWithModel(model: string, options: LlmChatOptions): Promise<LlmChatResult> {
     const body: Record<string, unknown> = {
-      model: this.model,
+      model,
       stream: true,
       messages: options.messages.map((m) => this.toOpenAiMessage(m)),
       tools: options.tools?.map((t) => ({
@@ -193,7 +297,7 @@ export class GroqProvider implements LlmProvider {
       }
     }
 
-    this.logger.debug(`chat done: ${content.length} chars, ${toolCalls.length} tool calls`);
+    this.logger.debug(`chat [${model}] done: ${content.length} chars, ${toolCalls.length} tool calls`);
     return { content, toolCalls };
   }
 
@@ -240,4 +344,28 @@ function parseTextToolCalls(content: string): { content: string; toolCalls: Tool
     .replace(/\s{2,}/g, ' ')
     .trim();
   return { content: cleaned, toolCalls };
+}
+
+function isRateLimitError(message: string): boolean {
+  return message.includes('429') || message.includes('rate_limit');
+}
+
+function isModelNotFoundError(message: string): boolean {
+  return message.includes('404') || message.includes('model_not_found') || message.includes('does not exist');
+}
+
+function parseRetryAfterMs(message: string): number | null {
+  const secMatch = message.match(/try again in (\d+(?:\.\d+)?)s/i);
+  if (secMatch?.[1]) {
+    return Math.ceil(parseFloat(secMatch[1]) * 1000);
+  }
+  const retryMatch = message.match(/"retry-after"\s*:\s*(\d+)/i);
+  if (retryMatch?.[1]) {
+    return parseInt(retryMatch[1], 10) * 1000;
+  }
+  return null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

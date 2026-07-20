@@ -2,7 +2,7 @@ import { Injectable, NgZone } from '@angular/core';
 import { BehaviorSubject, firstValueFrom, Observable, Subject } from 'rxjs';
 import { ApiService } from './api.service';
 import { TtsStatus } from './models';
-import { detectSpeechLang } from './language.util';
+import { detectSpeechLang, shouldStreamSpeech } from './language.util';
 import { isDesktopClient } from './platform.util';
 
 interface SpeechRecognitionLike {
@@ -28,10 +28,9 @@ const TTS_ENGINE_KEY = 'jarvis.ttsEngine';
 
 const PREFERRED_AR_VOICES = [
   'Microsoft Hoda Online (Natural) - Arabic (Egypt)',
-  'Microsoft Naayf Online (Natural) - Arabic (Saudi Arabia)',
   'Microsoft Salma Online (Natural) - Arabic (Egypt)',
-  'Google العربية',
   'Microsoft Hoda - Arabic (Egypt)',
+  'Google العربية',
 ];
 
 const PREFERRED_JARVIS_VOICES = [
@@ -340,7 +339,9 @@ export class VoiceService {
       return;
     }
     this.streamBuffer += token;
-    this.flushStreamChunks();
+    if (shouldStreamSpeech(this.streamBuffer)) {
+      this.flushStreamChunks();
+    }
   }
 
   speakStreamFlush(): void {
@@ -811,6 +812,8 @@ export class VoiceService {
     }
     this.arVoice =
       voices.find((v) => v.lang.toLowerCase().startsWith('ar') && /natural|neural|online|hoda|salma/i.test(v.name)) ??
+      voices.find((v) => v.lang.toLowerCase().startsWith('ar') && /hoda|salma|female/i.test(v.name)) ??
+      voices.find((v) => v.lang.toLowerCase().startsWith('ar-eg')) ??
       voices.find((v) => v.lang.toLowerCase().startsWith('ar'));
   }
 
@@ -855,9 +858,15 @@ export class VoiceService {
   private pickVoiceForLang(lang: string): SpeechSynthesisVoice | undefined {
     const voices = speechSynthesis.getVoices();
     if (!voices.length) {
-      return lang.startsWith('ar') ? this.arVoice : this.enVoice;
+      if (lang.startsWith('ar')) {
+        return this.arVoice;
+      }
+      return this.enVoice;
     }
     const prefix = lang.split('-')[0].toLowerCase();
+    if (prefix === 'en' && this.enVoice) {
+      return this.enVoice;
+    }
     if (prefix === 'ar' && this.arVoice) {
       return this.arVoice;
     }
@@ -900,7 +909,7 @@ export class VoiceService {
         utterance.lang = lang;
       }
       utterance.rate = lang.startsWith('ar') ? RATE_AR : RATE_NATURAL;
-      utterance.pitch = jarvis && lang.startsWith('en') ? 1.04 : PITCH_NATURAL;
+      utterance.pitch = jarvis && !lang.startsWith('ar') ? 1.04 : PITCH_NATURAL;
       utterance.volume = 1;
       utterance.onstart = () => this.zone.run(() => this.speakingSubject.next(true));
       utterance.onend = () => {

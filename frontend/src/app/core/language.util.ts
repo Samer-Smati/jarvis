@@ -10,14 +10,18 @@ export function looksLikeDerjaLatin(text: string): boolean {
 }
 
 export function detectSpeechLang(text: string): string {
-  if (/[\u0600-\u06FF]/.test(text)) {
-    return 'ar-TN';
-  }
   if (looksLikeDerjaLatin(text)) {
-    return 'ar-TN';
+    return 'en-GB';
+  }
+  if (/[\u0600-\u06FF]/.test(text)) {
+    return 'ar-EG';
   }
   if (/[àâäçéèêëîïôùûüœæ]/i.test(text)) {
     return 'fr-FR';
   }
   return 'en-GB';
+}
+
+export function shouldStreamSpeech(text: string): boolean {
+  return !looksLikeDerjaLatin(text) && !/[\u0600-\u06FF]/.test(text);
 }

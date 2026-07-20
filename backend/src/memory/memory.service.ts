@@ -9,7 +9,8 @@ import { EpisodicEventEntity } from './entities/episodic-event.entity';
 import { SemanticMemoryEntity } from './entities/semantic-memory.entity';
 
 /** Max messages sent to the LLM per turn (full history stays in storage). */
-const MAX_LLM_HISTORY = 200;
+const MAX_LLM_HISTORY =
+  process.env.VERCEL || process.env.JARVIS_SERVERLESS === '1' ? 30 : 200;
 
 @Injectable()
 export class MemoryService {

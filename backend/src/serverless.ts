@@ -31,6 +31,7 @@ function bootstrap(): Promise<express.Express> {
           process.env.LLM_PROVIDER = 'groq';
         }
       }
+      process.env.GROQ_MODEL = process.env.GROQ_MODEL ?? 'llama-3.1-8b-instant';
       process.env.DATABASE_PATH = process.env.DATABASE_PATH ?? '/tmp/jarvis.sqlite';
 
       const nest = await NestFactory.create(AppModule, new ExpressAdapter(server), {
