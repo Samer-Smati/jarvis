@@ -11,10 +11,9 @@ const fs = require('fs');
 
 
 const PORT = Number(process.env.JARVIS_PORT ?? 3847);
-
 const STARTUP_TIMEOUT_MS = 120000;
-
 const ELECTRON_APP_NAME = 'J.A.R.V.I.S.exe';
+const DEFAULT_REMOTE_URL = 'https://frontend-pearl-omega-53.vercel.app';
 
 
 
@@ -34,6 +33,70 @@ function rootDir() {
 
   return app.isPackaged ? process.resourcesPath : path.join(__dirname, '..');
 
+}
+
+function bundledRoot() {
+  return path.join(rootDir(), 'bundled');
+}
+
+function hasBundledOllama() {
+  const exe = path.join(bundledRoot(), 'ollama', 'app', process.platform === 'win32' ? 'ollama.exe' : 'ollama');
+  return fs.existsSync(exe);
+}
+
+function packagedOfflineEnv(userData) {
+  if (!app.isPackaged || isRemoteMode() || !hasBundledOllama()) {
+    return {};
+  }
+  const bundled = bundledRoot();
+  const dataDir = path.join(userData, 'data');
+  const piperBundled = path.join(bundled, 'piper-cache');
+  return {
+    LLM_PROVIDER: 'ollama',
+    EMBED_PROVIDER: 'ollama',
+    OLLAMA_BASE_URL: 'http://127.0.0.1:11434',
+    OLLAMA_CHAT_MODEL: 'llama3.2:1b',
+    OLLAMA_EMBED_MODEL: 'nomic-embed-text',
+    JARVIS_LLM_ENSURE: 'full',
+    JARVIS_DEFER_PIPER: '0',
+    JARVIS_PERFORMANCE_MODE: '1',
+    JARVIS_BUNDLED_OLLAMA_DIR: path.join(bundled, 'ollama'),
+    OLLAMA_BIN: path.join(bundled, 'ollama', 'app', process.platform === 'win32' ? 'ollama.exe' : 'ollama'),
+    OLLAMA_MODELS: path.join(bundled, 'ollama', 'models'),
+    PIPER_CACHE: fs.existsSync(piperBundled) ? piperBundled : path.join(dataDir, 'piper-cache'),
+  };
+}
+
+function runEnsureBundledOllama(offlineEnv) {
+  return runScriptAsync(
+    'ensure-bundled-ollama.js',
+    {
+      JARVIS_BUNDLED_OLLAMA_DIR: offlineEnv.JARVIS_BUNDLED_OLLAMA_DIR,
+      OLLAMA_BIN: offlineEnv.OLLAMA_BIN,
+      OLLAMA_MODELS: offlineEnv.OLLAMA_MODELS,
+      OLLAMA_CHAT_MODEL: offlineEnv.OLLAMA_CHAT_MODEL,
+      OLLAMA_BASE_URL: offlineEnv.OLLAMA_BASE_URL,
+    },
+    300000,
+  );
+}
+
+function remoteUrl() {
+  const raw = process.env.JARVIS_REMOTE_URL ?? process.env.JARVIS_REMOTE ?? '';
+  if (raw === '0' || raw === 'false' || raw === 'local') {
+    return '';
+  }
+  if (raw === '1' || raw === 'true') {
+    return DEFAULT_REMOTE_URL;
+  }
+  if (raw.startsWith('http://') || raw.startsWith('https://')) {
+    return raw.replace(/\/$/, '');
+  }
+  return '';
+}
+
+function isRemoteMode() {
+  return remoteUrl().length > 0;
 }
 
 
@@ -374,6 +437,8 @@ function startBackend() {
 
   fs.mkdirSync(dataDir, { recursive: true });
 
+  const offlineEnv = packagedOfflineEnv(userData);
+
 
 
   const { bin, useElectronAsNode } = resolveNodeBinary();
@@ -386,6 +451,8 @@ function startBackend() {
 
     ...process.env,
 
+    ...offlineEnv,
+
     PORT: String(PORT),
 
     FRONTEND_PATH: path.join(backendRoot(), 'public'),
@@ -396,15 +463,15 @@ function startBackend() {
 
     TRANSFORMERS_CACHE: path.join(dataDir, 'whisper-cache'),
 
-    PIPER_CACHE: path.join(dataDir, 'piper-cache'),
+    PIPER_CACHE: offlineEnv.PIPER_CACHE ?? path.join(dataDir, 'piper-cache'),
 
     PIPER_VOICE: process.env.PIPER_VOICE ?? 'en_GB-alan-medium',
 
-    JARVIS_LLM_ENSURE: process.env.JARVIS_LLM_ENSURE ?? 'probe',
+    JARVIS_LLM_ENSURE: offlineEnv.JARVIS_LLM_ENSURE ?? process.env.JARVIS_LLM_ENSURE ?? 'probe',
 
-    JARVIS_DEFER_PIPER: process.env.JARVIS_DEFER_PIPER ?? '1',
+    JARVIS_DEFER_PIPER: offlineEnv.JARVIS_DEFER_PIPER ?? process.env.JARVIS_DEFER_PIPER ?? '1',
 
-    JARVIS_PERFORMANCE_MODE: process.env.JARVIS_PERFORMANCE_MODE ?? '1',
+    JARVIS_PERFORMANCE_MODE: offlineEnv.JARVIS_PERFORMANCE_MODE ?? process.env.JARVIS_PERFORMANCE_MODE ?? '1',
 
     WHISPER_MODEL: process.env.WHISPER_MODEL ?? 'Xenova/whisper-tiny',
 
@@ -481,6 +548,35 @@ function startBackend() {
 }
 
 
+
+function waitForRemoteHealth(baseUrl, maxMs = STARTUP_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const tick = async () => {
+      try {
+        const res = await fetch(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(8000) });
+        if (res.ok) {
+          resolve(true);
+          return;
+        }
+      } catch {
+        /* retry */
+      }
+      if (Date.now() - started > maxMs) {
+        reject(new Error('Cloud backend did not respond in time.'));
+      } else {
+        setTimeout(tick, 1500);
+      }
+    };
+    tick();
+  });
+}
+
+function fetchRemoteStatus(baseUrl) {
+  return fetch(`${baseUrl}/api/status`, { signal: AbortSignal.timeout(8000) })
+    .then((res) => (res.ok ? res.json() : {}))
+    .catch(() => ({}));
+}
 
 function waitForBackendHealth(maxMs = STARTUP_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
@@ -608,7 +704,7 @@ function createSplashWindow() {
 
 
 
-function loadMainApp(status) {
+function loadMainApp(status, appUrl) {
 
   const model = status?.llmModel ?? status?.provider ?? 'online';
 
@@ -618,7 +714,7 @@ function loadMainApp(status) {
 
   setMetric('neural', 'ONLINE');
 
-  setMetric('voice', 'READY');
+  setMetric('voice', isRemoteMode() ? 'CLOUD' : 'READY');
 
   setMetric('reactor', '100%');
 
@@ -630,7 +726,14 @@ function loadMainApp(status) {
 
     onSplash = false;
 
-    mainWindow?.loadURL(`http://127.0.0.1:${PORT}`);
+    mainWindow?.loadURL(appUrl ?? `http://127.0.0.1:${PORT}`);
+
+    if (process.env.JARVIS_SMOKE_TEST === '1') {
+      setTimeout(() => {
+        logBoot('smoke test complete — quitting');
+        app.quit();
+      }, 2500);
+    }
 
   }, 600);
 
@@ -647,9 +750,53 @@ async function bootSequence() {
   await splashReady;
   void splashCall(`window.setVersion(${JSON.stringify(`MK-IV · v${appVersion()}`)})`);
 
+  const remote = remoteUrl();
+  if (remote) {
+    logBoot(`remote mode url=${remote}`);
+    setStatus('Connecting to cloud neural core');
+    setProgress(35);
+    addBootLine('Cloud backend (Vercel)');
+    setMetric('neural', 'SYNC');
+    try {
+      await waitForRemoteHealth(remote);
+      logBoot(`remote health ok in ${Date.now() - bootStarted}ms`);
+      addBootLine('Cloud neural core online', true);
+      const status = await fetchRemoteStatus(remote);
+      loadMainApp(
+        { llmModel: status?.llmModel ?? 'Claude', provider: status?.provider ?? 'claude', llmReady: true },
+        remote,
+      );
+      if (process.env.JARVIS_SMOKE_TEST === '1') {
+        setTimeout(() => {
+          logBoot('smoke test complete — quitting');
+          app.quit();
+        }, 2500);
+      }
+    } catch (error) {
+      setStatus(error.message, true);
+      addBootLine('Cloud backend unreachable', false);
+    }
+    return;
+  }
+
   setStatus('Starting neural core');
   setProgress(20);
   addBootLine('Launching backend services');
+
+  const userData = app.getPath('userData');
+  const offlineEnv = packagedOfflineEnv(userData);
+
+  if (offlineEnv.OLLAMA_BIN) {
+    setStatus('Loading local AI (llama3.2:1b)');
+    setProgress(30);
+    addBootLine('Starting bundled Ollama — no API keys needed');
+    const ollamaOk = await runEnsureBundledOllama(offlineEnv);
+    addBootLine(ollamaOk ? 'Local neural core online' : 'Local AI startup failed', ollamaOk);
+    if (!ollamaOk) {
+      setStatus('Local AI failed to start', true);
+      return;
+    }
+  }
 
   try {
     startBackend();
@@ -663,8 +810,13 @@ async function bootSequence() {
   setMetric('neural', 'SYNC');
   addBootLine(`Connecting to port ${PORT}`);
 
-  const llmEnsure = process.env.JARVIS_LLM_ENSURE ?? 'probe';
-  const deferPiper = process.env.JARVIS_DEFER_PIPER !== '0' && process.env.JARVIS_DEFER_PIPER !== 'false';
+  const llmEnsure = offlineEnv.JARVIS_LLM_ENSURE ?? process.env.JARVIS_LLM_ENSURE ?? 'probe';
+  const deferPiper =
+    offlineEnv.JARVIS_DEFER_PIPER ??
+    (process.env.JARVIS_DEFER_PIPER !== '0' && process.env.JARVIS_DEFER_PIPER !== 'false'
+      ? '1'
+      : '0');
+  const deferPiperBool = deferPiper !== '0' && deferPiper !== 'false';
 
   const backgroundTasks = [];
   if (llmEnsure !== 'off') {
@@ -672,7 +824,7 @@ async function bootSequence() {
       runEnsureAi().then((ok) => addBootLine(ok ? 'AI runtime probe complete' : 'AI runtime offline', ok)),
     );
   }
-  if (!deferPiper) {
+  if (!deferPiperBool) {
     addBootLine('Voice synthesis: loading Piper model…');
     backgroundTasks.push(
       runEnsurePiper().then((ok) => addBootLine(ok ? 'Voice synthesis ready' : 'Voice synthesis deferred', ok)),
@@ -687,7 +839,10 @@ async function bootSequence() {
     void Promise.all(backgroundTasks);
     const status = await fetchBackendStatus();
     if (!status?.llmReady) {
-      addBootLine('LM Studio offline — start LM Studio first', false);
+      addBootLine(
+        offlineEnv.OLLAMA_BIN ? 'Neural core warming up…' : 'LM Studio offline — start LM Studio first',
+        !!offlineEnv.OLLAMA_BIN,
+      );
     }
     logBoot(`boot complete in ${Date.now() - bootStarted}ms`);
     loadMainApp(status);

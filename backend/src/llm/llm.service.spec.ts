@@ -1,6 +1,7 @@
 import { EnsureLlmService } from './ensure-llm.service';
 import { LlmService } from './llm.service';
 import { ClaudeProvider } from './claude.provider';
+import { GroqProvider } from './groq.provider';
 import { LmStudioProvider } from './lmstudio.provider';
 import { OllamaProvider } from './ollama.provider';
 
@@ -9,6 +10,7 @@ describe('LlmService ensureLocalRuntime', () => {
   let lmstudio: jest.Mocked<Pick<LmStudioProvider, 'name' | 'chat' | 'isReady'>>;
   let ollama: jest.Mocked<Pick<OllamaProvider, 'name' | 'chat' | 'isReady'>>;
   let claude: jest.Mocked<Pick<ClaudeProvider, 'name' | 'chat'>>;
+  let groq: jest.Mocked<Pick<GroqProvider, 'name' | 'chat' | 'isReady'>>;
   let service: LlmService;
 
   beforeEach(() => {
@@ -28,10 +30,16 @@ describe('LlmService ensureLocalRuntime', () => {
       name: 'claude',
       chat: jest.fn().mockResolvedValue({ content: 'hi', toolCalls: [] }),
     };
+    groq = {
+      name: 'groq',
+      chat: jest.fn().mockResolvedValue({ content: 'hi', toolCalls: [] }),
+      isReady: jest.fn().mockResolvedValue({ ok: true, model: 'llama-3.3-70b-versatile' }),
+    };
     service = new LlmService(
       { get: () => 'lmstudio' } as never,
       ollama as unknown as OllamaProvider,
       claude as unknown as ClaudeProvider,
+      groq as unknown as GroqProvider,
       lmstudio as unknown as LmStudioProvider,
       ensureLlm as unknown as EnsureLlmService,
     );

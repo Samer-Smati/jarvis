@@ -13,11 +13,19 @@ import { VoiceService } from '../core/voice.service';
   standalone: false,
 })
 export class SettingsComponent implements OnInit {
-  providers = [
+  readonly allProviders = [
+    { label: 'Groq Cloud (free online)', value: 'groq' },
     { label: 'LM Studio (local)', value: 'lmstudio' },
     { label: 'Ollama (local)', value: 'ollama' },
     { label: 'Claude API', value: 'claude' },
   ];
+  readonly onlineProviders = [
+    { label: 'Groq Cloud (free online)', value: 'groq' },
+    { label: 'Claude API', value: 'claude' },
+  ];
+  get providers() {
+    return this.isDesktop ? this.allProviders : this.onlineProviders;
+  }
   ttsEngines = [
     { label: 'Piper (local neural)', value: 'piper' },
     { label: 'Browser (OS voices)', value: 'browser' },
@@ -26,7 +34,7 @@ export class SettingsComponent implements OnInit {
     { label: 'Whisper (local, default)', value: 'whisper' },
     { label: 'Browser (fast)', value: 'browser' },
   ];
-  selectedProvider = 'ollama';
+  selectedProvider = 'groq';
   skills: SkillInfo[] = [];
   voiceEnabled: boolean;
   ttsSupported: boolean;
@@ -61,7 +69,15 @@ export class SettingsComponent implements OnInit {
 
   ngOnInit(): void {
     this.api.status().subscribe({
-      next: (status) => (this.selectedProvider = status?.provider ?? 'ollama'),
+      next: (status) => {
+        const provider = status?.provider ?? 'groq';
+        if (!this.isDesktop && (provider === 'lmstudio' || provider === 'ollama')) {
+          this.selectedProvider = 'groq';
+          this.changeProvider('groq');
+        } else {
+          this.selectedProvider = provider;
+        }
+      },
     });
     this.api.skills().subscribe({ next: (skills) => (this.skills = skills) });
     this.loadPermissions();

@@ -12,7 +12,10 @@
     { "from": "backend/node_modules", "to": "backend/node_modules" },
     { "from": "backend/.env", "to": "backend/.env" },
     { "from": "scripts/ensure-ai.js", "to": "scripts/ensure-ai.js" },
-    { "from": "scripts/ensure-piper.js", "to": "scripts/ensure-piper.js" }
+    { "from": "scripts/ensure-piper.js", "to": "scripts/ensure-piper.js" },
+    { "from": "scripts/ensure-bundled-ollama.js", "to": "scripts/ensure-bundled-ollama.js" },
+    { "from": "bundled/ollama", "to": "bundled/ollama" },
+    { "from": "bundled/piper-cache", "to": "bundled/piper-cache" }
   ],
   "win": {
     "target": [

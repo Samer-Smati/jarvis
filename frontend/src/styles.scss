@@ -168,10 +168,23 @@ h1, h2, h3, .hud-title {
 
 .jarvis-select-panel {
   z-index: 1100 !important;
+  min-width: 16rem !important;
   background: var(--jarvis-panel) !important;
   border: 1px solid var(--jarvis-border) !important;
   box-shadow: 0 0 18px rgba(23, 209, 255, 0.12), inset 0 0 24px rgba(23, 209, 255, 0.04) !important;
   backdrop-filter: blur(6px);
+}
+
+.p-select {
+  width: 100%;
+  min-width: 14rem;
+}
+
+.p-select .p-select-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 textarea,

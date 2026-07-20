@@ -41,6 +41,7 @@ export interface BriefingEvent {
 export class ChatService {
   private socket?: Socket;
   private connected = false;
+  private useSse = !!environment.useSse;
 
   private tokenSubject = new Subject<TokenEvent>();
   private toolStartSubject = new Subject<ToolStartEvent>();
@@ -65,7 +66,8 @@ export class ChatService {
   constructor(private zone: NgZone) {}
 
   connect(): void {
-    if (this.connected) {
+    if (this.connected || this.useSse) {
+      this.connected = true;
       return;
     }
     this.connected = true;
@@ -90,17 +92,132 @@ export class ChatService {
 
   sendMessage(conversationId: string, text: string): void {
     this.connect();
+    if (this.useSse) {
+      void this.sendViaSse(conversationId, text);
+      return;
+    }
     this.socket?.emit('user_message', { conversationId, text, platform: clientPlatform() });
   }
 
   respondToConfirmation(id: string, approved: boolean): void {
+    if (this.useSse) {
+      void this.postJson('/api/chat/confirmation', { id, approved });
+      return;
+    }
     this.connect();
     this.socket?.emit('confirmation_response', { id, approved });
   }
 
   respondToPermission(id: string, approved: boolean): void {
+    if (this.useSse) {
+      void this.postJson('/api/chat/permission', { id, approved, platform: clientPlatform() });
+      return;
+    }
     this.connect();
     this.socket?.emit('permission_response', { id, approved, platform: clientPlatform() });
+  }
+
+  private apiBase(): string {
+    return environment.apiUrl ? `${environment.apiUrl}/api` : '/api';
+  }
+
+  private async postJson(path: string, body: unknown): Promise<void> {
+    const base = environment.apiUrl || '';
+    await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  private async sendViaSse(conversationId: string, text: string): Promise<void> {
+    const base = environment.apiUrl || '';
+    try {
+      const res = await fetch(`${base}/api/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+        body: JSON.stringify({ conversationId, text, platform: clientPlatform() }),
+      });
+      if (!res.ok || !res.body) {
+        this.zone.run(() =>
+          this.errorSubject.next({ conversationId, message: `Chat failed (${res.status})` }),
+        );
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        buffer = this.consumeSseBuffer(buffer);
+      }
+      buffer = this.consumeSseBuffer(`${buffer}\n\n`);
+    } catch (error) {
+      this.zone.run(() =>
+        this.errorSubject.next({ conversationId, message: (error as Error).message }),
+      );
+    }
+  }
+
+  private consumeSseBuffer(buffer: string): string {
+    const blocks = buffer.split('\n\n');
+    const rest = blocks.pop() ?? '';
+    for (const block of blocks) {
+      if (!block.trim()) {
+        continue;
+      }
+      let event = 'message';
+      let dataLine = '';
+      for (const line of block.split('\n')) {
+        if (line.startsWith('event:')) {
+          event = line.slice(6).trim();
+        } else if (line.startsWith('data:')) {
+          dataLine = line.slice(5).trim();
+        }
+      }
+      if (!dataLine) {
+        continue;
+      }
+      try {
+        const payload = JSON.parse(dataLine);
+        this.zone.run(() => this.dispatchSse(event, payload));
+      } catch {
+        /* ignore malformed chunk */
+      }
+    }
+    return rest;
+  }
+
+  private dispatchSse(event: string, payload: unknown): void {
+    switch (event) {
+      case 'token':
+        this.tokenSubject.next(payload as TokenEvent);
+        break;
+      case 'tool_start':
+        this.toolStartSubject.next(payload as ToolStartEvent);
+        break;
+      case 'tool_end':
+        this.toolEndSubject.next(payload as ToolEndEvent);
+        break;
+      case 'confirmation_request':
+        this.confirmationSubject.next((payload as { request: ConfirmationRequest }).request);
+        break;
+      case 'permission_request':
+        this.permissionSubject.next((payload as { request: PermissionRequest }).request);
+        break;
+      case 'done':
+        this.doneSubject.next(payload as DoneEvent);
+        break;
+      case 'agent_error':
+        this.errorSubject.next(payload as AgentErrorEvent);
+        break;
+      default:
+        break;
+    }
   }
 
   private bind<T>(event: string, subject: Subject<T>): void {

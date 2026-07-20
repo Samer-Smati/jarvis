@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { execFile } from 'child_process';
+import { existsSync } from 'fs';
 import { promisify } from 'util';
 import { LmStudioProvider } from './lmstudio.provider';
 import { OllamaProvider } from './ollama.provider';
@@ -124,13 +125,21 @@ export class EnsureLlmService {
   }
 
   private async startOllama(): Promise<EnsureLlmResult> {
-    if (!(await this.hasCommand('ollama'))) {
+    const ollamaBin = process.env.OLLAMA_BIN?.trim() || 'ollama';
+    const hasBin =
+      ollamaBin.includes('/') || ollamaBin.includes('\\')
+        ? existsSync(ollamaBin)
+        : await this.hasCommand(ollamaBin);
+    if (!hasBin) {
       return { ok: false, error: 'Ollama CLI not found' };
     }
 
     this.logger.log('Starting Ollama...');
-    // Detached serve — do not await forever.
-    void this.runCommand('ollama', ['serve']).catch(() => undefined);
+    const env = { ...process.env };
+    if (process.env.OLLAMA_MODELS) {
+      env.OLLAMA_MODELS = process.env.OLLAMA_MODELS;
+    }
+    void this.runCommand(ollamaBin, ['serve'], env).catch(() => undefined);
     await this.sleep(4000);
 
     const ready = await this.waitFor(() => this.ollama.isReady(), 30_000, 2000);
@@ -167,12 +176,13 @@ export class EnsureLlmService {
     }
   }
 
-  private async runCommand(command: string, args: string[]): Promise<string> {
+  private async runCommand(command: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
     try {
       const { stdout, stderr } = await execFileAsync(command, args, {
         windowsHide: true,
         timeout: 180_000,
         maxBuffer: 2 * 1024 * 1024,
+        env: env ?? process.env,
       });
       return `${stdout ?? ''}${stderr ?? ''}`;
     } catch (error) {

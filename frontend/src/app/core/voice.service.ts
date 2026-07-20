@@ -2,6 +2,7 @@ import { Injectable, NgZone } from '@angular/core';
 import { BehaviorSubject, firstValueFrom, Observable, Subject } from 'rxjs';
 import { ApiService } from './api.service';
 import { TtsStatus } from './models';
+import { isDesktopClient } from './platform.util';
 
 interface SpeechRecognitionLike {
   lang: string;
@@ -75,7 +76,13 @@ export class VoiceService {
   private recognition?: SpeechRecognitionLike;
   private enVoice?: SpeechSynthesisVoice;
   private whisperAvailable = true;
-  private preferBrowserStt = localStorage.getItem(FAST_STT_KEY) === 'true';
+  private preferBrowserStt = (() => {
+    const saved = localStorage.getItem(FAST_STT_KEY);
+    if (saved !== null) {
+      return saved === 'true';
+    }
+    return !isDesktopClient();
+  })();
   private wakeWordEnabled = localStorage.getItem(WAKE_WORD_KEY) === 'true';
   private wakeRecognition?: SpeechRecognitionLike;
   private wakeWordActive = false;
@@ -86,8 +93,13 @@ export class VoiceService {
   private speechQueue: Array<{ text: string; lang: string; jarvis: boolean; resolve: () => void }> = [];
   private queueSpeaking = false;
 
-  private enginePreference: 'piper' | 'browser' =
-    (localStorage.getItem(TTS_ENGINE_KEY) as 'piper' | 'browser' | null) ?? 'piper';
+  private enginePreference: 'piper' | 'browser' = (() => {
+    const saved = localStorage.getItem(TTS_ENGINE_KEY) as 'piper' | 'browser' | null;
+    if (saved) {
+      return saved;
+    }
+    return isDesktopClient() ? 'piper' : 'browser';
+  })();
   private activeEngine: 'piper' | 'browser' = 'browser';
   private piperReady = false;
   private currentAudio?: HTMLAudioElement;

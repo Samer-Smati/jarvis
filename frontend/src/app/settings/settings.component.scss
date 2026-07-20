@@ -21,8 +21,23 @@
 .stt-engine-select {
   display: block;
   width: 100%;
-  max-width: 22rem;
+  min-width: 16rem;
   margin-top: 0.75rem;
+}
+
+:host ::ng-deep .provider-select .p-select,
+:host ::ng-deep .tts-engine-select .p-select,
+:host ::ng-deep .stt-engine-select .p-select {
+  width: 100%;
+  min-width: 16rem;
+}
+
+:host ::ng-deep .provider-select .p-select-label,
+:host ::ng-deep .tts-engine-select .p-select-label,
+:host ::ng-deep .stt-engine-select .p-select-label {
+  display: block;
+  width: 100%;
+  min-width: 12rem;
 }
 
 .voice-settings-col {
@@ -50,8 +65,8 @@
 
 .voice-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
   gap: 1rem;
 }
 
@@ -60,6 +75,7 @@
   align-items: center;
   gap: 1rem;
   flex-shrink: 0;
+  align-self: flex-end;
 }
 
 .skill-row {

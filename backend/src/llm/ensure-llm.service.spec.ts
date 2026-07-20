@@ -8,6 +8,7 @@ describe('EnsureLlmService', () => {
   let service: EnsureLlmService;
 
   beforeEach(() => {
+    process.env.JARVIS_LLM_ENSURE = 'full';
     lmstudio = {
       isReady: jest.fn(),
       setPreferredModel: jest.fn(),

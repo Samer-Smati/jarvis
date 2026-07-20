@@ -1,6 +1,6 @@
 {
   "name": "jarvis",
-  "version": "1.0.27",
+  "version": "1.0.29",
   "private": true,
   "description": "J.A.R.V.I.S — personal AI assistant (Iron Man style)",
   "main": "desktop/main.js",
@@ -12,24 +12,41 @@
     "backend": "npm run start:dev --prefix backend",
     "frontend": "npm run start --prefix frontend",
     "build": "npm run build --prefix backend && npm run build --prefix frontend",
+    "vercel-build": "npm run build --prefix backend && npm run build --prefix frontend",
     "build:desktop": "npm run build --prefix frontend && node scripts/copy-frontend.js && npm run ensure:backend-dev && npm run build --prefix backend",
     "bump:version": "node scripts/bump-version.js",
-    "build:desktop:pack": "node scripts/bump-version.js && npm run build:desktop && npm prune --omit=dev --prefix backend && node scripts/prepare-desktop-pack.js && node scripts/rebuild-electron-native.js && node scripts/verify-native-pack.js",
+    "build:desktop:pack": "node scripts/bump-version.js && npm run build:desktop && node scripts/bundle-desktop-models.js && node scripts/prepare-desktop-env.js && npm prune --omit=dev --prefix backend && node scripts/prepare-desktop-pack.js && node scripts/rebuild-electron-native.js && node scripts/verify-native-pack.js",
     "rebuild:electron": "node scripts/rebuild-electron-native.js",
     "ensure:backend-dev": "node scripts/ensure-backend-dev.js",
     "desktop:dev": "npm run build:desktop && electron desktop/main.js",
     "desktop:dev:fast": "electron desktop/main.js",
+    "desktop:remote": "node scripts/desktop-remote.js",
     "desktop:pack:dir": "npm run build:desktop:pack && node scripts/pre-pack-release.js && npx electron-builder --dir --win --config electron-builder.json && node scripts/create-desktop-launcher.js && npm install --prefix backend",
     "desktop:pack": "npm run build:desktop:pack && node scripts/pre-pack-release.js && node scripts/pack-with-progress.js --win portable --config electron-builder.json && npm install --prefix backend",
     "desktop:pack:fast": "npm run desktop:pack:dir",
     "desktop:pack:all": "node scripts/pack-all.js",
     "desktop:pack:setup": "npm run build:desktop:pack && node scripts/pre-pack-release.js && node scripts/pack-with-progress.js --win nsis --config electron-builder.json && npm install --prefix backend",
-    "test": "npm test --prefix backend"
+    "desktop:pack:setup:slim": "node scripts/bump-version.js && npm run build:desktop && npm prune --omit=dev --prefix backend && node scripts/prepare-desktop-pack.js && node scripts/rebuild-electron-native.js && node scripts/verify-native-pack.js && node scripts/pre-pack-release.js && node scripts/pack-with-progress.js --win nsis --config electron-builder.json && npm install --prefix backend",
+    "bundle:desktop-models": "node scripts/bundle-desktop-models.js",
+    "test": "npm test --prefix backend",
+    "perf:smoke": "node scripts/perf-smoke.js",
+    "perf:desktop": "node scripts/desktop-perf.js",
+    "perf:mobile": "node scripts/mobile-perf.js",
+    "test:desktop-app": "node scripts/test-desktop-app.js",
+    "test:desktop-app:remote": "node scripts/test-desktop-app.js --remote",
+    "test:mobile-app": "node scripts/test-mobile-app.js",
+    "test:apps": "node scripts/test-apps.js",
+    "test:human": "node scripts/test-human-e2e.js",
+    "android:sync": "npm run build:mobile --prefix frontend && npx cap sync android --cwd frontend",
+    "android:open": "npx cap open android --cwd frontend",
+    "android:apk": "node scripts/build-android-apk.js"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.2",
+    "@playwright/test": "^1.61.1",
     "concurrently": "^9.2.0",
     "electron": "^35.0.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "playwright": "^1.61.1"
   }
 }

@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { ClaudeProvider } from './claude.provider';
 import { EmbeddingService } from './embedding.service';
 import { EnsureLlmService } from './ensure-llm.service';
+import { GroqProvider } from './groq.provider';
 import { LlmService } from './llm.service';
 import { LLM_PROVIDER } from './llm.types';
 import { LmStudioProvider } from './lmstudio.provider';
@@ -12,6 +13,7 @@ import { OllamaProvider } from './ollama.provider';
   providers: [
     OllamaProvider,
     ClaudeProvider,
+    GroqProvider,
     LmStudioProvider,
     EmbeddingService,
     EnsureLlmService,

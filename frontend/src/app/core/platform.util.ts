@@ -8,3 +8,12 @@ export function clientPlatform(): ClientPlatform {
 export function isDesktopClient(): boolean {
   return clientPlatform() === 'desktop';
 }
+
+export function isNativeMobile(): boolean {
+  const cap = (window as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+  return !!cap?.isNativePlatform?.();
+}
+
+export function isOnlineClient(): boolean {
+  return !isDesktopClient();
+}

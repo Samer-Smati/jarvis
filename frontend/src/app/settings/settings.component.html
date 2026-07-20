@@ -2,7 +2,7 @@
   <span class="hud-label">// Protocols</span>
 
   <p-card header="Neural core">
-    <p class="hint">Choose which brain JARVIS uses for reasoning. Claude requires an API key on the backend.</p>
+    <p class="hint">Choose which brain JARVIS uses for reasoning. Web and mobile use Groq Cloud (free). Desktop can also use local models.</p>
     <p-select
       class="provider-select"
       panelStyleClass="jarvis-select-panel"
@@ -11,6 +11,8 @@
       [(ngModel)]="selectedProvider"
       optionLabel="label"
       optionValue="value"
+      placeholder="Select neural core"
+      [style]="{ width: '100%' }"
       (onChange)="changeProvider($event.value)">
     </p-select>
   </p-card>
@@ -29,6 +31,8 @@
           [(ngModel)]="ttsEngine"
           optionLabel="label"
           optionValue="value"
+          placeholder="Select voice output"
+          [style]="{ width: '100%' }"
           (onChange)="changeTtsEngine($event.value)">
         </p-select>
         <p class="hint piper-status" *ngIf="ttsEngine === 'piper'">
@@ -45,6 +49,8 @@
           [(ngModel)]="sttEngine"
           optionLabel="label"
           optionValue="value"
+          placeholder="Select mic input"
+          [style]="{ width: '100%' }"
           (onChange)="changeSttEngine($event.value)">
         </p-select>
         <div class="wake-row">

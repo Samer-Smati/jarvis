@@ -15,13 +15,20 @@ const SLIM_DIRS = [
   path.join(NM, 'onnxruntime-web'),
 ];
 
-for (const dir of SLIM_DIRS) {
-  if (!fs.existsSync(dir)) {
-    continue;
+const bundledMarker = path.join(__dirname, '..', 'bundled', '.bundle-complete');
+const skipSlim = process.env.JARVIS_BUNDLE_MODELS === '1' || fs.existsSync(bundledMarker);
+
+if (skipSlim) {
+  console.log('[jarvis] Desktop pack: keeping voice/STT deps (offline bundle mode).');
+} else {
+  for (const dir of SLIM_DIRS) {
+    if (!fs.existsSync(dir)) {
+      continue;
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+    const label = path.relative(NM, dir);
+    console.log(`[jarvis] Desktop pack: excluded ${label}`);
   }
-  fs.rmSync(dir, { recursive: true, force: true });
-  const label = path.relative(NM, dir);
-  console.log(`[jarvis] Desktop pack: excluded ${label}`);
 }
 
 require('./slim-node-modules.js');

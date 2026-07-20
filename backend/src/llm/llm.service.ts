@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ClaudeProvider } from './claude.provider';
 import { EnsureLlmService } from './ensure-llm.service';
+import { GroqProvider } from './groq.provider';
 import { LlmChatOptions, LlmChatResult, LlmProvider } from './llm.types';
 import { LmStudioProvider } from './lmstudio.provider';
 import { OllamaProvider } from './ollama.provider';
@@ -18,16 +19,18 @@ export class LlmService implements LlmProvider {
     config: ConfigService,
     ollama: OllamaProvider,
     claude: ClaudeProvider,
+    groq: GroqProvider,
     lmstudio: LmStudioProvider,
     private readonly ensureLlm: EnsureLlmService,
   ) {
     this.providers = new Map<string, LlmProvider>([
       [ollama.name, ollama],
       [claude.name, claude],
+      [groq.name, groq],
       [lmstudio.name, lmstudio],
     ]);
     const configured = config.get<string>('LLM_PROVIDER') ?? 'ollama';
-    this.active = this.providers.get(configured) ?? ollama;
+    this.active = this.providers.get(configured) ?? groq;
   }
 
   get name(): string {
@@ -66,7 +69,13 @@ export class LlmService implements LlmProvider {
 
   /** Start LM Studio / Ollama with a default model when nothing is online. */
   async ensureLocalRuntime(): Promise<void> {
-    if (this.active.name === 'claude') {
+    if (process.env.VERCEL || process.env.JARVIS_SERVERLESS === '1') {
+      if (this.active.name === 'claude' || this.active.name === 'groq') {
+        return;
+      }
+      throw new Error('Serverless JARVIS uses Groq or Claude. Set GROQ_API_KEY or ANTHROPIC_API_KEY on Vercel.');
+    }
+    if (this.active.name === 'claude' || this.active.name === 'groq') {
       return;
     }
 

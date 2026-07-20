@@ -18,14 +18,19 @@ import { VoiceModule } from './voice/voice.module';
 import { HealthModule } from './health/health.module';
 
 const publicPath = process.env.FRONTEND_PATH ?? join(__dirname, '..', 'public');
-const staticModules = existsSync(publicPath)
-  ? [
-      ServeStaticModule.forRoot({
-        rootPath: publicPath,
-        exclude: ['/api*', '/socket.io*'],
-      }),
-    ]
-  : [];
+const isServerless = !!process.env.VERCEL || process.env.JARVIS_SERVERLESS === '1';
+const staticModules =
+  !isServerless && existsSync(publicPath)
+    ? [
+        ServeStaticModule.forRoot({
+          rootPath: publicPath,
+          exclude: ['/api/(.*)', '/socket.io/(.*)'],
+        }),
+      ]
+    : [];
+
+const scheduleModules = isServerless ? [] : [ScheduleModule.forRoot(), SchedulerModule];
+const voiceModules = isServerless ? [] : [VoiceModule];
 
 @Module({
   imports: [
@@ -35,12 +40,14 @@ const staticModules = existsSync(publicPath)
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         type: 'better-sqlite3',
-        database: config.get<string>('DATABASE_PATH') ?? 'data/jarvis.sqlite',
+        database: isServerless
+          ? (process.env.DATABASE_PATH ?? '/tmp/jarvis.sqlite')
+          : (config.get<string>('DATABASE_PATH') ?? 'data/jarvis.sqlite'),
         autoLoadEntities: true,
         synchronize: true,
       }),
     }),
-    ScheduleModule.forRoot(),
+    ...scheduleModules,
     LlmModule,
     MemoryModule,
     GuardrailsModule,
@@ -49,8 +56,7 @@ const staticModules = existsSync(publicPath)
     IntegrationsModule,
     OrchestratorModule,
     ChatModule,
-    SchedulerModule,
-    VoiceModule,
+    ...voiceModules,
     HealthModule,
   ],
 })

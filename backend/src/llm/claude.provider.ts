@@ -22,6 +22,13 @@ export class ClaudeProvider implements LlmProvider {
     this.model = config.get<string>('CLAUDE_MODEL') ?? 'claude-sonnet-4-20250514';
   }
 
+  async isReady(): Promise<{ ok: boolean; model?: string; error?: string }> {
+    if (!this.apiKey) {
+      return { ok: false, error: 'Set ANTHROPIC_API_KEY' };
+    }
+    return { ok: true, model: this.model };
+  }
+
   async chat(options: LlmChatOptions): Promise<LlmChatResult> {
     const client = this.getClient();
     const system = options.messages

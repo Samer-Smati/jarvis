@@ -2,7 +2,7 @@
  * Ensures a local LLM is running before JARVIS starts.
  * Modes: JARVIS_LLM_ENSURE=off|probe|full (default probe — no auto model load).
  */
-const { execSync } = require('child_process');
+const { execSync, spawn } = require('child_process');
 const http = require('http');
 const https = require('https');
 
@@ -10,7 +10,8 @@ const ENSURE_MODE = process.env.JARVIS_LLM_ENSURE ?? 'probe';
 const LMSTUDIO_BASE = (process.env.LMSTUDIO_BASE_URL ?? 'http://localhost:1234/v1').replace(/\/$/, '');
 const PREFERRED_CHAT = process.env.LMSTUDIO_CHAT_MODEL || 'qwen/qwen3.5-9b';
 const OLLAMA_BASE = (process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434').replace(/\/$/, '');
-const OLLAMA_CHAT = process.env.OLLAMA_CHAT_MODEL || 'llama3.2';
+const OLLAMA_CHAT = process.env.OLLAMA_CHAT_MODEL || 'llama3.2:1b';
+const OLLAMA_BIN = process.env.OLLAMA_BIN?.trim();
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -149,14 +150,27 @@ async function ensureLmStudioFull() {
 }
 
 async function ensureOllamaFull() {
-  if (!hasCmd('ollama')) {
+  const bin = OLLAMA_BIN || 'ollama';
+  const hasBin =
+    OLLAMA_BIN && (OLLAMA_BIN.includes('/') || OLLAMA_BIN.includes('\\'))
+      ? require('fs').existsSync(OLLAMA_BIN)
+      : hasCmd(bin.replace(/\.exe$/i, '')) || (OLLAMA_BIN && require('fs').existsSync(OLLAMA_BIN));
+  if (!hasBin) {
     return false;
   }
   try {
     await get(`${OLLAMA_BASE}/api/tags`, 5000);
   } catch {
     console.log('[jarvis] Starting Ollama...');
-    run('ollama serve', true);
+    const env = { ...process.env };
+    if (process.env.OLLAMA_MODELS) {
+      env.OLLAMA_MODELS = process.env.OLLAMA_MODELS;
+    }
+    if (OLLAMA_BIN) {
+      spawn(OLLAMA_BIN, ['serve'], { env, detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    } else {
+      run('ollama serve', true);
+    }
     await sleep(4000);
   }
 
@@ -191,6 +205,13 @@ async function main() {
 
   if (ENSURE_MODE === 'probe') {
     console.log('[jarvis] Probing local AI runtimes (no auto-start)...');
+    if (process.env.JARVIS_BUNDLED_OLLAMA_DIR) {
+      const ollamaOk = await probeOllama();
+      if (ollamaOk) {
+        console.log('[jarvis] Ready. Provider: ollama (bundled)');
+        process.exit(0);
+      }
+    }
     const lmOk = await probeLmStudio();
     if (lmOk) {
       console.log('[jarvis] Ready. Provider: lmstudio');
@@ -206,6 +227,13 @@ async function main() {
   }
 
   console.log('[jarvis] Full ensure — scanning local AI runtimes...');
+  if (process.env.JARVIS_BUNDLED_OLLAMA_DIR || process.env.OLLAMA_BIN) {
+    const ollamaOk = await ensureOllamaFull().catch(() => false);
+    if (ollamaOk) {
+      console.log('[jarvis] Ready. Provider: ollama (bundled)');
+      process.exit(0);
+    }
+  }
   const lmOk = await ensureLmStudioFull().catch((e) => {
     console.warn(`[jarvis] LM Studio setup failed: ${e.message}`);
     return false;

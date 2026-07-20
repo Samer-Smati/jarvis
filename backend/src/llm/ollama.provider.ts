@@ -52,9 +52,12 @@ export class OllamaProvider implements LlmProvider {
   }
 
   async chat(options: LlmChatOptions): Promise<LlmChatResult> {
+    const perf =
+      process.env.JARVIS_PERFORMANCE_MODE === '1' || process.env.JARVIS_PERFORMANCE_MODE === 'true';
     const body = {
       model: this.model,
       stream: true,
+      keep_alive: '24h',
       messages: options.messages.map((m) => this.toOllamaMessage(m)),
       tools: options.tools?.map((t) => ({
         type: 'function',
@@ -64,6 +67,15 @@ export class OllamaProvider implements LlmProvider {
           parameters: t.parameters,
         },
       })),
+      ...(perf
+        ? {
+            options: {
+              num_ctx: 2048,
+              num_predict: 512,
+              temperature: 0.6,
+            },
+          }
+        : {}),
     };
 
     let response: Response;

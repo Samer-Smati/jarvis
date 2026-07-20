@@ -23,6 +23,6 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     fixture.detectChanges();
     const compiled = fixture.nativeElement as HTMLElement;
-    expect(compiled.querySelector('.brand .name')?.textContent).toContain('JARVIS');
+    expect(compiled.querySelector('.brand .name')?.textContent).toContain('J.A.R.V.I.S');
   });
 });
