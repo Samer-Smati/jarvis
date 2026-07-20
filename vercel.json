@@ -7,7 +7,6 @@
   "outputDirectory": "frontend/dist/frontend/browser",
   "functions": {
     "api/index.ts": {
-      "memory": 1024,
       "maxDuration": 60,
       "includeFiles": "backend/dist/**,backend/node_modules/**"
     }
