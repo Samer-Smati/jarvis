@@ -38,14 +38,25 @@ const voiceModules = isServerless ? [] : [VoiceModule];
     ...staticModules,
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        type: 'better-sqlite3',
-        database: isServerless
-          ? (process.env.DATABASE_PATH ?? '/tmp/jarvis.sqlite')
-          : (config.get<string>('DATABASE_PATH') ?? 'data/jarvis.sqlite'),
-        autoLoadEntities: true,
-        synchronize: true,
-      }),
+      useFactory: (config: ConfigService) => {
+        if (isServerless) {
+          const dbPath = process.env.DATABASE_PATH ?? '/tmp/jarvis.sqlite';
+          mkdirSync(join(dbPath, '..'), { recursive: true });
+          return {
+            type: 'sqljs' as const,
+            location: dbPath,
+            autoSave: true,
+            autoLoadEntities: true,
+            synchronize: true,
+          };
+        }
+        return {
+          type: 'better-sqlite3' as const,
+          database: config.get<string>('DATABASE_PATH') ?? 'data/jarvis.sqlite',
+          autoLoadEntities: true,
+          synchronize: true,
+        };
+      },
     }),
     ...scheduleModules,
     LlmModule,
