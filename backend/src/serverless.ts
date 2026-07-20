@@ -12,7 +12,8 @@ function bootstrap(): Promise<express.Express> {
       process.env.VERCEL = process.env.VERCEL ?? '1';
       process.env.JARVIS_SERVERLESS = '1';
       process.env.JARVIS_LLM_ENSURE = 'off';
-      process.env.LLM_PROVIDER = process.env.LLM_PROVIDER ?? 'groq';
+      process.env.LLM_PROVIDER =
+        process.env.LLM_PROVIDER ?? (process.env.XAI_API_KEY ? 'xai' : 'groq');
       process.env.DATABASE_PATH = process.env.DATABASE_PATH ?? '/tmp/jarvis.sqlite';
 
       const nest = await NestFactory.create(AppModule, new ExpressAdapter(server), {

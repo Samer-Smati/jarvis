@@ -2,6 +2,7 @@ import { EnsureLlmService } from './ensure-llm.service';
 import { LlmService } from './llm.service';
 import { ClaudeProvider } from './claude.provider';
 import { GroqProvider } from './groq.provider';
+import { XaiProvider } from './xai.provider';
 import { LmStudioProvider } from './lmstudio.provider';
 import { OllamaProvider } from './ollama.provider';
 
@@ -11,9 +12,12 @@ describe('LlmService ensureLocalRuntime', () => {
   let ollama: jest.Mocked<Pick<OllamaProvider, 'name' | 'chat' | 'isReady'>>;
   let claude: jest.Mocked<Pick<ClaudeProvider, 'name' | 'chat'>>;
   let groq: jest.Mocked<Pick<GroqProvider, 'name' | 'chat' | 'isReady'>>;
+  let xai: jest.Mocked<Pick<XaiProvider, 'name' | 'chat' | 'isReady'>>;
   let service: LlmService;
 
   beforeEach(() => {
+    delete process.env.VERCEL;
+    delete process.env.JARVIS_SERVERLESS;
     process.env.JARVIS_LLM_ENSURE = 'full';
     ensureLlm = { ensureReady: jest.fn() };
     lmstudio = {
@@ -35,11 +39,17 @@ describe('LlmService ensureLocalRuntime', () => {
       chat: jest.fn().mockResolvedValue({ content: 'hi', toolCalls: [] }),
       isReady: jest.fn().mockResolvedValue({ ok: true, model: 'llama-3.3-70b-versatile' }),
     };
+    xai = {
+      name: 'xai',
+      chat: jest.fn().mockResolvedValue({ content: 'hi', toolCalls: [] }),
+      isReady: jest.fn().mockResolvedValue({ ok: true, model: 'grok-3-fast' }),
+    };
     service = new LlmService(
       { get: () => 'lmstudio' } as never,
       ollama as unknown as OllamaProvider,
       claude as unknown as ClaudeProvider,
       groq as unknown as GroqProvider,
+      xai as unknown as XaiProvider,
       lmstudio as unknown as LmStudioProvider,
       ensureLlm as unknown as EnsureLlmService,
     );

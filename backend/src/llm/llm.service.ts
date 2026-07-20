@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { ClaudeProvider } from './claude.provider';
 import { EnsureLlmService } from './ensure-llm.service';
 import { GroqProvider } from './groq.provider';
+import { XaiProvider } from './xai.provider';
 import { LlmChatOptions, LlmChatResult, LlmProvider } from './llm.types';
 import { LmStudioProvider } from './lmstudio.provider';
 import { OllamaProvider } from './ollama.provider';
@@ -20,6 +21,7 @@ export class LlmService implements LlmProvider {
     ollama: OllamaProvider,
     claude: ClaudeProvider,
     groq: GroqProvider,
+    xai: XaiProvider,
     lmstudio: LmStudioProvider,
     private readonly ensureLlm: EnsureLlmService,
   ) {
@@ -27,10 +29,11 @@ export class LlmService implements LlmProvider {
       [ollama.name, ollama],
       [claude.name, claude],
       [groq.name, groq],
+      [xai.name, xai],
       [lmstudio.name, lmstudio],
     ]);
     const configured = config.get<string>('LLM_PROVIDER') ?? 'ollama';
-    this.active = this.providers.get(configured) ?? groq;
+    this.active = this.providers.get(configured) ?? xai;
   }
 
   get name(): string {
@@ -70,12 +73,14 @@ export class LlmService implements LlmProvider {
   /** Start LM Studio / Ollama with a default model when nothing is online. */
   async ensureLocalRuntime(): Promise<void> {
     if (process.env.VERCEL || process.env.JARVIS_SERVERLESS === '1') {
-      if (this.active.name === 'claude' || this.active.name === 'groq') {
+      if (this.active.name === 'claude' || this.active.name === 'groq' || this.active.name === 'xai') {
         return;
       }
-      throw new Error('Serverless JARVIS uses Groq or Claude. Set GROQ_API_KEY or ANTHROPIC_API_KEY on Vercel.');
+      throw new Error(
+        'Serverless JARVIS uses xAI, Groq or Claude. Set XAI_API_KEY, GROQ_API_KEY or ANTHROPIC_API_KEY on Vercel.',
+      );
     }
-    if (this.active.name === 'claude' || this.active.name === 'groq') {
+    if (this.active.name === 'claude' || this.active.name === 'groq' || this.active.name === 'xai') {
       return;
     }
 

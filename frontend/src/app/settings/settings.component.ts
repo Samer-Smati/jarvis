@@ -14,12 +14,14 @@ import { VoiceService } from '../core/voice.service';
 })
 export class SettingsComponent implements OnInit {
   readonly allProviders = [
+    { label: 'Grok (xAI cloud)', value: 'xai' },
     { label: 'Groq Cloud (free online)', value: 'groq' },
     { label: 'LM Studio (local)', value: 'lmstudio' },
     { label: 'Ollama (local)', value: 'ollama' },
     { label: 'Claude API', value: 'claude' },
   ];
   readonly onlineProviders = [
+    { label: 'Grok (xAI cloud)', value: 'xai' },
     { label: 'Groq Cloud (free online)', value: 'groq' },
     { label: 'Claude API', value: 'claude' },
   ];
@@ -34,7 +36,7 @@ export class SettingsComponent implements OnInit {
     { label: 'Whisper (local, default)', value: 'whisper' },
     { label: 'Browser (fast)', value: 'browser' },
   ];
-  selectedProvider = 'groq';
+  selectedProvider = 'xai';
   skills: SkillInfo[] = [];
   voiceEnabled: boolean;
   ttsSupported: boolean;
