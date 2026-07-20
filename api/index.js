@@ -1,12 +1,24 @@
 /** @type {import('@vercel/node').VercelRequest} */
 /** @type {import('@vercel/node').VercelResponse} */
 
+const fs = require('fs');
 const path = require('path');
 const Module = require('module');
 
-const backendRoot = [path.join(process.cwd(), 'backend'), path.join(__dirname, '..', 'backend')].find(
-  (dir) => require('fs').existsSync(path.join(dir, 'dist', 'serverless.js')),
-) ?? path.join(process.cwd(), 'backend');
+function resolveBackendRoot() {
+  const candidates = [
+    path.join(process.cwd(), 'backend'),
+    path.join(__dirname, '..', 'backend'),
+  ];
+  for (const dir of candidates) {
+    if (fs.existsSync(path.join(dir, 'dist', 'serverless.js'))) {
+      return dir;
+    }
+  }
+  return candidates[0];
+}
+
+const backendRoot = resolveBackendRoot();
 const backendModules = path.join(backendRoot, 'node_modules');
 
 if (!process.env.NODE_PATH?.includes(backendModules)) {
@@ -14,18 +26,31 @@ if (!process.env.NODE_PATH?.includes(backendModules)) {
   Module._initPaths();
 }
 
-let handler;
+let nestHandler;
+
+async function loadNestHandler() {
+  if (nestHandler) {
+    return nestHandler;
+  }
+  const mod = require(path.join(backendRoot, 'dist', 'serverless'));
+  nestHandler = mod.default ?? mod;
+  if (typeof nestHandler !== 'function') {
+    throw new Error('serverless handler export missing');
+  }
+  return nestHandler;
+}
 
 module.exports = async (req, res) => {
+  const url = req.url ?? '/';
+
+  if (url.includes('/health') && req.method === 'GET') {
+    res.status(200).json({ ok: true, uptime: process.uptime(), mode: 'vercel-lite' });
+    return;
+  }
+
   try {
-    if (!handler) {
-      const mod = require(path.join(backendRoot, 'dist', 'serverless'));
-      handler = mod.default ?? mod;
-      if (typeof handler !== 'function') {
-        throw new Error('serverless handler export missing');
-      }
-    }
-    return await handler(req, res);
+    const handler = await loadNestHandler();
+    await handler(req, res);
   } catch (error) {
     console.error('[jarvis] api bootstrap failed:', error);
     res.status(500).json({
