@@ -11,8 +11,8 @@ import {
   streamOpenAiChat,
 } from './openai-stream.util';
 
-const DEFAULT_MODEL = 'gemini-2.0-flash';
-const DEFAULT_FALLBACK_MODELS = ['gemini-2.0-flash-lite', 'gemini-1.5-flash'];
+const DEFAULT_MODEL = 'gemini-flash-latest';
+const DEFAULT_FALLBACK_MODELS = ['gemini-2.0-flash', 'gemini-2.0-flash-lite'];
 
 /** Google Gemini — generous free tier via OpenAI-compatible API. https://aistudio.google.com */
 @Injectable()

@@ -11,11 +11,11 @@ import {
   streamOpenAiChat,
 } from './openai-stream.util';
 
-const DEFAULT_MODEL = 'google/gemini-2.0-flash-exp:free';
+const DEFAULT_MODEL = 'openrouter/free';
 const DEFAULT_FALLBACK_MODELS = [
+  'google/gemma-4-26b-a4b-it:free',
+  'google/gemma-4-31b-it:free',
   'qwen/qwen-2.5-7b-instruct:free',
-  'meta-llama/llama-3.3-70b-instruct:free',
-  'deepseek/deepseek-r1-distill-llama-70b:free',
 ];
 
 /** OpenRouter — one API key, many free models. https://openrouter.ai */
