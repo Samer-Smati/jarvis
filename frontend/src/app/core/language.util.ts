@@ -1,5 +1,5 @@
 const DERJA_LATIN =
-  /\b(chno|chnawa|chnou|kifech|kifeh|ta9|9a9|9ra9|3and|m3a|barcha|barsha|tawa|yosor|yesser|moch|mch|bch|behi|nheb|n7eb|s7i7|siidi|siidii|derja|tounes|tunis|tuns)\b|[3597]/i;
+  /\b(chno|chnawa|chnou|chnowa|kifech|kifeh|ta9|ta9es|9a9|9es|9ra9|3and|m3a|barcha|barsha|tawa|yosor|yesser|moch|mch|bch|behi|nheb|n7eb|s7i7|siidi|siidii|derja|tounes|tunis|tuns|lyoum|jaw|skhoun|safi|daraja|rtouba|i7ses|kif)\b|[3597]/i;
 
 export function looksLikeDerjaLatin(text: string): boolean {
   const sample = text.trim();

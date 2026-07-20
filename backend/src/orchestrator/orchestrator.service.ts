@@ -8,7 +8,11 @@ import { PermissionsService } from '../permissions/permissions.service';
 import { SkillRegistry } from '../skills/skill.registry';
 import { OrchestratorEmitter } from './orchestrator.events';
 import { JARVIS_SYSTEM_PROMPT } from './personality';
-import { buildLanguageHint } from './language.util';
+import {
+  buildLanguageHint,
+  buildToolResultLanguageReminder,
+  resolveLanguageMode,
+} from './language.util';
 
 const MAX_TOOL_ITERATIONS = 8;
 
@@ -74,13 +78,19 @@ export class OrchestratorService {
         dateStyle: 'full',
         timeStyle: 'short',
       });
+      const { messages: history, truncated } = await this.memory.loadConversation(conversationId);
+      const recentUserTexts = history
+        .filter((m) => m.role === 'user')
+        .slice(-5)
+        .map((m) => String(m.content ?? ''));
+      const languageMode = resolveLanguageMode(userText, recentUserTexts);
+
       let systemPrompt = `${JARVIS_SYSTEM_PROMPT}\n\nCurrent date and time: ${now}. Use this when interpreting relative dates like "tomorrow" or "next week".`;
-      systemPrompt += buildLanguageHint(userText);
+      systemPrompt += buildLanguageHint(userText, recentUserTexts);
       if (facts.length) {
         systemPrompt += `\n\nKnown facts about the user:\n${facts.map((f) => `- ${f}`).join('\n')}`;
       }
 
-      const { messages: history, truncated } = await this.memory.loadConversation(conversationId);
       if (truncated > 0) {
         systemPrompt += `\n\nNote: ${truncated} older message(s) exist in permanent storage. Episodic log and facts below may cover earlier context.`;
         const olderEvents = await this.memory.recentEvents(15);
@@ -117,7 +127,7 @@ export class OrchestratorService {
           const output = await this.executeToolCall(conversationId, call, emitter, trigger, clientPlatform);
           messages.push({
             role: 'tool',
-            content: output,
+            content: output + buildToolResultLanguageReminder(languageMode),
             toolCallId: call.id,
             toolName: call.name,
           });
