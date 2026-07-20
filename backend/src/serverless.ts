@@ -27,6 +27,14 @@ function bootstrap(): Promise<express.Express> {
 }
 
 export default async function handler(req: express.Request, res: express.Response) {
-  const app = await bootstrap();
-  app(req, res);
+  try {
+    const app = await bootstrap();
+    app(req, res);
+  } catch (error) {
+    console.error('[jarvis] serverless bootstrap failed:', error);
+    res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
