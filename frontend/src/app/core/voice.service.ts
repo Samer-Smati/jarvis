@@ -25,14 +25,17 @@ const VOICE_ENABLED_KEY = 'jarvis.voiceEnabled';
 const HANDS_FREE_KEY = 'jarvis.handsFree';
 const TTS_ENGINE_KEY = 'jarvis.ttsEngine';
 
-const PREFERRED_EN_VOICES = [
-  'Microsoft Andrew Online (Natural) - English (United States)',
+const PREFERRED_JARVIS_VOICES = [
   'Microsoft Aria Online (Natural) - English (United States)',
-  'Microsoft Ryan Online (Natural) - English (United Kingdom)',
+  'Microsoft Jenny Online (Natural) - English (United States)',
   'Microsoft Sonia Online (Natural) - English (United Kingdom)',
-  'Microsoft Guy Online (Natural) - English (United States)',
-  'Google UK English Male',
+  'Google US English',
   'Google UK English Female',
+  'Microsoft Zira - English (United States)',
+  'Microsoft Aria - English (United States)',
+  'Samantha',
+  'Karen',
+  'Microsoft Ryan Online (Natural) - English (United Kingdom)',
   'Microsoft George - English (United Kingdom)',
   'Daniel',
 ];
@@ -43,8 +46,8 @@ const SILENCE_MS = 650;
 const MIN_SPEECH_MS = 250;
 const MAX_RECORD_MS = 30000;
 /** Wait for a full phrase before first speak — avoids robotic micro-chunks. */
-const STREAM_FIRST_MIN = 48;
-const STREAM_MIN_SENTENCE = 24;
+const STREAM_FIRST_MIN = 28;
+const STREAM_MIN_SENTENCE = 16;
 const FAST_STT_KEY = 'jarvis.fastStt';
 const WAKE_WORD_KEY = 'jarvis.wakeWord';
 const WAKE_PHRASE = /\b(hey\s+)?jarvis\b/i;
@@ -326,17 +329,38 @@ export class VoiceService {
   }
 
   speakStreamFlush(): void {
+    this.speakStreamFinish(this.streamBuffer);
+  }
+
+  speakStreamFinish(finalText: string): void {
     if (!this.canSpeak) {
       return;
     }
-    const rest = this.streamBuffer.slice(this.streamSpokenAt).trim();
-    if (rest) {
-      const cleaned = this.cleanForSpeech(rest);
-      if (cleaned) {
-        this.enqueueSpeech(cleaned, this.detectLang(cleaned), true);
+    void this.ensureTtsReady().then(() => {
+      const full = this.cleanForSpeech(finalText?.trim() ?? this.streamBuffer);
+      if (!full) {
+        return;
       }
-      this.streamSpokenAt = this.streamBuffer.length;
-    }
+
+      if (!this.streamStarted) {
+        this.enqueueSpeech(full, this.detectLang(full), true);
+      } else {
+        const queued = this.cleanForSpeech(this.streamBuffer.slice(0, this.streamSpokenAt));
+        let tail = '';
+        if (queued && full.startsWith(queued)) {
+          tail = full.slice(queued.length).trim();
+        } else if (this.streamSpokenAt < full.length) {
+          tail = full.slice(this.streamSpokenAt).trim();
+        }
+        if (tail) {
+          this.enqueueSpeech(tail, this.detectLang(tail), true);
+        }
+      }
+
+      this.streamBuffer = full;
+      this.streamSpokenAt = full.length;
+      this.streamStarted = true;
+    });
   }
 
   speakAsJarvis(text: string): Promise<void> {
@@ -754,12 +778,24 @@ export class VoiceService {
     if (!voices.length) {
       return;
     }
-    for (const name of PREFERRED_EN_VOICES) {
+    for (const name of PREFERRED_JARVIS_VOICES) {
       const match = voices.find((v) => v.name === name);
       if (match) {
         this.enVoice = match;
         return;
       }
+    }
+    const femaleNeural =
+      voices.find(
+        (v) =>
+          /^en/i.test(v.lang) &&
+          /natural|neural|online/i.test(v.name) &&
+          /aria|jenny|sonia|zira|samantha|karen|female|susan|hazel/i.test(v.name),
+      ) ??
+      voices.find((v) => /^en/i.test(v.lang) && /female|aria|jenny|sonia|zira|samantha/i.test(v.name));
+    if (femaleNeural) {
+      this.enVoice = femaleNeural;
+      return;
     }
     // Prefer any Neural / Online / Natural voice over classic robotic ones.
     const neural =
@@ -825,7 +861,7 @@ export class VoiceService {
       }
       // Natural assistant cadence — avoid slow/low “robot” settings.
       utterance.rate = lang.startsWith('ar') ? RATE_AR : RATE_NATURAL;
-      utterance.pitch = PITCH_NATURAL;
+      utterance.pitch = jarvis && lang.startsWith('en') ? 1.04 : PITCH_NATURAL;
       utterance.volume = 1;
       utterance.onstart = () => this.zone.run(() => this.speakingSubject.next(true));
       utterance.onend = () => {

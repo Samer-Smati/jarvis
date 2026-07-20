@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -32,6 +32,26 @@ const staticModules =
 const scheduleModules = isServerless ? [] : [ScheduleModule.forRoot(), SchedulerModule];
 const voiceModules = isServerless ? [] : [VoiceModule];
 
+function resolveSqlJsWasmBinary(): Buffer {
+  const candidates = [
+    join(__dirname, '..', 'node_modules', 'sql.js', 'dist'),
+    process.env.JARVIS_BACKEND_ROOT
+      ? join(process.env.JARVIS_BACKEND_ROOT, 'node_modules', 'sql.js', 'dist')
+      : '',
+    join(process.cwd(), 'backend', 'node_modules', 'sql.js', 'dist'),
+    join(process.cwd(), 'node_modules', 'sql.js', 'dist'),
+  ].filter(Boolean);
+
+  for (const dir of candidates) {
+    const wasmPath = join(dir, 'sql-wasm.wasm');
+    if (existsSync(wasmPath)) {
+      return readFileSync(wasmPath);
+    }
+  }
+
+  throw new Error(`sql.js WASM not found. Checked: ${candidates.join(', ')}`);
+}
+
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -42,7 +62,6 @@ const voiceModules = isServerless ? [] : [VoiceModule];
         if (isServerless) {
           const dbPath = process.env.DATABASE_PATH ?? '/tmp/jarvis.sqlite';
           mkdirSync(dirname(dbPath), { recursive: true });
-          const wasmDir = join(process.cwd(), 'node_modules', 'sql.js', 'dist');
           return {
             type: 'sqljs' as const,
             location: dbPath,
@@ -50,10 +69,7 @@ const voiceModules = isServerless ? [] : [VoiceModule];
             autoLoadEntities: true,
             synchronize: true,
             sqlJsConfig: {
-              locateFile: (file: string) =>
-                existsSync(join(wasmDir, file))
-                  ? join(wasmDir, file)
-                  : `https://sql.js.org/dist/${file}`,
+              wasmBinary: resolveSqlJsWasmBinary(),
             },
           };
         }

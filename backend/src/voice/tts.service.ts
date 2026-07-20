@@ -21,7 +21,7 @@ export class TtsService {
   private cachedStatus?: TtsStatus;
 
   constructor() {
-    this.voiceName = process.env.PIPER_VOICE ?? 'en_GB-alan-medium';
+    this.voiceName = process.env.PIPER_VOICE ?? 'en_US-lessac-medium';
     this.cacheDir = path.resolve(process.env.PIPER_CACHE ?? 'data/piper-cache');
   }
 

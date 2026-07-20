@@ -21,7 +21,7 @@ const lines = [
   'JARVIS_PERFORMANCE_MODE=1',
   'WHISPER_MODEL=Xenova/whisper-tiny',
   'TTS_ENGINE=piper',
-  'PIPER_VOICE=en_GB-alan-medium',
+  'PIPER_VOICE=en_US-lessac-medium',
   'PORT=3000',
   'CORS_ORIGIN=http://127.0.0.1:3847',
   '',

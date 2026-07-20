@@ -411,7 +411,7 @@ function runEnsurePiper() {
     'ensure-piper.js',
     {
       PIPER_CACHE: piperCache,
-      PIPER_VOICE: process.env.PIPER_VOICE ?? 'en_GB-alan-medium',
+      PIPER_VOICE: process.env.PIPER_VOICE ?? 'en_US-lessac-medium',
     },
     300000,
   );
@@ -465,7 +465,7 @@ function startBackend() {
 
     PIPER_CACHE: offlineEnv.PIPER_CACHE ?? path.join(dataDir, 'piper-cache'),
 
-    PIPER_VOICE: process.env.PIPER_VOICE ?? 'en_GB-alan-medium',
+    PIPER_VOICE: process.env.PIPER_VOICE ?? 'en_US-lessac-medium',
 
     JARVIS_LLM_ENSURE: offlineEnv.JARVIS_LLM_ENSURE ?? process.env.JARVIS_LLM_ENSURE ?? 'probe',
 

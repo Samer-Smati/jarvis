@@ -33,7 +33,7 @@ export class LlmService implements LlmProvider {
       [lmstudio.name, lmstudio],
     ]);
     const configured = config.get<string>('LLM_PROVIDER') ?? 'ollama';
-    this.active = this.providers.get(configured) ?? xai;
+    this.active = this.providers.get(configured) ?? groq;
   }
 
   get name(): string {

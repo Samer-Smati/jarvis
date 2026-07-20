@@ -21,7 +21,7 @@
     <div class="voice-row" *ngIf="ttsSupported; else noTts">
       <div class="voice-settings-col">
         <p class="hint">
-          <strong>Output:</strong> Piper (local neural, British JARVIS tone) with browser fallback if Piper is not ready.
+          <strong>Output:</strong> Smooth female assistant voice (natural neural). Web uses your browser voice; desktop can use Piper locally.
         </p>
         <p-select
           class="tts-engine-select"
@@ -36,7 +36,7 @@
           (onChange)="changeTtsEngine($event.value)">
         </p-select>
         <p class="hint piper-status" *ngIf="ttsEngine === 'piper'">
-          Piper: {{ piperReady ? ('ready — ' + (piperModel || 'en_GB-alan-medium')) : 'not ready — using browser voice until model loads' }}
+          Piper: {{ piperReady ? ('ready — ' + (piperModel || 'en_US-lessac-medium')) : 'not ready — using browser female voice until model loads' }}
         </p>
         <p class="hint stt-hint">
           <strong>Input (mic):</strong> Whisper on the backend by default (multilingual, local). Use browser speech for lower latency if you prefer.

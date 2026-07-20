@@ -14,29 +14,29 @@ import { VoiceService } from '../core/voice.service';
 })
 export class SettingsComponent implements OnInit {
   readonly allProviders = [
-    { label: 'Grok (xAI cloud)', value: 'xai' },
     { label: 'Groq Cloud (free online)', value: 'groq' },
+    { label: 'Grok (xAI cloud)', value: 'xai' },
     { label: 'LM Studio (local)', value: 'lmstudio' },
     { label: 'Ollama (local)', value: 'ollama' },
     { label: 'Claude API', value: 'claude' },
   ];
   readonly onlineProviders = [
-    { label: 'Grok (xAI cloud)', value: 'xai' },
     { label: 'Groq Cloud (free online)', value: 'groq' },
+    { label: 'Grok (xAI cloud)', value: 'xai' },
     { label: 'Claude API', value: 'claude' },
   ];
   get providers() {
     return this.isDesktop ? this.allProviders : this.onlineProviders;
   }
   ttsEngines = [
-    { label: 'Piper (local neural)', value: 'piper' },
-    { label: 'Browser (OS voices)', value: 'browser' },
+    { label: 'Browser (female neural voice)', value: 'browser' },
+    { label: 'Piper (local female neural)', value: 'piper' },
   ];
   sttEngines = [
     { label: 'Whisper (local, default)', value: 'whisper' },
     { label: 'Browser (fast)', value: 'browser' },
   ];
-  selectedProvider = 'xai';
+  selectedProvider = 'groq';
   skills: SkillInfo[] = [];
   voiceEnabled: boolean;
   ttsSupported: boolean;

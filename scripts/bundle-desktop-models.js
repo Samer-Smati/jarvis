@@ -183,7 +183,7 @@ async function ensurePiper() {
   const r = spawnSync('node', [path.join(__dirname, 'ensure-piper.js')], {
     cwd: ROOT,
     stdio: 'inherit',
-    env: { ...process.env, PIPER_CACHE: PIPER_CACHE, PIPER_VOICE: 'en_GB-alan-medium' },
+    env: { ...process.env, PIPER_CACHE: PIPER_CACHE, PIPER_VOICE: 'en_US-lessac-medium' },
   });
   if (r.status !== 0) {
     throw new Error('Piper bundle failed');
@@ -198,7 +198,7 @@ async function main() {
     fs.existsSync(targetExe) &&
     fs.existsSync(OLLAMA_MODELS) &&
     fs.readdirSync(OLLAMA_MODELS).length > 0 &&
-    fs.existsSync(path.join(PIPER_CACHE, 'en_GB-alan-medium.onnx'))
+    fs.existsSync(path.join(PIPER_CACHE, 'en_US-lessac-medium.onnx'))
   ) {
     log('Offline bundle already present — skipping download.');
     return;

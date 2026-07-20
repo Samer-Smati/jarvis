@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, NgZone, OnDestroy, OnInit, ViewChild } from '@angular/core';
 import { MessageService } from 'primeng/api';
 import { Observable, Subscription } from 'rxjs';
-import { auditTime, pairwise } from 'rxjs/operators';
+import { pairwise } from 'rxjs/operators';
 import { ApiService } from '../core/api.service';
 import { ChatService } from '../core/chat.service';
 import { ChatMessage, ConfirmationRequest, PermissionRequest, ToolActivity } from '../core/models';
@@ -72,7 +72,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.loadHistory();
 
     this.subscriptions.add(
-      this.chat.token$.pipe(auditTime(50)).subscribe((event) => {
+      this.chat.token$.subscribe((event) => {
         this.zone.run(() => {
           const current = this.currentAssistantMessage();
           current.content += event.token;
@@ -146,7 +146,7 @@ export class ChatComponent implements OnInit, OnDestroy {
         this.busy = false;
         this.scrollToBottom();
         this.cdr.markForCheck();
-        this.voice.speakStreamFlush();
+        this.voice.speakStreamFinish(event.finalText || current.content);
       }),
     );
 

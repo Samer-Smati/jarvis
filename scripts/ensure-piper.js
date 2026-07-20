@@ -7,7 +7,7 @@ const http = require('http');
 const https = require('https');
 const path = require('path');
 
-const VOICE = process.env.PIPER_VOICE || 'en_GB-alan-medium';
+const VOICE = process.env.PIPER_VOICE || 'en_US-lessac-medium';
 const CACHE = path.resolve(process.env.PIPER_CACHE || path.join(__dirname, '..', 'data', 'piper-cache'));
 const PIPER_DIR = path.join(CACHE, 'piper');
 
@@ -42,6 +42,7 @@ const PIPER_RELEASE =
       : 'https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz';
 
 const VOICE_PATHS = {
+  'en_US-lessac-medium': 'en/en_US/lessac/medium/en_US-lessac-medium',
   'en_GB-alan-medium': 'en/en_GB/alan/medium/en_GB-alan-medium',
 };
 

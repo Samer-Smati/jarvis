@@ -12,8 +12,25 @@ function bootstrap(): Promise<express.Express> {
       process.env.VERCEL = process.env.VERCEL ?? '1';
       process.env.JARVIS_SERVERLESS = '1';
       process.env.JARVIS_LLM_ENSURE = 'off';
-      process.env.LLM_PROVIDER =
-        process.env.LLM_PROVIDER ?? (process.env.XAI_API_KEY ? 'xai' : 'groq');
+      if (!process.env.JARVIS_BACKEND_ROOT) {
+        const { existsSync } = await import('node:fs');
+        const { join } = await import('node:path');
+        for (const root of [join(process.cwd(), 'backend'), join(__dirname, '..')]) {
+          if (existsSync(join(root, 'dist', 'serverless.js'))) {
+            process.env.JARVIS_BACKEND_ROOT = root;
+            break;
+          }
+        }
+      }
+      if (!process.env.LLM_PROVIDER) {
+        if (process.env.GROQ_API_KEY) {
+          process.env.LLM_PROVIDER = 'groq';
+        } else if (process.env.XAI_API_KEY) {
+          process.env.LLM_PROVIDER = 'xai';
+        } else {
+          process.env.LLM_PROVIDER = 'groq';
+        }
+      }
       process.env.DATABASE_PATH = process.env.DATABASE_PATH ?? '/tmp/jarvis.sqlite';
 
       const nest = await NestFactory.create(AppModule, new ExpressAdapter(server), {

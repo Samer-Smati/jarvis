@@ -19,6 +19,7 @@ function resolveBackendRoot() {
 }
 
 const backendRoot = resolveBackendRoot();
+process.env.JARVIS_BACKEND_ROOT = backendRoot;
 const backendModules = path.join(backendRoot, 'node_modules');
 
 if (!process.env.NODE_PATH?.includes(backendModules)) {
@@ -53,9 +54,11 @@ module.exports = async (req, res) => {
     await handler(req, res);
   } catch (error) {
     console.error('[jarvis] api bootstrap failed:', error);
-    res.status(500).json({
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    if (!res.headersSent) {
+      res.status(500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 };
