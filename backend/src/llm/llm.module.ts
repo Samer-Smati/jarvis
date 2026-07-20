@@ -3,6 +3,8 @@ import { ClaudeProvider } from './claude.provider';
 import { EmbeddingService } from './embedding.service';
 import { EnsureLlmService } from './ensure-llm.service';
 import { GroqProvider } from './groq.provider';
+import { GeminiProvider } from './gemini.provider';
+import { OpenRouterProvider } from './openrouter.provider';
 import { XaiProvider } from './xai.provider';
 import { LlmService } from './llm.service';
 import { LLM_PROVIDER } from './llm.types';
@@ -15,6 +17,8 @@ import { OllamaProvider } from './ollama.provider';
     OllamaProvider,
     ClaudeProvider,
     GroqProvider,
+    GeminiProvider,
+    OpenRouterProvider,
     XaiProvider,
     LmStudioProvider,
     EmbeddingService,

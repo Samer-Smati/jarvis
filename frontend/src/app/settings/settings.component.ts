@@ -14,6 +14,8 @@ import { VoiceService } from '../core/voice.service';
 })
 export class SettingsComponent implements OnInit {
   readonly allProviders = [
+    { label: 'Gemini (Google free)', value: 'gemini' },
+    { label: 'OpenRouter (many free models)', value: 'openrouter' },
     { label: 'Groq Cloud (free online)', value: 'groq' },
     { label: 'Grok (xAI cloud)', value: 'xai' },
     { label: 'LM Studio (local)', value: 'lmstudio' },
@@ -21,6 +23,8 @@ export class SettingsComponent implements OnInit {
     { label: 'Claude API', value: 'claude' },
   ];
   readonly onlineProviders = [
+    { label: 'Gemini (Google free)', value: 'gemini' },
+    { label: 'OpenRouter (many free models)', value: 'openrouter' },
     { label: 'Groq Cloud (free online)', value: 'groq' },
     { label: 'Grok (xAI cloud)', value: 'xai' },
     { label: 'Claude API', value: 'claude' },
@@ -36,7 +40,7 @@ export class SettingsComponent implements OnInit {
     { label: 'Whisper (local, default)', value: 'whisper' },
     { label: 'Browser (fast)', value: 'browser' },
   ];
-  selectedProvider = 'groq';
+  selectedProvider = 'gemini';
   skills: SkillInfo[] = [];
   voiceEnabled: boolean;
   ttsSupported: boolean;
@@ -72,10 +76,10 @@ export class SettingsComponent implements OnInit {
   ngOnInit(): void {
     this.api.status().subscribe({
       next: (status) => {
-        const provider = status?.provider ?? 'groq';
+        const provider = status?.provider ?? 'gemini';
         if (!this.isDesktop && (provider === 'lmstudio' || provider === 'ollama')) {
-          this.selectedProvider = 'groq';
-          this.changeProvider('groq');
+          this.selectedProvider = 'gemini';
+          this.changeProvider('gemini');
         } else {
           this.selectedProvider = provider;
         }

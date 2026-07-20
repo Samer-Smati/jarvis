@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ExpressAdapter } from '@nestjs/platform-express';
 import express from 'express';
 import { AppModule } from './app.module';
+import { resolveServerlessLlmProvider } from './llm/llm-provider.util';
 
 const server = express();
 let ready: Promise<express.Express> | null = null;
@@ -22,16 +23,11 @@ function bootstrap(): Promise<express.Express> {
           }
         }
       }
-      if (!process.env.LLM_PROVIDER) {
-        if (process.env.GROQ_API_KEY) {
-          process.env.LLM_PROVIDER = 'groq';
-        } else if (process.env.XAI_API_KEY) {
-          process.env.LLM_PROVIDER = 'xai';
-        } else {
-          process.env.LLM_PROVIDER = 'groq';
-        }
-      }
+      process.env.LLM_PROVIDER = resolveServerlessLlmProvider();
       process.env.GROQ_MODEL = process.env.GROQ_MODEL ?? 'llama-3.1-8b-instant';
+      process.env.GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash';
+      process.env.OPENROUTER_MODEL =
+        process.env.OPENROUTER_MODEL ?? 'google/gemini-2.0-flash-exp:free';
       process.env.DATABASE_PATH = process.env.DATABASE_PATH ?? '/tmp/jarvis.sqlite';
 
       const nest = await NestFactory.create(AppModule, new ExpressAdapter(server), {

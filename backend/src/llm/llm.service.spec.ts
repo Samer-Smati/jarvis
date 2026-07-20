@@ -2,6 +2,8 @@ import { EnsureLlmService } from './ensure-llm.service';
 import { LlmService } from './llm.service';
 import { ClaudeProvider } from './claude.provider';
 import { GroqProvider } from './groq.provider';
+import { GeminiProvider } from './gemini.provider';
+import { OpenRouterProvider } from './openrouter.provider';
 import { XaiProvider } from './xai.provider';
 import { LmStudioProvider } from './lmstudio.provider';
 import { OllamaProvider } from './ollama.provider';
@@ -12,6 +14,8 @@ describe('LlmService ensureLocalRuntime', () => {
   let ollama: jest.Mocked<Pick<OllamaProvider, 'name' | 'chat' | 'isReady'>>;
   let claude: jest.Mocked<Pick<ClaudeProvider, 'name' | 'chat'>>;
   let groq: jest.Mocked<Pick<GroqProvider, 'name' | 'chat' | 'isReady'>>;
+  let gemini: jest.Mocked<Pick<GeminiProvider, 'name' | 'chat' | 'isReady'>>;
+  let openrouter: jest.Mocked<Pick<OpenRouterProvider, 'name' | 'chat' | 'isReady'>>;
   let xai: jest.Mocked<Pick<XaiProvider, 'name' | 'chat' | 'isReady'>>;
   let service: LlmService;
 
@@ -39,6 +43,16 @@ describe('LlmService ensureLocalRuntime', () => {
       chat: jest.fn().mockResolvedValue({ content: 'hi', toolCalls: [] }),
       isReady: jest.fn().mockResolvedValue({ ok: true, model: 'llama-3.3-70b-versatile' }),
     };
+    gemini = {
+      name: 'gemini',
+      chat: jest.fn().mockResolvedValue({ content: 'hi', toolCalls: [] }),
+      isReady: jest.fn().mockResolvedValue({ ok: true, model: 'gemini-2.0-flash' }),
+    };
+    openrouter = {
+      name: 'openrouter',
+      chat: jest.fn().mockResolvedValue({ content: 'hi', toolCalls: [] }),
+      isReady: jest.fn().mockResolvedValue({ ok: true, model: 'google/gemini-2.0-flash-exp:free' }),
+    };
     xai = {
       name: 'xai',
       chat: jest.fn().mockResolvedValue({ content: 'hi', toolCalls: [] }),
@@ -49,6 +63,8 @@ describe('LlmService ensureLocalRuntime', () => {
       ollama as unknown as OllamaProvider,
       claude as unknown as ClaudeProvider,
       groq as unknown as GroqProvider,
+      gemini as unknown as GeminiProvider,
+      openrouter as unknown as OpenRouterProvider,
       xai as unknown as XaiProvider,
       lmstudio as unknown as LmStudioProvider,
       ensureLlm as unknown as EnsureLlmService,
