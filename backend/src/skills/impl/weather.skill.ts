@@ -57,6 +57,8 @@ interface ForecastResult {
   };
 }
 
+type GeoPlace = NonNullable<GeocodeResult['results']>[number];
+
 @Injectable()
 export class WeatherSkill implements Skill {
   private readonly logger = new Logger(WeatherSkill.name);
@@ -73,8 +75,6 @@ export class WeatherSkill implements Skill {
     },
     required: ['location'],
   };
-
-type GeoPlace = NonNullable<GeocodeResult['results']>[number];
 
   private async resolvePlace(location: string): Promise<GeoPlace | undefined> {
     const queries = [location];
