@@ -90,13 +90,17 @@ export class ChatService {
     });
   }
 
-  sendMessage(conversationId: string, text: string): void {
+  sendMessage(
+    conversationId: string,
+    text: string,
+    history?: Array<{ role: string; content: string; createdAt?: string }>,
+  ): void {
     this.connect();
     if (this.useSse) {
-      void this.sendViaSse(conversationId, text);
+      void this.sendViaSse(conversationId, text, history);
       return;
     }
-    this.socket?.emit('user_message', { conversationId, text, platform: clientPlatform() });
+    this.socket?.emit('user_message', { conversationId, text, platform: clientPlatform(), history });
   }
 
   respondToConfirmation(id: string, approved: boolean): void {
@@ -130,13 +134,17 @@ export class ChatService {
     });
   }
 
-  private async sendViaSse(conversationId: string, text: string): Promise<void> {
+  private async sendViaSse(
+    conversationId: string,
+    text: string,
+    history?: Array<{ role: string; content: string; createdAt?: string }>,
+  ): Promise<void> {
     const base = environment.apiUrl || '';
     try {
       const res = await fetch(`${base}/api/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-        body: JSON.stringify({ conversationId, text, platform: clientPlatform() }),
+        body: JSON.stringify({ conversationId, text, platform: clientPlatform(), history }),
       });
       if (!res.ok || !res.body) {
         this.zone.run(() =>

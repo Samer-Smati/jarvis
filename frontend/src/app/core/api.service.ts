@@ -37,6 +37,16 @@ export class ApiService {
     return this.http.get<StoredMessage[]>(`${this.base}/conversations/${conversationId}/messages`);
   }
 
+  syncConversation(
+    conversationId: string,
+    messages: Array<{ role: string; content: string; createdAt?: string }>,
+  ): Observable<{ ok: boolean; count: number }> {
+    return this.http.post<{ ok: boolean; count: number }>(
+      `${this.base}/conversations/${conversationId}/sync`,
+      { messages },
+    );
+  }
+
   conversationRecap(conversationId: string): Observable<{ recap: string | null; source?: string }> {
     return this.http.get<{ recap: string | null; source?: string }>(
       `${this.base}/conversations/${conversationId}/recap`,

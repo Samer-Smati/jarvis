@@ -13,6 +13,7 @@ import {
   buildToolResultLanguageReminder,
   resolveLanguageMode,
 } from './language.util';
+import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
 
 const MAX_TOOL_ITERATIONS = 8;
 
@@ -66,6 +67,7 @@ export class OrchestratorService {
     emitter: OrchestratorEmitter,
     trigger = 'chat',
     clientPlatform: 'desktop' | 'web' = 'desktop',
+    clientHistory?: ClientHistoryMessage[],
   ): Promise<void> {
     const abort = new AbortController();
     this.activeRuns.set(conversationId, abort);
@@ -78,11 +80,12 @@ export class OrchestratorService {
         dateStyle: 'full',
         timeStyle: 'short',
       });
-      const { messages: history, truncated } = await this.memory.loadConversation(conversationId);
+      const { messages: dbHistory, truncated } = await this.memory.loadConversation(conversationId);
+      const history = mergeClientHistory(dbHistory, clientHistory, userText);
       const recentUserTexts = history
         .filter((m) => m.role === 'user')
         .slice(-5)
-        .map((m) => String(m.content ?? ''));
+        .map((m) => String(m.content ?? '').replace(/^\[[^\]]+\]\s*/, ''));
       const languageMode = resolveLanguageMode(userText, recentUserTexts);
 
       let systemPrompt = `${JARVIS_SYSTEM_PROMPT}\n\nCurrent date and time: ${now}. Use this when interpreting relative dates like "tomorrow" or "next week".`;
@@ -105,15 +108,19 @@ export class OrchestratorService {
 
       let finalText = '';
       for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+        let streamedContent = '';
         const result = await this.llm.chat({
           messages,
           tools,
           signal: abort.signal,
-          onToken: (token) => emitter.onToken(token),
+          onToken: (token) => {
+            streamedContent += token;
+            emitter.onToken(token);
+          },
         });
 
         if (!result.toolCalls.length) {
-          finalText = result.content;
+          finalText = (result.content || streamedContent).trim();
           break;
         }
 

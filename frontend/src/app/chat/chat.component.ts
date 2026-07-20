@@ -4,6 +4,7 @@ import { Observable, Subscription } from 'rxjs';
 import { pairwise } from 'rxjs/operators';
 import { ApiService } from '../core/api.service';
 import { ChatService } from '../core/chat.service';
+import { ConversationHistoryService } from '../core/conversation-history.service';
 import { ChatMessage, ConfirmationRequest, PermissionRequest, ToolActivity } from '../core/models';
 import { VoiceService } from '../core/voice.service';
 
@@ -50,6 +51,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   constructor(
     private chat: ChatService,
     private api: ApiService,
+    private historyStore: ConversationHistoryService,
     private toast: MessageService,
     private voice: VoiceService,
     private cdr: ChangeDetectorRef,
@@ -155,6 +157,8 @@ export class ChatComponent implements OnInit, OnDestroy {
         } else {
           this.voice.speakStreamFinish(event.finalText || current.content);
         }
+        this.persistConversation();
+        this.syncToBackend();
         this.scrollToBottom();
         this.cdr.markForCheck();
       }),
@@ -240,11 +244,15 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.voice.speakStreamReset();
     this.messages.push({ role: 'user', content: text, createdAt: new Date().toISOString() });
     this.messages.push({ role: 'assistant', content: '', streaming: true, tools: [] });
+    this.persistConversation();
     this.busy = true;
     this.input = '';
     this.scrollToBottom();
     this.cdr.markForCheck();
-    this.chat.sendMessage(CONVERSATION_ID, text);
+    const history = this.historyStore.toPersisted(
+      this.messages.slice(0, -2).filter((m) => !m.streaming && m.content?.trim()),
+    );
+    this.chat.sendMessage(CONVERSATION_ID, text, history);
   }
 
   toggleMic(): void {
@@ -318,15 +326,21 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   private loadHistory(): void {
+    const local = this.historyStore.load(CONVERSATION_ID);
     this.api.conversationMessages(CONVERSATION_ID).subscribe({
       next: (stored) => {
-        this.messages = stored
-          .filter((m) => m.role === 'user' || m.role === 'assistant')
-          .map((m) => ({
-            role: m.role as 'user' | 'assistant',
-            content: m.content,
-            createdAt: m.createdAt,
-          }));
+        const merged = this.historyStore.mergeApiAndLocal(stored, local);
+        this.messages = merged.map((m) => ({
+          role: m.role,
+          content: m.content,
+          createdAt: m.createdAt,
+        }));
+        this.historyStore.save(CONVERSATION_ID, merged);
+        if (stored.length === 0 && local.length > 0) {
+          this.api.syncConversation(CONVERSATION_ID, local).subscribe({
+            error: () => undefined,
+          });
+        }
         this.scrollToBottom();
         this.cdr.markForCheck();
         if (this.messages.length) {
@@ -336,6 +350,17 @@ export class ChatComponent implements OnInit, OnDestroy {
         }
       },
       error: () => {
+        if (local.length) {
+          this.messages = local.map((m) => ({
+            role: m.role,
+            content: m.content,
+            createdAt: m.createdAt,
+          }));
+          this.scrollToBottom();
+          this.cdr.markForCheck();
+          this.maybeRecap();
+          return;
+        }
         this.toast.add({
           severity: 'warn',
           summary: 'Backend offline',
@@ -343,6 +368,23 @@ export class ChatComponent implements OnInit, OnDestroy {
         });
         this.maybeWelcome();
       },
+    });
+  }
+
+  private persistConversation(): void {
+    const persisted = this.historyStore.toPersisted(
+      this.messages.filter((m) => !m.streaming && m.content?.trim()),
+    );
+    this.historyStore.save(CONVERSATION_ID, persisted);
+  }
+
+  private syncToBackend(): void {
+    const persisted = this.historyStore.load(CONVERSATION_ID);
+    if (!persisted.length) {
+      return;
+    }
+    this.api.syncConversation(CONVERSATION_ID, persisted).subscribe({
+      error: () => undefined,
     });
   }
 

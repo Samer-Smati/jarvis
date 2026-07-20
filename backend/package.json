@@ -33,6 +33,7 @@
     "@nestjs/serve-static": "^5.0.5",
     "@nestjs/typeorm": "^11.0.3",
     "@nestjs/websockets": "^11.1.28",
+    "@vercel/blob": "^2.6.1",
     "better-sqlite3": "^12.11.1",
     "googleapis": "^173.0.0",
     "nodemailer": "^9.0.3",

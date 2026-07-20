@@ -71,6 +71,15 @@ export class ChatController {
     return this.memory.listConversationMessages(id);
   }
 
+  @Post('conversations/:id/sync')
+  async syncConversation(
+    @Param('id') id: string,
+    @Body() body: { messages?: Array<{ role: string; content: string; createdAt?: string }> },
+  ) {
+    const count = await this.memory.replaceConversation(id, body?.messages ?? []);
+    return { ok: true, count };
+  }
+
   @Get('conversations/:id/recap')
   async conversationRecap(@Param('id') id: string) {
     const all = await this.memory.listConversationMessages(id);

@@ -9,6 +9,7 @@ interface ChatStreamBody {
   conversationId?: string;
   text?: string;
   platform?: 'desktop' | 'web';
+  history?: Array<{ role: string; content: string; createdAt?: string }>;
 }
 
 @Controller('api/chat')
@@ -57,6 +58,7 @@ export class ChatSseController {
         emitter,
         'chat',
         body?.platform === 'web' ? 'web' : 'desktop',
+        body?.history,
       );
     } catch (error) {
       send('agent_error', { message: (error as Error).message });

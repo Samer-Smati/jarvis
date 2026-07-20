@@ -16,6 +16,7 @@ interface UserMessagePayload {
   conversationId: string;
   text: string;
   platform?: 'desktop' | 'web';
+  history?: Array<{ role: string; content: string; createdAt?: string }>;
 }
 
 interface ConfirmationResponsePayload {
@@ -60,6 +61,7 @@ export class ChatGateway {
       emitter,
       'chat',
       payload?.platform === 'web' ? 'web' : 'desktop',
+      payload?.history,
     );
   }
 
