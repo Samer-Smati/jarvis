@@ -396,8 +396,8 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   private toolLabel(toolName: string, args?: Record<string, unknown>): string {
     if (toolName === 'self_improve') {
-      const action = String(args?.action ?? '');
-      const path = typeof args?.path === 'string' ? args.path : '';
+      const action = String(args?.['action'] ?? '');
+      const path = typeof args?.['path'] === 'string' ? args['path'] : '';
       switch (action) {
         case 'status':
           return 'Checking upgrade status';
@@ -420,8 +420,8 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   private toolKey(toolName: string, args?: Record<string, unknown>): string {
     if (toolName === 'self_improve') {
-      const action = String(args?.action ?? '');
-      const path = typeof args?.path === 'string' ? args.path : '';
+      const action = String(args?.['action'] ?? '');
+      const path = typeof args?.['path'] === 'string' ? args['path'] : '';
       return `${toolName}:${action}:${path}`;
     }
     return toolName;
