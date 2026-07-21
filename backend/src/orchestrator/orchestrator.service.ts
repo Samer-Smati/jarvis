@@ -14,6 +14,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
+import { isFastChatTurn, isServerlessRuntime } from './fast-chat.util';
 
 const MAX_TOOL_ITERATIONS = 8;
 
@@ -102,9 +103,13 @@ export class OrchestratorService {
         }
       }
       systemPrompt += `\n\nConversation history uses [date, time] prefixes — use them to recall when topics were discussed.`;
+      if (isFastChatTurn(userText)) {
+        systemPrompt += `\n\nThis is a brief greeting or acknowledgment — reply in one short spoken sentence. Do not call any tools.`;
+      }
 
       const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }, ...history];
-      const tools = [...this.skills.toolDefinitions(), REMEMBER_FACT_TOOL];
+      const fastTurn = isServerlessRuntime() && isFastChatTurn(userText);
+      const tools = fastTurn ? [] : [...this.skills.toolDefinitions(), REMEMBER_FACT_TOOL];
 
       let finalText = '';
       for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
@@ -117,6 +122,7 @@ export class OrchestratorService {
             streamedContent += token;
             emitter.onToken(token);
           },
+          onThinking: (token) => emitter.onThinking?.(token),
         });
 
         if (!result.toolCalls.length) {
@@ -144,7 +150,7 @@ export class OrchestratorService {
       if (finalText) {
         await this.memory.appendMessage(conversationId, 'assistant', finalText);
       }
-      await this.memory.logEvent(trigger, `Handled: ${userText.slice(0, 120)}`);
+      void this.memory.logEvent(trigger, `Handled: ${userText.slice(0, 120)}`);
       emitter.onDone(finalText);
     } catch (error) {
       const message = abort.signal.aborted
@@ -166,6 +172,17 @@ export class OrchestratorService {
     clientPlatform: 'desktop' | 'web',
   ): Promise<string> {
     emitter.onToolStart(call.name, call.arguments);
+
+    if (call.name === 'self_improve') {
+      const action = String(call.arguments?.action ?? '');
+      emitter.onProgress?.({
+        stage: action || 'self_improve',
+        message: selfImproveProgressLabel(action, call.arguments),
+        percent: selfImproveProgressPercent(action),
+        detail: typeof call.arguments?.path === 'string' ? call.arguments.path : undefined,
+        toolName: 'self_improve',
+      });
+    }
 
     if (call.name === REMEMBER_FACT_TOOL.name) {
       const fact = String(call.arguments?.fact ?? '');
@@ -218,7 +235,14 @@ export class OrchestratorService {
       skill.name === 'device_control'
         ? { ...call.arguments, platform: clientPlatform }
         : call.arguments;
-    const result = await skill.execute(execArgs, { conversationId });
+    const result = await skill.execute(execArgs, {
+      conversationId,
+      onProgress: (event) =>
+        emitter.onProgress?.({
+          ...event,
+          toolName: skill.name,
+        }),
+    });
     await this.guardrails.audit(
       skill.name,
       trigger,
@@ -245,5 +269,44 @@ export class OrchestratorService {
       return action === 'write' || action === 'commit' || action === 'pull_request';
     }
     return false;
+  }
+}
+
+function selfImproveProgressPercent(action: string): number {
+  switch (action) {
+    case 'status':
+      return 12;
+    case 'inspect':
+      return 28;
+    case 'write':
+      return 52;
+    case 'run_checks':
+      return 72;
+    case 'commit':
+      return 86;
+    case 'pull_request':
+      return 96;
+    default:
+      return 20;
+  }
+}
+
+function selfImproveProgressLabel(action: string, args: Record<string, unknown>): string {
+  const path = typeof args?.path === 'string' ? args.path : '';
+  switch (action) {
+    case 'status':
+      return 'Checking upgrade status';
+    case 'inspect':
+      return path ? `Inspecting ${path}` : 'Inspecting project';
+    case 'write':
+      return path ? `Writing ${path}` : 'Writing changes';
+    case 'run_checks':
+      return 'Running build checks';
+    case 'commit':
+      return 'Committing changes';
+    case 'pull_request':
+      return 'Opening pull request';
+    default:
+      return 'Self-upgrade in progress';
   }
 }

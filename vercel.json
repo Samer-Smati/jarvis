@@ -11,6 +11,9 @@
       "includeFiles": "backend/dist/**,backend/node_modules/**,backend/node_modules/sql.js/dist/**"
     }
   },
+  "crons": [
+    { "path": "/api/health", "schedule": "*/5 * * * *" }
+  ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api" },
     { "source": "/(.*)", "destination": "/index.html" }

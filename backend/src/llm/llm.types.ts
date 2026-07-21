@@ -25,6 +25,8 @@ export interface LlmChatOptions {
   tools?: ToolDefinition[];
   signal?: AbortSignal;
   onToken?: (token: string) => void;
+  /** Stream model reasoning / chain-of-thought when the provider exposes it. */
+  onThinking?: (token: string) => void;
 }
 
 export interface LlmChatResult {

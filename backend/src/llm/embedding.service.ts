@@ -30,6 +30,9 @@ export class EmbeddingService {
   }
 
   async tryEmbed(text: string): Promise<number[] | null> {
+    if (process.env.VERCEL || process.env.JARVIS_SERVERLESS === '1') {
+      return null;
+    }
     try {
       return await this.embed(text);
     } catch (error) {
@@ -43,6 +46,7 @@ export class EmbeddingService {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: this.ollamaModel, prompt: text }),
+      signal: AbortSignal.timeout(4000),
     });
     if (!response.ok) {
       const body = await response.text().catch(() => '');
@@ -57,6 +61,7 @@ export class EmbeddingService {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: this.lmstudioModel, input: text }),
+      signal: AbortSignal.timeout(4000),
     });
     if (!response.ok) {
       const body = await response.text().catch(() => '');

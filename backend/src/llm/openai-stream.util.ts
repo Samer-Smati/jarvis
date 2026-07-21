@@ -23,6 +23,7 @@ interface StreamChunk {
   choices?: {
     delta?: {
       content?: string | null;
+      reasoning_content?: string | null;
       tool_calls?: Array<{
         index: number;
         id?: string;
@@ -98,6 +99,9 @@ export async function streamOpenAiChat(
       const delta = chunk.choices?.[0]?.delta;
       if (!delta) {
         continue;
+      }
+      if (delta.reasoning_content) {
+        options.onThinking?.(delta.reasoning_content);
       }
       if (delta.content) {
         content += delta.content;

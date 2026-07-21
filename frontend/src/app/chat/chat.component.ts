@@ -5,7 +5,7 @@ import { pairwise } from 'rxjs/operators';
 import { ApiService } from '../core/api.service';
 import { ChatService } from '../core/chat.service';
 import { ConversationHistoryService } from '../core/conversation-history.service';
-import { ChatMessage, ConfirmationRequest, PermissionRequest, ToolActivity } from '../core/models';
+import { ChatMessage, ConfirmationRequest, PermissionRequest, ProgressStep, ToolActivity } from '../core/models';
 import { VoiceService } from '../core/voice.service';
 
 const CONVERSATION_ID = 'default';
@@ -78,6 +78,7 @@ export class ChatComponent implements OnInit, OnDestroy {
         this.zone.run(() => {
           const current = this.currentAssistantMessage();
           current.content += event.token;
+          current.statusHint = undefined;
           this.voice.speakStreamAppend(event.token);
           this.scrollToBottom();
           this.cdr.markForCheck();
@@ -86,16 +87,90 @@ export class ChatComponent implements OnInit, OnDestroy {
     );
 
     this.subscriptions.add(
+      this.chat.thinking$.subscribe((event) => {
+        this.zone.run(() => {
+          const current = this.currentAssistantMessage();
+          current.thinking = (current.thinking ?? '') + event.token;
+          if (current.thinkingExpanded === undefined) {
+            current.thinkingExpanded = true;
+          }
+          current.statusHint = 'Thinking…';
+          this.scrollToBottom();
+          this.cdr.markForCheck();
+        });
+      }),
+    );
+
+    this.subscriptions.add(
+      this.chat.progress$.subscribe((event) => {
+        const current = this.currentAssistantMessage();
+        current.progress = current.progress ?? [];
+        const last = current.progress[current.progress.length - 1];
+        if (last && last.stage === event.stage && last.message === event.message) {
+          last.detail = event.detail ?? last.detail;
+          last.percent = event.percent ?? last.percent;
+          last.at = Date.now();
+        } else {
+          current.progress.push({
+            stage: event.stage,
+            message: event.message,
+            percent: event.percent,
+            detail: event.detail,
+            toolName: event.toolName,
+            at: Date.now(),
+          });
+          if (current.progress.length > 40) {
+            current.progress = current.progress.slice(-40);
+          }
+        }
+        if (typeof event.percent === 'number') {
+          current.progressPercent = event.percent;
+        }
+        current.statusHint = event.message;
+        this.scrollToBottom();
+        this.cdr.markForCheck();
+      }),
+    );
+
+    this.subscriptions.add(
+      this.chat.started$.subscribe(() => {
+        const current = this.currentAssistantMessage();
+        current.statusHint = 'Connected, sir…';
+        this.cdr.markForCheck();
+      }),
+    );
+
+    this.subscriptions.add(
+      this.chat.heartbeat$.subscribe(() => {
+        const current = this.currentAssistantMessage();
+        if (!current.content?.trim() && current.streaming && !current.statusHint) {
+          current.statusHint = current.tools?.some((t) => t.running)
+            ? 'Running a check, sir…'
+            : 'Still working, sir…';
+          this.cdr.markForCheck();
+        }
+      }),
+    );
+
+    this.subscriptions.add(
       this.chat.toolStart$.subscribe((event) => {
         const current = this.currentAssistantMessage();
         current.tools = current.tools ?? [];
+        const label = this.toolLabel(event.toolName, event.args);
+        const key = this.toolKey(event.toolName, event.args);
         const retryIdx = current.tools.findIndex(
-          (t) => t.toolName === event.toolName && !t.running,
+          (t) => this.toolKey(t.toolName, t.args) === key && !t.running,
         );
         if (retryIdx >= 0) {
           current.tools.splice(retryIdx, 1);
         }
-        current.tools.push({ toolName: event.toolName, args: event.args, running: true });
+        current.tools.push({
+          toolName: event.toolName,
+          label,
+          args: event.args,
+          running: true,
+        });
+        current.statusHint = label;
         this.scrollToBottom();
         this.cdr.markForCheck();
       }),
@@ -150,6 +225,7 @@ export class ChatComponent implements OnInit, OnDestroy {
         const current = this.currentAssistantMessage();
         current.content = event.finalText || current.content;
         current.streaming = false;
+        current.statusHint = undefined;
         current.tools = this.compactToolBadges(current.tools);
         this.busy = false;
         if (!current.content?.trim()) {
@@ -291,6 +367,20 @@ export class ChatComponent implements OnInit, OnDestroy {
     return tool.success ? 'success' : 'danger';
   }
 
+  toolDisplayName(tool: ToolActivity): string {
+    return tool.label || tool.toolName.replace(/_/g, ' ');
+  }
+
+  toggleThinking(message: ChatMessage): void {
+    message.thinkingExpanded = !message.thinkingExpanded;
+    this.cdr.markForCheck();
+  }
+
+  latestProgress(message: ChatMessage): ProgressStep | undefined {
+    const steps = message.progress;
+    return steps?.length ? steps[steps.length - 1] : undefined;
+  }
+
   shouldShowMessage(message: ChatMessage): boolean {
     if (message.role === 'user') {
       return true;
@@ -301,7 +391,40 @@ export class ChatComponent implements OnInit, OnDestroy {
     if (message.content?.trim()) {
       return true;
     }
-    return !!(message.tools?.some((t) => t.running));
+    return !!(message.tools?.some((t) => t.running) || message.progress?.length || message.thinking);
+  }
+
+  private toolLabel(toolName: string, args?: Record<string, unknown>): string {
+    if (toolName === 'self_improve') {
+      const action = String(args?.action ?? '');
+      const path = typeof args?.path === 'string' ? args.path : '';
+      switch (action) {
+        case 'status':
+          return 'Checking upgrade status';
+        case 'inspect':
+          return path ? `Inspecting ${path}` : 'Inspecting project';
+        case 'write':
+          return path ? `Writing ${path}` : 'Writing changes';
+        case 'run_checks':
+          return 'Running build checks';
+        case 'commit':
+          return 'Committing changes';
+        case 'pull_request':
+          return 'Opening pull request';
+        default:
+          return 'Self-upgrade';
+      }
+    }
+    return `Using ${toolName.replace(/_/g, ' ')}…`;
+  }
+
+  private toolKey(toolName: string, args?: Record<string, unknown>): string {
+    if (toolName === 'self_improve') {
+      const action = String(args?.action ?? '');
+      const path = typeof args?.path === 'string' ? args.path : '';
+      return `${toolName}:${action}:${path}`;
+    }
+    return toolName;
   }
 
   private compactToolBadges(tools?: ToolActivity[]): ToolActivity[] | undefined {
@@ -310,7 +433,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     }
     const latest = new Map<string, ToolActivity>();
     for (const tool of tools) {
-      latest.set(tool.toolName, tool);
+      latest.set(this.toolKey(tool.toolName, tool.args), tool);
     }
     return [...latest.values()].filter((t) => t.success || t.running);
   }

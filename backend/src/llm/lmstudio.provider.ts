@@ -60,6 +60,27 @@ function stripThink(raw: string): string {
   return out;
 }
 
+/** Extract only the content inside <think>...</think> blocks (including an unclosed tail). */
+function extractThink(raw: string): string {
+  let out = '';
+  let i = 0;
+  while (i < raw.length) {
+    const open = raw.indexOf(THINK_OPEN, i);
+    if (open === -1) {
+      break;
+    }
+    const start = open + THINK_OPEN.length;
+    const close = raw.indexOf(THINK_CLOSE, start);
+    if (close === -1) {
+      out += raw.slice(start);
+      break;
+    }
+    out += raw.slice(start, close);
+    i = close + THINK_CLOSE.length;
+  }
+  return out;
+}
+
 /** Trailing chars that might be the start of a split '<think>' tag — hold them back. */
 function holdbackLength(visible: string): number {
   for (let k = Math.min(THINK_OPEN.length - 1, visible.length); k > 0; k--) {
@@ -162,10 +183,22 @@ export class LmStudioProvider implements LlmProvider {
     let raw = '';
     let reasoningRaw = '';
     let emitted = 0;
+    let thinkingEmitted = 0;
     const pendingCalls = new Map<number, { id: string; name: string; args: string }>();
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+
+    const flushThinking = () => {
+      if (reasoningRaw) {
+        return;
+      }
+      const fromTags = extractThink(raw);
+      if (fromTags.length > thinkingEmitted) {
+        options.onThinking?.(fromTags.slice(thinkingEmitted));
+        thinkingEmitted = fromTags.length;
+      }
+    };
 
     for (;;) {
       const { done, value } = await reader.read();
@@ -191,9 +224,14 @@ export class LmStudioProvider implements LlmProvider {
         }
         if (delta.reasoning_content) {
           reasoningRaw += delta.reasoning_content;
+          options.onThinking?.(delta.reasoning_content);
+          thinkingEmitted = reasoningRaw.length;
         }
         if (delta.content) {
           raw += delta.content;
+          if (!reasoningRaw) {
+            flushThinking();
+          }
           const visible = stripThink(raw);
           const safeEnd = visible.length - holdbackLength(visible);
           if (safeEnd > emitted) {
@@ -215,6 +253,10 @@ export class LmStudioProvider implements LlmProvider {
           pendingCalls.set(call.index, entry);
         }
       }
+    }
+
+    if (!reasoningRaw) {
+      flushThinking();
     }
 
     const toolCalls: ToolCall[] = [...pendingCalls.values()]

@@ -1,9 +1,19 @@
 export interface ToolActivity {
   toolName: string;
+  label?: string;
   args?: Record<string, unknown>;
   output?: string;
   success?: boolean;
   running: boolean;
+}
+
+export interface ProgressStep {
+  stage: string;
+  message: string;
+  percent?: number;
+  detail?: string;
+  toolName?: string;
+  at: number;
 }
 
 export interface ChatMessage {
@@ -11,6 +21,11 @@ export interface ChatMessage {
   content: string;
   createdAt?: string;
   streaming?: boolean;
+  statusHint?: string;
+  thinking?: string;
+  thinkingExpanded?: boolean;
+  progress?: ProgressStep[];
+  progressPercent?: number;
   tools?: ToolActivity[];
 }
 

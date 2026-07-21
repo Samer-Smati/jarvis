@@ -1,5 +1,13 @@
+export interface SkillProgress {
+  stage: string;
+  message: string;
+  percent?: number;
+  detail?: string;
+}
+
 export interface SkillContext {
   conversationId: string;
+  onProgress?: (event: SkillProgress) => void;
 }
 
 export interface SkillResult {

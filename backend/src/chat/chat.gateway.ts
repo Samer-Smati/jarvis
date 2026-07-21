@@ -94,6 +94,8 @@ export class ChatGateway {
       client.emit(event, { conversationId, ...data });
     return {
       onToken: (token) => emit('token', { token }),
+      onThinking: (token) => emit('thinking', { token }),
+      onProgress: (event) => emit('progress', { ...event }),
       onToolStart: (toolName, args) => emit('tool_start', { toolName, args }),
       onToolEnd: (toolName, output, success) => emit('tool_end', { toolName, output, success }),
       onConfirmationRequest: (request) => emit('confirmation_request', { request }),

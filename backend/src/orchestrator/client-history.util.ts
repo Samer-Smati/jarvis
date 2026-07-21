@@ -16,12 +16,13 @@ export function mergeClientHistory(
   }
 
   const dialog = clientHistory.filter((m) => m.role === 'user' || m.role === 'assistant');
-  const clientTotal = dialog.length + 1;
+  const deduped = dedupeDialog(dialog);
+  const clientTotal = deduped.length + 1;
   if (clientTotal <= dbHistory.length) {
     return dbHistory;
   }
 
-  const merged: ChatMessage[] = dialog.slice(-200).map((m) => ({
+  const merged: ChatMessage[] = deduped.slice(-200).map((m) => ({
     role: m.role as ChatMessage['role'],
     content: m.createdAt
       ? `[${formatMessageTimestamp(new Date(m.createdAt))}] ${m.content}`
@@ -34,6 +35,22 @@ export function mergeClientHistory(
     merged.push({ role: 'user', content: userText });
   }
   return merged;
+}
+
+function dedupeDialog(messages: ClientHistoryMessage[]): ClientHistoryMessage[] {
+  const out: ClientHistoryMessage[] = [];
+  for (const msg of messages) {
+    const prev = out[out.length - 1];
+    if (
+      prev &&
+      prev.role === msg.role &&
+      prev.content.trim() === msg.content.trim()
+    ) {
+      continue;
+    }
+    out.push(msg);
+  }
+  return out;
 }
 
 function formatMessageTimestamp(date: Date): string {

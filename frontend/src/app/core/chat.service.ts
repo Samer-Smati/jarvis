@@ -10,6 +10,20 @@ export interface TokenEvent {
   token: string;
 }
 
+export interface ThinkingEvent {
+  conversationId: string;
+  token: string;
+}
+
+export interface ProgressEvent {
+  conversationId: string;
+  stage: string;
+  message: string;
+  percent?: number;
+  detail?: string;
+  toolName?: string;
+}
+
 export interface ToolStartEvent {
   conversationId: string;
   toolName: string;
@@ -44,22 +58,30 @@ export class ChatService {
   private useSse = !!environment.useSse;
 
   private tokenSubject = new Subject<TokenEvent>();
+  private thinkingSubject = new Subject<ThinkingEvent>();
+  private progressSubject = new Subject<ProgressEvent>();
   private toolStartSubject = new Subject<ToolStartEvent>();
   private toolEndSubject = new Subject<ToolEndEvent>();
   private confirmationSubject = new Subject<ConfirmationRequest>();
   private permissionSubject = new Subject<PermissionRequest>();
   private doneSubject = new Subject<DoneEvent>();
   private errorSubject = new Subject<AgentErrorEvent>();
+  private startedSubject = new Subject<{ conversationId: string }>();
+  private heartbeatSubject = new Subject<{ conversationId: string }>();
   private reminderSubject = new Subject<Reminder>();
   private briefingSubject = new Subject<BriefingEvent>();
 
   token$: Observable<TokenEvent> = this.tokenSubject.asObservable();
+  thinking$: Observable<ThinkingEvent> = this.thinkingSubject.asObservable();
+  progress$: Observable<ProgressEvent> = this.progressSubject.asObservable();
   toolStart$: Observable<ToolStartEvent> = this.toolStartSubject.asObservable();
   toolEnd$: Observable<ToolEndEvent> = this.toolEndSubject.asObservable();
   confirmation$: Observable<ConfirmationRequest> = this.confirmationSubject.asObservable();
   permission$: Observable<PermissionRequest> = this.permissionSubject.asObservable();
   done$: Observable<DoneEvent> = this.doneSubject.asObservable();
   error$: Observable<AgentErrorEvent> = this.errorSubject.asObservable();
+  started$: Observable<{ conversationId: string }> = this.startedSubject.asObservable();
+  heartbeat$: Observable<{ conversationId: string }> = this.heartbeatSubject.asObservable();
   reminder$: Observable<Reminder> = this.reminderSubject.asObservable();
   briefing$: Observable<BriefingEvent> = this.briefingSubject.asObservable();
 
@@ -75,7 +97,9 @@ export class ChatService {
     this.socket = io(url);
     this.zone.runOutsideAngular(() => {
       this.socket?.on('token', (data: TokenEvent) => this.tokenSubject.next(data));
+      this.socket?.on('thinking', (data: ThinkingEvent) => this.thinkingSubject.next(data));
     });
+    this.bind('progress', this.progressSubject);
     this.bind('tool_start', this.toolStartSubject);
     this.bind('tool_end', this.toolEndSubject);
     this.bind('done', this.doneSubject);
@@ -204,6 +228,18 @@ export class ChatService {
     switch (event) {
       case 'token':
         this.tokenSubject.next(payload as TokenEvent);
+        break;
+      case 'thinking':
+        this.thinkingSubject.next(payload as ThinkingEvent);
+        break;
+      case 'progress':
+        this.progressSubject.next(payload as ProgressEvent);
+        break;
+      case 'started':
+        this.startedSubject.next(payload as { conversationId: string });
+        break;
+      case 'heartbeat':
+        this.heartbeatSubject.next(payload as { conversationId: string });
         break;
       case 'tool_start':
         this.toolStartSubject.next(payload as ToolStartEvent);

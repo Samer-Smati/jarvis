@@ -55,17 +55,47 @@
       </div>
       <div class="bubble hud-corners">
         <span class="msg-time" *ngIf="message.createdAt">{{ formatMessageDate(message.createdAt) }}</span>
+
+        <div class="upgrade-panel" *ngIf="message.progress?.length || message.thinking">
+          <div class="progress-block" *ngIf="message.progress?.length">
+            <div class="progress-header">
+              <span class="hud-label">// Upgrade process</span>
+              <span class="progress-pct" *ngIf="message.progressPercent != null">{{ message.progressPercent }}%</span>
+            </div>
+            <div class="progress-track" *ngIf="message.progressPercent != null">
+              <div class="progress-fill" [style.width.%]="message.progressPercent"></div>
+            </div>
+            <ul class="progress-steps">
+              <li
+                *ngFor="let step of message.progress; let last = last"
+                [class.active]="last && message.streaming"
+                [class.done]="!last || !message.streaming">
+                <span class="step-msg">{{ step.message }}</span>
+                <span class="step-detail" *ngIf="step.detail">{{ step.detail }}</span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="thinking-block" *ngIf="message.thinking">
+            <button type="button" class="thinking-toggle" (click)="toggleThinking(message)">
+              <i class="pi" [ngClass]="message.thinkingExpanded ? 'pi-chevron-down' : 'pi-chevron-right'"></i>
+              <span class="hud-label">// Model thinking</span>
+            </button>
+            <pre class="thinking-body" *ngIf="message.thinkingExpanded">{{ message.thinking }}</pre>
+          </div>
+        </div>
+
         <div class="tools" *ngIf="message.tools?.length">
           <p-tag
             *ngFor="let tool of message.tools"
             [severity]="toolSeverity(tool)"
             [icon]="tool.running ? 'pi pi-spin pi-cog' : (tool.success ? 'pi pi-check' : 'pi pi-times')"
-            [value]="tool.toolName"
+            [value]="toolDisplayName(tool)"
             [pTooltip]="tool.output || argsPreview(tool.args)">
           </p-tag>
         </div>
         <div class="content">
-          <span *ngIf="!message.content?.trim() && message.streaming" class="thinking">Working, sir…</span>
+          <span *ngIf="!message.content?.trim() && message.streaming" class="thinking">{{ message.statusHint || latestProgress(message)?.message || 'Working, sir…' }}</span>
           {{ message.content }}<span class="cursor" *ngIf="message.streaming && message.content?.trim()">▌</span>
         </div>
       </div>

@@ -287,6 +287,150 @@
   margin-bottom: 0.55rem;
 }
 
+.upgrade-panel {
+  margin-bottom: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.progress-block {
+  border: 1px solid rgba(23, 209, 255, 0.28);
+  background: rgba(3, 12, 24, 0.55);
+  padding: 0.65rem 0.75rem;
+}
+
+.progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.45rem;
+
+  .hud-label {
+    color: var(--jarvis-cyan);
+  }
+}
+
+.progress-pct {
+  font-family: "Orbitron", sans-serif;
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  color: var(--jarvis-cyan);
+}
+
+.progress-track {
+  height: 4px;
+  background: rgba(23, 209, 255, 0.12);
+  margin-bottom: 0.55rem;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--jarvis-cyan), rgba(255, 176, 76, 0.9));
+  box-shadow: 0 0 10px rgba(23, 209, 255, 0.45);
+  transition: width 0.35s ease;
+}
+
+.progress-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 9rem;
+  overflow-y: auto;
+
+  li {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    font-size: 0.82rem;
+    color: var(--jarvis-text-dim);
+    padding-left: 0.85rem;
+    position: relative;
+
+    &::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0.45rem;
+      width: 0.35rem;
+      height: 0.35rem;
+      border-radius: 50%;
+      background: rgba(23, 209, 255, 0.35);
+    }
+
+    &.done {
+      color: rgba(180, 220, 235, 0.75);
+
+      &::before {
+        background: var(--jarvis-cyan);
+      }
+    }
+
+    &.active {
+      color: var(--jarvis-text);
+
+      &::before {
+        background: var(--jarvis-gold);
+        box-shadow: 0 0 8px rgba(255, 176, 76, 0.7);
+      }
+    }
+  }
+
+  .step-msg {
+    line-height: 1.35;
+  }
+
+  .step-detail {
+    font-size: 0.72rem;
+    opacity: 0.7;
+    word-break: break-all;
+  }
+}
+
+.thinking-block {
+  border: 1px solid rgba(255, 176, 76, 0.28);
+  background: rgba(18, 12, 4, 0.45);
+}
+
+.thinking-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: var(--jarvis-gold);
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+  text-align: left;
+
+  .hud-label {
+    color: var(--jarvis-gold);
+  }
+
+  i {
+    font-size: 0.75rem;
+  }
+}
+
+.thinking-body {
+  margin: 0;
+  padding: 0 0.75rem 0.7rem;
+  max-height: 12rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: rgba(255, 210, 140, 0.85);
+  font-family: "Share Tech Mono", "Consolas", monospace;
+}
+
 /* ---------- Confirmation ---------- */
 .confirmation {
   display: flex;

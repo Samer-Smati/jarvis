@@ -34,14 +34,23 @@ export class ChatSseController {
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders?.();
 
     const send = (event: string, data: Record<string, unknown>) => {
       res.write(`event: ${event}\ndata: ${JSON.stringify({ conversationId, ...data })}\n\n`);
+      if (typeof (res as Response & { flush?: () => void }).flush === 'function') {
+        (res as Response & { flush?: () => void }).flush?.();
+      }
     };
+
+    send('started', { ts: Date.now() });
+    const heartbeat = setInterval(() => send('heartbeat', { ts: Date.now() }), 2500);
 
     const emitter: OrchestratorEmitter = {
       onToken: (token) => send('token', { token }),
+      onThinking: (token) => send('thinking', { token }),
+      onProgress: (event) => send('progress', { ...event }),
       onToolStart: (toolName, args) => send('tool_start', { toolName, args }),
       onToolEnd: (toolName, output, success) => send('tool_end', { toolName, output, success }),
       onConfirmationRequest: (request) => send('confirmation_request', { request }),
@@ -63,6 +72,7 @@ export class ChatSseController {
     } catch (error) {
       send('agent_error', { message: (error as Error).message });
     } finally {
+      clearInterval(heartbeat);
       res.end();
     }
   }
