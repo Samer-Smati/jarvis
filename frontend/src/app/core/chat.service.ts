@@ -194,9 +194,10 @@ export class ChatService {
       buffer = this.consumeSseBuffer(`${buffer}\n\n`, markFinished);
       if (!finished) {
         this.zone.run(() =>
-          this.errorSubject.next({
+          this.doneSubject.next({
             conversationId,
-            message: 'Connection ended before JARVIS finished. Please try again, sir.',
+            finalText:
+              'Connection ended early, sir. If upgrade steps ran, check GitHub for a new branch or say "open PR".',
           }),
         );
       }

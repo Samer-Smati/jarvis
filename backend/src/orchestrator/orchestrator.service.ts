@@ -17,6 +17,8 @@ import { ClientHistoryMessage, mergeClientHistory } from './client-history.util'
 import { isFastChatTurn, isConcreteSelfImproveRequest, isSelfImproveInfoQuery, isServerlessRuntime } from './fast-chat.util';
 
 const MAX_TOOL_ITERATIONS = 8;
+const SERVERLESS_MAX_TOOL_ITERATIONS = 4;
+const SERVERLESS_DEADLINE_MS = 50_000;
 
 const REMEMBER_FACT_TOOL: ToolDefinition = {
   name: 'remember_fact',
@@ -110,7 +112,7 @@ export class OrchestratorService {
         systemPrompt += `\n\nThe user is asking what you CAN upgrade — call self_improve with action=status ONCE, then answer in plain language from that output. Do NOT call inspect, write, commit, or pull_request in this turn. Offer 2–3 concrete upgrade ideas (UI, skills, voice, speed) and wait for their pick.`;
       }
       if (isConcreteSelfImproveRequest(userText)) {
-        systemPrompt += `\n\nThe user wants a REAL code upgrade. GitHub reads/writes are available on cloud via self_improve — do NOT use read_files or coding_assistant. Workflow: inspect with paths ["frontend/src/app/chat/chat.component.html","frontend/src/app/chat/chat.component.scss"] OR one file path → write full updated content → pull_request. Never say sandbox is unmounted or ask the user to paste files. Screenshots are unavailable — use responsive CSS instead.`;
+        systemPrompt += `\n\nThe user wants a REAL code upgrade on cloud (50s limit). Use at most: one inspect with paths for needed files → one write (prefer small targeted edits, not rewriting entire large files) → pull_request. Skip redundant inspects. After pull_request succeeds, stop — do not call more tools. Never say sandbox is unmounted. Screenshots unavailable — use responsive CSS.`;
       }
 
       const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }, ...history];
@@ -118,7 +120,24 @@ export class OrchestratorService {
       const tools = fastTurn ? [] : [...this.skills.toolDefinitions(), REMEMBER_FACT_TOOL];
 
       let finalText = '';
-      for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+      let lastToolOutput = '';
+      const deadline = isServerlessRuntime() ? Date.now() + SERVERLESS_DEADLINE_MS : Infinity;
+      const maxIterations = isServerlessRuntime() ? SERVERLESS_MAX_TOOL_ITERATIONS : MAX_TOOL_ITERATIONS;
+
+      for (let iteration = 0; iteration < maxIterations; iteration++) {
+        const nearDeadline = isServerlessRuntime() && Date.now() > deadline - 10_000;
+        const prDone = lastToolOutput.includes('Pull request #');
+        if (nearDeadline || prDone) {
+          finalText =
+            finalText ||
+            (prDone
+              ? `Done, sir. ${lastToolOutput.split('\n')[0]}`
+              : lastToolOutput
+                ? `Cloud time limit reached, sir. Last step: ${lastToolOutput.slice(0, 280)}`
+                : 'Cloud time limit reached before I could finish, sir. Please try again.');
+          break;
+        }
+
         if (iteration > 0) {
           emitter.onProgress?.({
             stage: 'reply',
@@ -151,13 +170,31 @@ export class OrchestratorService {
 
         for (const call of result.toolCalls) {
           const output = await this.executeToolCall(conversationId, call, emitter, trigger, clientPlatform);
+          lastToolOutput = output;
           messages.push({
             role: 'tool',
             content: output + buildToolResultLanguageReminder(languageMode),
             toolCallId: call.id,
             toolName: call.name,
           });
+          if (
+            isServerlessRuntime() &&
+            call.name === 'self_improve' &&
+            output.includes('Pull request #')
+          ) {
+            finalText = `Done, sir. ${output.split('\n')[0]}`;
+            break;
+          }
         }
+        if (finalText) {
+          break;
+        }
+      }
+
+      if (!finalText) {
+        finalText = lastToolOutput.includes('Updated ')
+          ? `Changes are on GitHub, sir. ${lastToolOutput.split('\n')[0]} Say "open PR" if you need the pull request.`
+          : '';
       }
 
       if (finalText) {

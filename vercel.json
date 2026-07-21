@@ -7,7 +7,7 @@
   "outputDirectory": "frontend/dist/frontend/browser",
   "functions": {
     "api/index.js": {
-      "maxDuration": 60,
+      "maxDuration": 300,
       "includeFiles": "backend/dist/**,backend/node_modules/**,backend/node_modules/sql.js/dist/**"
     }
   },

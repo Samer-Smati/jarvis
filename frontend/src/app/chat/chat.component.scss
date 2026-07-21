@@ -564,3 +564,94 @@
     opacity: 0;
   }
 }
+
+@media (max-width: 900px) {
+  .hud-header {
+    padding: 0.7rem 1rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .header-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .message {
+    max-width: 100%;
+  }
+
+  .messages {
+    padding: 1rem 0.85rem;
+  }
+
+  .composer {
+    margin: 0 0.75rem 0.85rem;
+    padding: 0.75rem 0.9rem;
+  }
+
+  .confirmation {
+    max-width: 100%;
+    flex-direction: column;
+  }
+
+  .confirmation-actions {
+    flex-direction: row;
+    width: 100%;
+  }
+}
+
+@media (max-width: 600px) {
+  .hands-free-btn span {
+    display: none;
+  }
+
+  .message {
+    gap: 0.55rem;
+  }
+
+  .avatar {
+    width: 2rem;
+    height: 2rem;
+  }
+
+  .bubble {
+    padding: 0.65rem 0.85rem;
+
+    .content {
+      font-size: 0.95rem;
+    }
+  }
+
+  .progress-steps {
+    max-height: 9rem;
+    overflow-y: auto;
+  }
+
+  .composer textarea {
+    font-size: 1rem;
+  }
+
+  .mic-btn {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+
+  .empty-state h2 {
+    font-size: 1.25rem;
+  }
+
+  .boot-lines {
+    font-size: 0.58rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .hud-label {
+    font-size: 0.55rem;
+  }
+
+  .bubble .msg-time {
+    font-size: 0.48rem;
+  }
+}

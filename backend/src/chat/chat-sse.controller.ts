@@ -46,6 +46,14 @@ export class ChatSseController {
 
     send('started', { ts: Date.now() });
     const heartbeat = setInterval(() => send('heartbeat', { ts: Date.now() }), 2500);
+    let streamFinished = false;
+    const finish = (event: 'done' | 'agent_error', payload: Record<string, unknown>) => {
+      if (streamFinished) {
+        return;
+      }
+      streamFinished = true;
+      send(event, payload);
+    };
 
     const emitter: OrchestratorEmitter = {
       onToken: (token) => send('token', { token }),
@@ -55,23 +63,45 @@ export class ChatSseController {
       onToolEnd: (toolName, output, success) => send('tool_end', { toolName, output, success }),
       onConfirmationRequest: (request) => send('confirmation_request', { request }),
       onPermissionRequest: (request) => send('permission_request', { request }),
-      onDone: (finalText) => send('done', { finalText }),
-      onError: (message) => send('agent_error', { message }),
+      onDone: (finalText) => finish('done', { finalText }),
+      onError: (message) => finish('agent_error', { message }),
     };
 
     this.logger.log(`[SSE ${conversationId}] user: ${text.slice(0, 80)}`);
+    const run = this.orchestrator.handleUserMessage(
+      conversationId,
+      text,
+      emitter,
+      'chat',
+      body?.platform === 'web' ? 'web' : 'desktop',
+      body?.history,
+    );
+    const timeoutMs = process.env.VERCEL ? 55_000 : 120_000;
     try {
-      await this.orchestrator.handleUserMessage(
-        conversationId,
-        text,
-        emitter,
-        'chat',
-        body?.platform === 'web' ? 'web' : 'desktop',
-        body?.history,
-      );
+      await Promise.race([
+        run,
+        new Promise<void>((_, reject) => {
+          setTimeout(() => reject(new Error('SERVERLESS_TIMEOUT')), timeoutMs);
+        }),
+      ]);
     } catch (error) {
-      send('agent_error', { message: (error as Error).message });
+      const message = (error as Error).message;
+      if (!streamFinished) {
+        if (message === 'SERVERLESS_TIMEOUT') {
+          finish('done', {
+            finalText:
+              'Cloud time limit reached, sir. If a GitHub branch was updated, say "open PR" to continue.',
+          });
+        } else {
+          finish('agent_error', { message });
+        }
+      }
     } finally {
+      if (!streamFinished) {
+        finish('done', {
+          finalText: 'Connection closed before I could finish, sir. Please try again.',
+        });
+      }
       clearInterval(heartbeat);
       res.end();
     }
