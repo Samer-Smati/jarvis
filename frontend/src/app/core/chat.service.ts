@@ -164,6 +164,10 @@ export class ChatService {
     history?: Array<{ role: string; content: string; createdAt?: string }>,
   ): Promise<void> {
     const base = environment.apiUrl || '';
+    let finished = false;
+    const markFinished = () => {
+      finished = true;
+    };
     try {
       const res = await fetch(`${base}/api/chat/stream`, {
         method: 'POST',
@@ -185,9 +189,17 @@ export class ChatService {
           break;
         }
         buffer += decoder.decode(value, { stream: true });
-        buffer = this.consumeSseBuffer(buffer);
+        buffer = this.consumeSseBuffer(buffer, markFinished);
       }
-      buffer = this.consumeSseBuffer(`${buffer}\n\n`);
+      buffer = this.consumeSseBuffer(`${buffer}\n\n`, markFinished);
+      if (!finished) {
+        this.zone.run(() =>
+          this.errorSubject.next({
+            conversationId,
+            message: 'Connection ended before JARVIS finished. Please try again, sir.',
+          }),
+        );
+      }
     } catch (error) {
       this.zone.run(() =>
         this.errorSubject.next({ conversationId, message: (error as Error).message }),
@@ -195,7 +207,7 @@ export class ChatService {
     }
   }
 
-  private consumeSseBuffer(buffer: string): string {
+  private consumeSseBuffer(buffer: string, onFinished?: () => void): string {
     const blocks = buffer.split('\n\n');
     const rest = blocks.pop() ?? '';
     for (const block of blocks) {
@@ -216,7 +228,7 @@ export class ChatService {
       }
       try {
         const payload = JSON.parse(dataLine);
-        this.zone.run(() => this.dispatchSse(event, payload));
+        this.zone.run(() => this.dispatchSse(event, payload, onFinished));
       } catch {
         /* ignore malformed chunk */
       }
@@ -224,7 +236,7 @@ export class ChatService {
     return rest;
   }
 
-  private dispatchSse(event: string, payload: unknown): void {
+  private dispatchSse(event: string, payload: unknown, onFinished?: () => void): void {
     switch (event) {
       case 'token':
         this.tokenSubject.next(payload as TokenEvent);
@@ -254,9 +266,11 @@ export class ChatService {
         this.permissionSubject.next((payload as { request: PermissionRequest }).request);
         break;
       case 'done':
+        onFinished?.();
         this.doneSubject.next(payload as DoneEvent);
         break;
       case 'agent_error':
+        onFinished?.();
         this.errorSubject.next(payload as AgentErrorEvent);
         break;
       default:

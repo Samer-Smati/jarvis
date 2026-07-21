@@ -14,7 +14,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isServerlessRuntime } from './fast-chat.util';
+import { isFastChatTurn, isSelfImproveInfoQuery, isServerlessRuntime } from './fast-chat.util';
 
 const MAX_TOOL_ITERATIONS = 8;
 
@@ -106,6 +106,9 @@ export class OrchestratorService {
       if (isFastChatTurn(userText)) {
         systemPrompt += `\n\nThis is a brief greeting or acknowledgment — reply in one short spoken sentence. Do not call any tools.`;
       }
+      if (isSelfImproveInfoQuery(userText)) {
+        systemPrompt += `\n\nThe user is asking what you CAN upgrade — call self_improve with action=status ONCE, then answer in plain language from that output. Do NOT call inspect, write, commit, or pull_request in this turn. Offer 2–3 concrete upgrade ideas (UI, skills, voice, speed) and wait for their pick.`;
+      }
 
       const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }, ...history];
       const fastTurn = isServerlessRuntime() && isFastChatTurn(userText);
@@ -113,6 +116,13 @@ export class OrchestratorService {
 
       let finalText = '';
       for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+        if (iteration > 0) {
+          emitter.onProgress?.({
+            stage: 'reply',
+            message: 'Preparing your answer…',
+            percent: Math.min(40 + iteration * 8, 88),
+          });
+        }
         let streamedContent = '';
         const result = await this.llm.chat({
           messages,
@@ -151,6 +161,7 @@ export class OrchestratorService {
         await this.memory.appendMessage(conversationId, 'assistant', finalText);
       }
       void this.memory.logEvent(trigger, `Handled: ${userText.slice(0, 120)}`);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
       emitter.onDone(finalText);
     } catch (error) {
       const message = abort.signal.aborted

@@ -126,6 +126,9 @@ export class ChatComponent implements OnInit, OnDestroy {
         if (typeof event.percent === 'number') {
           current.progressPercent = event.percent;
         }
+        if (event.stage === 'done' && event.percent === 100) {
+          current.progressPercent = 100;
+        }
         current.statusHint = event.message;
         this.scrollToBottom();
         this.cdr.markForCheck();
@@ -179,7 +182,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.subscriptions.add(
       this.chat.toolEnd$.subscribe((event) => {
         const current = this.currentAssistantMessage();
-        const tool = current.tools?.find((t) => t.toolName === event.toolName && t.running);
+        const tool = current.tools?.find((t) => t.running);
         if (tool) {
           tool.running = false;
           tool.output = event.output;

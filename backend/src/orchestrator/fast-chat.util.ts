@@ -15,3 +15,11 @@ export function isFastChatTurn(text: string): boolean {
 export function isServerlessRuntime(): boolean {
   return !!process.env.VERCEL || process.env.JARVIS_SERVERLESS === '1';
 }
+
+/** User asks what can be upgraded — status only, no inspect spam. */
+export function isSelfImproveInfoQuery(text: string): boolean {
+  const t = text.trim();
+  return /\b(what can you upgrade|what.*upgrade.*(yourself|first|now)|what updates|what do you need|upgrade yourself first|what can you change)\b/i.test(
+    t,
+  );
+}

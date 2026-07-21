@@ -118,13 +118,20 @@ export class GitHubService {
 
   async listDirectory(path: string, ref?: string): Promise<string[]> {
     const q = ref ? `?ref=${encodeURIComponent(ref)}` : '';
-    const entries = await this.request<Array<{ name: string; type: string }>>(
-      `/repos/${this.repoRef!.owner}/${this.repoRef!.repo}/contents/${encodePath(path)}${q}`,
-    );
-    if (!Array.isArray(entries)) {
-      return [];
+    try {
+      const entries = await this.request<Array<{ name: string; type: string }>>(
+        `/repos/${this.repoRef!.owner}/${this.repoRef!.repo}/contents/${encodePath(path)}${q}`,
+      );
+      if (!Array.isArray(entries)) {
+        return [];
+      }
+      return entries.map((e) => `${e.type === 'dir' ? '[dir] ' : ''}${e.name}`);
+    } catch (error) {
+      if ((error as GitHubError).status === 404) {
+        return [];
+      }
+      throw error;
     }
-    return entries.map((e) => `${e.type === 'dir' ? '[dir] ' : ''}${e.name}`);
   }
 
   private async request<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {

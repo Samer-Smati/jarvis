@@ -16,6 +16,27 @@ import {
 const MAX_READ = 12000;
 const RUN_TIMEOUT_MS = 120000;
 
+const PATH_ALIASES: Record<string, string> = {
+  ui: 'frontend/src/app',
+  'ui/': 'frontend/src/app/',
+  app: 'frontend/src/app',
+  mobile: 'frontend/src/app',
+  chat: 'frontend/src/app/chat',
+  skills: 'backend/src/skills',
+  orchestrator: 'backend/src/orchestrator',
+  llm: 'backend/src/llm',
+};
+
+const UPGRADE_CATALOG = [
+  'Chat UI & upgrade panel — frontend/src/app/chat/',
+  'Self-improve skill — backend/src/skills/impl/self-improve.skill.ts',
+  'Orchestrator & personality — backend/src/orchestrator/',
+  'LLM providers (Gemini, Groq) — backend/src/llm/',
+  'Voice & TTS — frontend/src/app/core/voice.service.ts',
+  'Integrations (GitHub, Vercel) — backend/src/integrations/',
+  'Serverless entry — api/index.js, backend/src/serverless.ts',
+];
+
 const ACTION_PROGRESS: Record<string, { stage: string; percent: number; label: string }> = {
   status: { stage: 'status', percent: 12, label: 'Checking self-upgrade capabilities' },
   inspect: { stage: 'inspect', percent: 28, label: 'Inspecting project files' },
@@ -135,6 +156,16 @@ export class SelfImproveSkill implements Skill {
     const canUpgrade = githubOk || localWrites;
     const deploy = vercelOk ? await this.vercel.latestDeployment() : null;
 
+    let repoRoot = '';
+    if (githubOk && serverless) {
+      try {
+        const entries = await this.github.listDirectory('');
+        repoRoot = entries.length ? entries.join('\n') : '';
+      } catch {
+        repoRoot = '';
+      }
+    }
+
     const blocked: string[] = [];
     if (serverless && !githubOk) {
       blocked.push('Cloud mode needs GITHUB_TOKEN + GITHUB_REPO before any write/PR.');
@@ -166,6 +197,10 @@ export class SelfImproveSkill implements Skill {
     if (deploy?.url) {
       lines.push(`Latest Vercel deploy: ${deploy.url} (${deploy.state ?? 'unknown'})`);
     }
+    if (repoRoot) {
+      lines.push('', 'Repo root (GitHub):', repoRoot);
+    }
+    lines.push('', 'Upgrade catalog (pick one for the user):', ...UPGRADE_CATALOG.map((c) => `- ${c}`));
     if (ready.length) {
       lines.push('', 'Ready:', ...ready.map((r) => `- ${r}`));
     }
@@ -196,7 +231,7 @@ export class SelfImproveSkill implements Skill {
   }
 
   private async inspect(args: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
-    const relative = typeof args.path === 'string' ? args.path : '.';
+    const relative = this.normalizeInspectPath(typeof args.path === 'string' ? args.path : '.');
     const mode = String(args.mode ?? 'read');
     const listMode = mode === 'list' || relative.endsWith('/') || relative === '.';
 
@@ -209,19 +244,30 @@ export class SelfImproveSkill implements Skill {
 
     if (this.github.isConfigured() && isServerlessRuntime()) {
       try {
-        const entries = await this.github.listDirectory(relative.replace(/^\.\//, ''));
-        if (listMode && entries.length) {
+        const ghPath = relative.replace(/^\.\//, '').replace(/\/$/, '');
+        const entries = ghPath ? await this.github.listDirectory(ghPath) : await this.github.listDirectory('');
+        if (listMode) {
+          if (!entries.length) {
+            const root = await this.github.listDirectory('');
+            const hint = root.length ? `\n\nRepo root contains:\n${root.join('\n')}` : '';
+            return {
+              success: false,
+              output: `Path not found on GitHub: ${relative}.${hint}`,
+            };
+          }
           this.progress(context, {
             stage: 'inspect',
             message: `Listed ${entries.length} entries`,
-            percent: 34,
+            percent: 38,
             detail: relative,
           });
           return { success: true, output: entries.join('\n') };
         }
-        const file = await this.github.getFile(relative.replace(/^\.\//, ''));
+        const file = await this.github.getFile(ghPath);
         if (!file) {
-          return { success: false, output: `File not found on GitHub: ${relative}` };
+          const root = await this.github.listDirectory('');
+          const hint = root.length ? `\n\nRepo root contains:\n${root.join('\n')}` : '';
+          return { success: false, output: `File not found on GitHub: ${relative}.${hint}` };
         }
         const truncated =
           file.content.length > MAX_READ
@@ -230,7 +276,7 @@ export class SelfImproveSkill implements Skill {
         this.progress(context, {
           stage: 'inspect',
           message: `Read ${relative}`,
-          percent: 34,
+          percent: 38,
           detail: `${file.content.length} chars`,
         });
         return { success: true, output: truncated };
@@ -252,7 +298,7 @@ export class SelfImproveSkill implements Skill {
         this.progress(context, {
           stage: 'inspect',
           message: `Listed ${lines.length} entries`,
-          percent: 34,
+          percent: 38,
           detail: relative,
         });
         return { success: true, output: lines.length ? lines.join('\n') : 'Empty folder.' };
@@ -262,13 +308,20 @@ export class SelfImproveSkill implements Skill {
       this.progress(context, {
         stage: 'inspect',
         message: `Read ${relative}`,
-        percent: 34,
+        percent: 38,
         detail: `${content.length} chars`,
       });
       return { success: true, output: truncated };
     } catch (error) {
       return { success: false, output: `Inspect error: ${(error as Error).message}` };
     }
+  }
+
+  private normalizeInspectPath(path: string): string {
+    const trimmed = path.trim().replace(/^\.\//, '') || '.';
+    const key = trimmed.toLowerCase().replace(/\/$/, '');
+    const aliased = PATH_ALIASES[trimmed.toLowerCase()] ?? PATH_ALIASES[key];
+    return aliased ?? trimmed;
   }
 
   private async write(args: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
