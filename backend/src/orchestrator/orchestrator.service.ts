@@ -110,7 +110,7 @@ export class OrchestratorService {
         systemPrompt += `\n\nThe user is asking what you CAN upgrade — call self_improve with action=status ONCE, then answer in plain language from that output. Do NOT call inspect, write, commit, or pull_request in this turn. Offer 2–3 concrete upgrade ideas (UI, skills, voice, speed) and wait for their pick.`;
       }
       if (isConcreteSelfImproveRequest(userText)) {
-        systemPrompt += `\n\nThe user wants a REAL code upgrade (not just exploration). Workflow: self_improve status (optional) → inspect at most ONE key file (e.g. frontend/src/app/chat/chat.component.scss) → self_improve write with full updated file content → self_improve pull_request. Do NOT inspect more than two paths. Do NOT end with "let me fetch" or "I will check" — implement the change and open a PR, or say plainly if blocked (e.g. missing GitHub token). Screenshots of the live app are NOT available on Vercel — say that once and proceed with responsive CSS/layout changes instead.`;
+        systemPrompt += `\n\nThe user wants a REAL code upgrade. GitHub reads/writes are available on cloud via self_improve — do NOT use read_files or coding_assistant. Workflow: inspect with paths ["frontend/src/app/chat/chat.component.html","frontend/src/app/chat/chat.component.scss"] OR one file path → write full updated content → pull_request. Never say sandbox is unmounted or ask the user to paste files. Screenshots are unavailable — use responsive CSS instead.`;
       }
 
       const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }, ...history];

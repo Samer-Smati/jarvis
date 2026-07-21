@@ -69,3 +69,24 @@ export function isWriteBlocked(relative: string): boolean {
 export function isServerlessRuntime(): boolean {
   return !!process.env.VERCEL || process.env.JARVIS_SERVERLESS === '1';
 }
+
+/** True when the repo path likely points to a file (has a dotted basename). */
+export function looksLikeRepoFile(relative: string): boolean {
+  const normalized = relative.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '');
+  if (!normalized || normalized === '.') {
+    return false;
+  }
+  const base = normalized.split('/').pop() ?? '';
+  return base.includes('.') && !base.endsWith('.');
+}
+
+export function shouldListRepoPath(relative: string, mode: string): boolean {
+  if (mode === 'read') {
+    return false;
+  }
+  if (mode === 'list') {
+    return true;
+  }
+  const normalized = relative.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '') || '.';
+  return normalized === '.' || normalized.endsWith('/') || !looksLikeRepoFile(normalized);
+}

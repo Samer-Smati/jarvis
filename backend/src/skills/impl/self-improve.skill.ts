@@ -9,8 +9,10 @@ import { Skill, SkillContext, SkillProgress, SkillResult } from '../skill.interf
 import {
   isServerlessRuntime,
   isWriteBlocked,
+  looksLikeRepoFile,
   resolveJarvisProjectRoot,
   resolveProjectPath,
+  shouldListRepoPath,
 } from '../project-scope.util';
 
 const MAX_READ = 12000;
@@ -50,7 +52,7 @@ const ACTION_PROGRESS: Record<string, { stage: string; percent: number; label: s
 export class SelfImproveSkill implements Skill {
   readonly name = 'self_improve';
   readonly description =
-    'Upgrade JARVIS itself by editing real code (skills, UI, orchestrator, integrations), running checks, and opening a GitHub PR. Use for update/upgrade/fix/improve JARVIS. For "what can you upgrade" or "what do you need", call action=status and report readiness — never treat a version bump as the upgrade. Workflow: status → inspect → write → run_checks → pull_request.';
+    'Upgrade JARVIS by editing real repo code via GitHub (cloud) or local disk (desktop). On Vercel, ALWAYS use this tool for frontend/backend source — never read_files or coding_assistant (those are sandbox-only). Use inspect with full file paths (e.g. frontend/src/app/chat/chat.component.scss) or paths[] for multiple files. Workflow: status → inspect → write → pull_request.';
   readonly requiresConfirmation = false;
   readonly parameters = {
     type: 'object',
@@ -62,6 +64,12 @@ export class SelfImproveSkill implements Skill {
           'status=capabilities; inspect=list/read files; write=apply code change; run_checks=build; commit=git commit (desktop); pull_request=open GitHub PR',
       },
       path: { type: 'string', description: 'Relative path inside the JARVIS repo (inspect/write).' },
+      paths: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'inspect: read multiple files at once; commit: stage specific paths (desktop).',
+      },
+      mode: { type: 'string', enum: ['list', 'read'], description: 'inspect: list directory or force read file.' },
       content: { type: 'string', description: 'Full file content for write action.' },
       branch: {
         type: 'string',
@@ -69,11 +77,6 @@ export class SelfImproveSkill implements Skill {
       },
       message: { type: 'string', description: 'Commit message or PR description.' },
       title: { type: 'string', description: 'Pull request title.' },
-      paths: {
-        type: 'array',
-        items: { type: 'string' },
-        description: 'Optional file paths to stage for commit (desktop).',
-      },
     },
     required: ['action'],
   };
@@ -193,6 +196,7 @@ export class SelfImproveSkill implements Skill {
       `GitHub: ${githubOk ? this.github.repoLabel() : 'not configured — set GITHUB_TOKEN + GITHUB_REPO'}`,
       `Vercel deploy API: ${vercelOk ? 'configured' : 'optional — set VERCEL_TOKEN + VERCEL_PROJECT_ID'}`,
       `Local file writes: ${localWrites ? 'enabled' : 'disabled (use write → GitHub branch)'}`,
+      `Source reads on cloud: ${githubOk ? 'GitHub API (self_improve inspect) — NOT sandbox' : 'blocked until GITHUB_TOKEN'}`,
     ];
     if (deploy?.url) {
       lines.push(`Latest Vercel deploy: ${deploy.url} (${deploy.state ?? 'unknown'})`);
@@ -231,9 +235,16 @@ export class SelfImproveSkill implements Skill {
   }
 
   private async inspect(args: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
+    const multiPaths = Array.isArray(args.paths)
+      ? args.paths.filter((p): p is string => typeof p === 'string').map((p) => this.normalizeInspectPath(p))
+      : [];
+    if (multiPaths.length) {
+      return this.inspectMany(multiPaths, context);
+    }
+
     const relative = this.normalizeInspectPath(typeof args.path === 'string' ? args.path : '.');
-    const mode = String(args.mode ?? 'read');
-    const listMode = mode === 'list' || relative.endsWith('/') || relative === '.';
+    const mode = String(args.mode ?? 'auto');
+    const listMode = shouldListRepoPath(relative, mode === 'auto' ? 'auto' : mode);
 
     this.progress(context, {
       stage: 'inspect',
@@ -243,46 +254,7 @@ export class SelfImproveSkill implements Skill {
     });
 
     if (this.github.isConfigured() && isServerlessRuntime()) {
-      try {
-        const ghPath = relative.replace(/^\.\//, '').replace(/\/$/, '');
-        const entries = ghPath ? await this.github.listDirectory(ghPath) : await this.github.listDirectory('');
-        if (listMode) {
-          if (!entries.length) {
-            const root = await this.github.listDirectory('');
-            const hint = root.length ? `\n\nRepo root contains:\n${root.join('\n')}` : '';
-            return {
-              success: false,
-              output: `Path not found on GitHub: ${relative}.${hint}`,
-            };
-          }
-          this.progress(context, {
-            stage: 'inspect',
-            message: `Listed ${entries.length} entries`,
-            percent: 38,
-            detail: relative,
-          });
-          return { success: true, output: entries.join('\n') };
-        }
-        const file = await this.github.getFile(ghPath);
-        if (!file) {
-          const root = await this.github.listDirectory('');
-          const hint = root.length ? `\n\nRepo root contains:\n${root.join('\n')}` : '';
-          return { success: false, output: `File not found on GitHub: ${relative}.${hint}` };
-        }
-        const truncated =
-          file.content.length > MAX_READ
-            ? `${file.content.slice(0, MAX_READ)}\n...[truncated]`
-            : file.content;
-        this.progress(context, {
-          stage: 'inspect',
-          message: `Read ${relative}`,
-          percent: 38,
-          detail: `${file.content.length} chars`,
-        });
-        return { success: true, output: truncated };
-      } catch (error) {
-        return { success: false, output: (error as Error).message };
-      }
+      return this.inspectViaGitHub(relative, listMode, context);
     }
 
     const target = resolveProjectPath(this.projectRoot, relative);
@@ -314,6 +286,74 @@ export class SelfImproveSkill implements Skill {
       return { success: true, output: truncated };
     } catch (error) {
       return { success: false, output: `Inspect error: ${(error as Error).message}` };
+    }
+  }
+
+  private async inspectMany(paths: string[], context: SkillContext): Promise<SkillResult> {
+    const chunks: string[] = [];
+    for (const relative of paths.slice(0, 6)) {
+      const result =
+        this.github.isConfigured() && isServerlessRuntime()
+          ? await this.inspectViaGitHub(relative, false, context)
+          : await this.inspect({ path: relative, mode: 'read' }, context);
+      chunks.push(`=== ${relative} ===\n${result.output}`);
+      if (!result.success) {
+        return { success: false, output: chunks.join('\n\n') };
+      }
+    }
+    this.progress(context, {
+      stage: 'inspect',
+      message: `Read ${paths.length} files`,
+      percent: 40,
+      detail: paths.join(', '),
+    });
+    return { success: true, output: chunks.join('\n\n') };
+  }
+
+  private async inspectViaGitHub(
+    relative: string,
+    listMode: boolean,
+    context: SkillContext,
+  ): Promise<SkillResult> {
+    try {
+      const ghPath = relative.replace(/^\.\//, '').replace(/\/$/, '') || '';
+      if (listMode || !looksLikeRepoFile(ghPath)) {
+        const entries = ghPath ? await this.github.listDirectory(ghPath) : await this.github.listDirectory('');
+        if (entries.length) {
+          this.progress(context, {
+            stage: 'inspect',
+            message: `Listed ${entries.length} entries`,
+            percent: 38,
+            detail: relative,
+          });
+          return { success: true, output: entries.join('\n') };
+        }
+      }
+      const file = await this.github.getFile(ghPath);
+      if (!file && !looksLikeRepoFile(ghPath)) {
+        const entries = await this.github.listDirectory(ghPath);
+        if (entries.length) {
+          return { success: true, output: entries.join('\n') };
+        }
+      }
+      if (!file) {
+        const root = await this.github.listDirectory('');
+        const hint = root.length ? `\n\nRepo root contains:\n${root.join('\n')}` : '';
+        return { success: false, output: `Not found on GitHub: ${relative}.${hint}` };
+      }
+      const truncated =
+        file.content.length > MAX_READ
+          ? `${file.content.slice(0, MAX_READ)}\n...[truncated]`
+          : file.content;
+      this.progress(context, {
+        stage: 'inspect',
+        message: `Read ${relative}`,
+        percent: 38,
+        detail: `${file.content.length} chars`,
+      });
+      return { success: true, output: truncated };
+    } catch (error) {
+      return { success: false, output: (error as Error).message };
     }
   }
 
