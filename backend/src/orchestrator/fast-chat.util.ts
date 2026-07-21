@@ -19,7 +19,17 @@ export function isServerlessRuntime(): boolean {
 /** User asks what can be upgraded — status only, no inspect spam. */
 export function isSelfImproveInfoQuery(text: string): boolean {
   const t = text.trim();
+  if (isConcreteSelfImproveRequest(t)) {
+    return false;
+  }
   return /\b(what can you upgrade|what.*upgrade.*(yourself|first|now)|what updates|what do you need|upgrade yourself first|what can you change)\b/i.test(
     t,
   );
+}
+
+/** User wants a real code change — inspect briefly then write + PR. */
+export function isConcreteSelfImproveRequest(text: string): boolean {
+  const t = text.trim();
+  return /\b(improve|upgrade|fix|update|make|change|responsive|refactor|redesign|add|implement)\b/i.test(t) &&
+    /\b(ui|interface|chat|frontend|screen|mobile|layout|design|voice|skill|jarvis|yourself|code)\b/i.test(t);
 }

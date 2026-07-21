@@ -14,7 +14,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isSelfImproveInfoQuery, isServerlessRuntime } from './fast-chat.util';
+import { isFastChatTurn, isConcreteSelfImproveRequest, isSelfImproveInfoQuery, isServerlessRuntime } from './fast-chat.util';
 
 const MAX_TOOL_ITERATIONS = 8;
 
@@ -108,6 +108,9 @@ export class OrchestratorService {
       }
       if (isSelfImproveInfoQuery(userText)) {
         systemPrompt += `\n\nThe user is asking what you CAN upgrade — call self_improve with action=status ONCE, then answer in plain language from that output. Do NOT call inspect, write, commit, or pull_request in this turn. Offer 2–3 concrete upgrade ideas (UI, skills, voice, speed) and wait for their pick.`;
+      }
+      if (isConcreteSelfImproveRequest(userText)) {
+        systemPrompt += `\n\nThe user wants a REAL code upgrade (not just exploration). Workflow: self_improve status (optional) → inspect at most ONE key file (e.g. frontend/src/app/chat/chat.component.scss) → self_improve write with full updated file content → self_improve pull_request. Do NOT inspect more than two paths. Do NOT end with "let me fetch" or "I will check" — implement the change and open a PR, or say plainly if blocked (e.g. missing GitHub token). Screenshots of the live app are NOT available on Vercel — say that once and proceed with responsive CSS/layout changes instead.`;
       }
 
       const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }, ...history];
