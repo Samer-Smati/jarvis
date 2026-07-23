@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { BrainService } from '../../brain/brain.service';
+import { WebFetchService } from '../../integrations/web-fetch.service';
 import { Skill, SkillContext, SkillResult } from '../skill.interface';
 
 @Injectable()
@@ -8,17 +9,19 @@ export class BrainSkill implements Skill {
   readonly description =
     'JARVIS persistent second brain (LLM Wiki / claude-obsidian pattern). ' +
     'Stores linked Markdown knowledge: hot cache, index, concepts, entities, sources, sessions. ' +
-    'Use query to recall knowledge, remember for facts, ingest for sources, save_session after important chats. Use graph when the user asks to see links, connections, or a knowledge graph.';
+    'Use ingest_url when the user sends a link — fetches the page and files it in the brain. ' +
+    'Use query, remember, ingest, save_session, update_hot, graph as needed.';
   readonly requiresConfirmation = false;
   readonly parameters = {
     type: 'object',
     properties: {
       action: {
         type: 'string',
-        enum: ['status', 'query', 'graph', 'remember', 'ingest', 'save_session', 'update_hot'],
+        enum: ['status', 'query', 'graph', 'remember', 'ingest', 'ingest_url', 'save_session', 'update_hot'],
         description:
-          'status=brain overview; query=search vault; graph=open live link graph in UI; remember=store fact/concept; ingest=add source; save_session=file conversation summary; update_hot=refresh recent context',
+          'status=brain overview; query=search vault; graph=open link graph UI; ingest_url=fetch a URL and file it; remember=store fact; ingest=add pasted text; save_session=file conversation; update_hot=refresh context',
       },
+      url: { type: 'string', description: 'HTTP(S) URL for ingest_url.' },
       query: { type: 'string', description: 'Search text for query action.' },
       title: { type: 'string', description: 'Page title for remember/ingest.' },
       content: { type: 'string', description: 'Body text for remember/ingest/save_session/update_hot.' },
@@ -37,7 +40,10 @@ export class BrainSkill implements Skill {
     required: ['action'],
   };
 
-  constructor(private readonly brain: BrainService) {}
+  constructor(
+    private readonly brain: BrainService,
+    private readonly webFetch: WebFetchService,
+  ) {}
 
   async execute(args: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const action = String(args?.action ?? '');
@@ -71,6 +77,43 @@ export class BrainSkill implements Skill {
           success: true,
           output: [`Hot cache:\n${result.hot.slice(0, 600)}`, '', 'Matching pages:', hits].join('\n'),
         };
+      }
+      case 'ingest_url': {
+        const url = String(args?.url ?? '').trim();
+        if (!url) {
+          return { success: false, output: '"url" is required for ingest_url.' };
+        }
+        context.onProgress?.({
+          stage: 'brain',
+          message: `Fetching ${url}…`,
+          percent: 48,
+          detail: url,
+        });
+        try {
+          const page = await this.webFetch.fetchReadable(url);
+          context.onProgress?.({
+            stage: 'brain',
+            message: `Filing "${page.title}" in brain…`,
+            percent: 55,
+          });
+          const body = `URL: ${page.url}\n\n${page.text}`;
+          const output = await this.brain.ingest(page.title, body, 'url');
+          const excerpt = page.text.slice(0, 500).trim();
+          return {
+            success: true,
+            output: [
+              output,
+              '',
+              `Fetched: ${page.url}`,
+              `Title: ${page.title}`,
+              '',
+              'Excerpt:',
+              excerpt + (page.text.length > 500 ? '…' : ''),
+            ].join('\n'),
+          };
+        } catch (error) {
+          return { success: false, output: `Could not fetch URL: ${(error as Error).message}` };
+        }
       }
       case 'remember': {
         const title = String(args?.title ?? '').trim();

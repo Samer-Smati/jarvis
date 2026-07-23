@@ -448,6 +448,8 @@ export class ChatComponent implements OnInit, OnDestroy {
           return 'Remembering in brain';
         case 'ingest':
           return 'Ingesting source';
+        case 'ingest_url':
+          return 'Reading link';
         default:
           return 'Brain';
       }

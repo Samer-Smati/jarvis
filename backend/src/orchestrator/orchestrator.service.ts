@@ -15,7 +15,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isBrainGraphRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime } from './fast-chat.util';
+import { isFastChatTurn, isBrainGraphRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls } from './fast-chat.util';
 
 const MAX_TOOL_ITERATIONS = 8;
 const SERVERLESS_MAX_TOOL_ITERATIONS = 4;
@@ -93,6 +93,13 @@ export class OrchestratorService {
         }
       }
 
+      if (isUrlIngestTurn(userText)) {
+        const handled = await this.runUrlIngest(conversationId, userText, emitter, trigger, clientPlatform);
+        if (handled) {
+          return;
+        }
+      }
+
       const facts = await this.memory.recallFacts(userText);
       const brainContext = await this.brain.getContextBlock(userText);
       const now = new Date().toLocaleString('en-GB', {
@@ -141,6 +148,10 @@ export class OrchestratorService {
       }
       if (isSelfImproveSkillSourceRequest(userText)) {
         systemPrompt += `\n\nThe user wants to upgrade the self_improve SKILL SOURCE FILE. It IS in the repo at backend/src/skills/impl/self-improve.skill.ts — NOT a hidden runtime tool. Workflow: self_improve inspect path=backend/src/skills/impl/self-improve.skill.ts mode=read → write that path → pull_request. Do NOT inspect "." or scripts/ instead. NEVER say the skill is built-in or unmodifiable.`;
+      }
+      const urls = extractUrls(userText);
+      if (urls.length && !isUrlIngestTurn(userText)) {
+        systemPrompt += `\n\nThe user mentioned a URL (${urls[0]}). You CAN fetch it with brain action=ingest_url. Never refuse link access.`;
       }
 
       const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }, ...history];
@@ -227,6 +238,7 @@ export class OrchestratorService {
 
       if (finalText) {
         finalText = sanitizeSelfImproveDenial(finalText, userText);
+        finalText = sanitizeLinkDenial(finalText, userText);
         await this.memory.appendMessage(conversationId, 'assistant', finalText);
         void this.brain.touchFromTurn(userText, finalText);
       }
@@ -440,6 +452,78 @@ export class OrchestratorService {
     emitter.onDone(finalText);
     return true;
   }
+
+  private async runUrlIngest(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+    clientPlatform: 'desktop' | 'web',
+  ): Promise<boolean> {
+    const urls = extractUrls(userText);
+    const url = urls[0];
+    if (!url) {
+      return false;
+    }
+
+    const skill = this.skills.get('brain');
+    if (!skill) {
+      return false;
+    }
+
+    emitter.onProgress?.({
+      stage: 'brain',
+      message: 'Fetching link…',
+      percent: 38,
+      detail: url,
+      toolName: 'brain',
+    });
+
+    const output = await this.executeToolCall(
+      conversationId,
+      {
+        id: 'url-ingest',
+        name: 'brain',
+        arguments: { action: 'ingest_url', url },
+      },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    if (output.startsWith('Error:') || output.startsWith('Could not fetch')) {
+      return false;
+    }
+
+    const titleMatch = output.match(/^Title: (.+)$/m);
+    const excerptMatch = output.match(/Excerpt:\n([\s\S]+)/);
+    const title = titleMatch?.[1]?.trim() ?? 'that page';
+    const excerpt = excerptMatch?.[1]?.trim().slice(0, 280) ?? '';
+
+    const finalText = excerpt
+      ? `Done, sir. I read ${title} and filed it in my brain. In short: ${excerpt}`
+      : `Done, sir. I read and saved ${title} in my brain. Ask me about it anytime, or say "show the graph" to see how it links.`;
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    void this.memory.logEvent(trigger, `URL ingest: ${url.slice(0, 120)}`);
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+}
+
+function sanitizeLinkDenial(text: string, userText: string): string {
+  if (!extractUrls(userText).length) {
+    return text;
+  }
+  if (
+    /\b(don't have the ability to browse|cannot browse|can't browse|do not have the ability to browse|access web content directly|cannot access external links|can't access external links)\b/i.test(
+      text,
+    )
+  ) {
+    return 'Sir, I can fetch that link — paste the URL again and I will read it and save it to my brain with ingest_url.';
+  }
+  return text;
 }
 
 function sanitizeSelfImproveDenial(text: string, userText: string): string {

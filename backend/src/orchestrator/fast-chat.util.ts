@@ -43,6 +43,26 @@ export function isResponsiveUpgradeRequest(text: string): boolean {
   );
 }
 
+export function extractUrls(text: string): string[] {
+  const matches = text.match(/https?:\/\/[^\s<>"')\]]+/gi) ?? [];
+  return [...new Set(matches.map((u) => u.replace(/[.,;:!?)]+$/, '')))];
+}
+
+/** User shared a URL to read or save. */
+export function isUrlIngestTurn(text: string): boolean {
+  const urls = extractUrls(text);
+  if (!urls.length) {
+    return false;
+  }
+  const rest = text.replace(/https?:\/\/[^\s<>"')\]]+/gi, '').trim();
+  if (!rest) {
+    return true;
+  }
+  return /\b(read|open|check|look at|this link|ingest|remember|save|add|summarize|summarise|tell me|what is|file|brain|learn)\b/i.test(
+    text,
+  );
+}
+
 /** User wants to upgrade the self_improve skill source itself. */
 export function isSelfImproveSkillSourceRequest(text: string): boolean {
   const t = text.trim();

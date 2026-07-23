@@ -44,7 +44,7 @@ export class BrainService implements OnModuleInit {
       'Hot cache preview:',
       vault.hot.slice(0, 400) + (vault.hot.length > 400 ? '…' : ''),
       '',
-      'Use brain skill: query, remember, ingest, save_session, update_hot.',
+      'Use brain skill: query, remember, ingest, ingest_url, save_session, update_hot.',
     ].join('\n');
   }
 
