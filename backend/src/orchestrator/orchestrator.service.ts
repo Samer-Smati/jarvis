@@ -19,7 +19,7 @@ import { isFastChatTurn, isBrainGraphRequest, isConcreteSelfImproveRequest, isRe
 
 const MAX_TOOL_ITERATIONS = 8;
 const SERVERLESS_MAX_TOOL_ITERATIONS = 4;
-const SERVERLESS_DEADLINE_MS = 50_000;
+const SERVERLESS_DEADLINE_MS = 270_000;
 
 const REMEMBER_FACT_TOOL: ToolDefinition = {
   name: 'remember_fact',

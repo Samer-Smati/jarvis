@@ -76,7 +76,7 @@ export class ChatSseController {
       body?.platform === 'web' ? 'web' : 'desktop',
       body?.history,
     );
-    const timeoutMs = process.env.VERCEL ? 55_000 : 120_000;
+    const timeoutMs = process.env.VERCEL ? 290_000 : 120_000;
     try {
       await Promise.race([
         run,
@@ -90,7 +90,7 @@ export class ChatSseController {
         if (message === 'SERVERLESS_TIMEOUT') {
           finish('done', {
             finalText:
-              'Cloud time limit reached, sir. If a GitHub branch was updated, say "open PR" to continue.',
+              'Cloud time limit reached, sir. Say "open PR" if a GitHub branch was updated, or send a shorter follow-up and I will continue.',
           });
         } else {
           finish('agent_error', { message });
