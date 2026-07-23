@@ -1,9 +1,10 @@
-import { BadRequestException, Body, Controller, Get, Logger, Param, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Logger, Param, Post, Query } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { GuardrailService } from '../guardrails/guardrail.service';
 import { LlmService } from '../llm/llm.service';
 import { ConversationMessageEntity } from '../memory/entities/conversation-message.entity';
+import { BrainService } from '../brain/brain.service';
 import { MemoryService } from '../memory/memory.service';
 import { OrchestratorService } from '../orchestrator/orchestrator.service';
 import { ReminderEntity } from '../skills/entities/reminder.entity';
@@ -21,6 +22,7 @@ export class ChatController {
     private readonly orchestrator: OrchestratorService,
     private readonly skills: SkillRegistry,
     private readonly memory: MemoryService,
+    private readonly brain: BrainService,
     private readonly guardrails: GuardrailService,
     private readonly llm: LlmService,
     @InjectRepository(ReminderEntity)
@@ -143,6 +145,22 @@ export class ChatController {
   @Get('memory/facts')
   facts() {
     return this.memory.listFacts();
+  }
+
+  @Get('brain/status')
+  async brainStatus() {
+    const status = await this.brain.status();
+    const pages = await this.brain.listPages();
+    return { status, pageCount: pages.length, pages: pages.slice(0, 50) };
+  }
+
+  @Get('brain/query')
+  async brainQuery(@Query('q') q?: string) {
+    const query = q ?? '';
+    if (!query.trim()) {
+      throw new BadRequestException('Query parameter "q" is required.');
+    }
+    return this.brain.query(query);
   }
 
   @Get('reminders')

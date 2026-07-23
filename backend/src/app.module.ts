@@ -9,6 +9,7 @@ import { ChatModule } from './chat/chat.module';
 import { GuardrailsModule } from './guardrails/guardrails.module';
 import { LlmModule } from './llm/llm.module';
 import { MemoryModule } from './memory/memory.module';
+import { BrainModule } from './brain/brain.module';
 import { PermissionsModule } from './permissions/permissions.module';
 import { OrchestratorModule } from './orchestrator/orchestrator.module';
 import { IntegrationsModule } from './integrations/integrations.module';
@@ -84,6 +85,7 @@ function resolveSqlJsWasmBinary(): Buffer {
     ...scheduleModules,
     LlmModule,
     MemoryModule,
+    BrainModule,
     GuardrailsModule,
     PermissionsModule,
     SkillsModule,

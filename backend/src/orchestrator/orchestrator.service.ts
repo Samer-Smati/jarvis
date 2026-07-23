@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { BrainService } from '../brain/brain.service';
 import { GuardrailService } from '../guardrails/guardrail.service';
 import type { ChatMessage, LlmProvider, ToolCall, ToolDefinition } from '../llm/llm.types';
 import { LLM_PROVIDER } from '../llm/llm.types';
@@ -41,6 +42,7 @@ export class OrchestratorService {
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
     private readonly skills: SkillRegistry,
     private readonly memory: MemoryService,
+    private readonly brain: BrainService,
     private readonly guardrails: GuardrailService,
     private readonly permissions: PermissionsService,
   ) {}
@@ -92,6 +94,7 @@ export class OrchestratorService {
       }
 
       const facts = await this.memory.recallFacts(userText);
+      const brainContext = await this.brain.getContextBlock(userText);
       const now = new Date().toLocaleString('en-GB', {
         dateStyle: 'full',
         timeStyle: 'short',
@@ -108,6 +111,9 @@ export class OrchestratorService {
       systemPrompt += buildLanguageHint(userText, recentUserTexts);
       if (facts.length) {
         systemPrompt += `\n\nKnown facts about the user:\n${facts.map((f) => `- ${f}`).join('\n')}`;
+      }
+      if (brainContext.trim()) {
+        systemPrompt += `\n\nJARVIS Brain (persistent wiki — hot cache + linked pages, claude-obsidian pattern):\n${brainContext}`;
       }
 
       if (truncated > 0) {
@@ -215,6 +221,7 @@ export class OrchestratorService {
 
       if (finalText) {
         await this.memory.appendMessage(conversationId, 'assistant', finalText);
+        void this.brain.touchFromTurn(userText, finalText);
       }
       void this.memory.logEvent(trigger, `Handled: ${userText.slice(0, 120)}`);
       emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
@@ -254,9 +261,10 @@ export class OrchestratorService {
     if (call.name === REMEMBER_FACT_TOOL.name) {
       const fact = String(call.arguments?.fact ?? '');
       await this.memory.rememberFact(fact);
+      void this.brain.remember(fact.slice(0, 80), fact, 'fact');
       await this.guardrails.audit(call.name, trigger, fact, 'success');
       emitter.onToolEnd(call.name, 'Fact stored.', true);
-      return 'Fact stored in long-term memory.';
+      return 'Fact stored in long-term memory and JARVIS brain wiki.';
     }
 
     const skill = this.skills.get(call.name);
