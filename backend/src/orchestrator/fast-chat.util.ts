@@ -27,9 +27,21 @@ export function isSelfImproveInfoQuery(text: string): boolean {
   );
 }
 
+/** User wants responsive/mobile UI — use apply_preset fast path on cloud. */
+export function isResponsiveUpgradeRequest(text: string): boolean {
+  const t = text.trim();
+  return (
+    /\b(responsive|mobile|screen size|all screens|small screen|tablet|phone|viewport)\b/i.test(t) &&
+    /\b(ui|interface|chat|layout|design|frontend|make|improve|upgrade|fix|adapt)\b/i.test(t)
+  );
+}
+
 /** User wants a real code change — inspect briefly then write + PR. */
 export function isConcreteSelfImproveRequest(text: string): boolean {
   const t = text.trim();
+  if (isResponsiveUpgradeRequest(t)) {
+    return true;
+  }
   return /\b(improve|upgrade|fix|update|make|change|responsive|refactor|redesign|add|implement)\b/i.test(t) &&
     /\b(ui|interface|chat|frontend|screen|mobile|layout|design|voice|skill|jarvis|yourself|code)\b/i.test(t);
 }

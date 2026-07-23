@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { Injectable } from '@nestjs/common';
@@ -6,6 +7,11 @@ import { ConfigService } from '@nestjs/config';
 import { GitHubService } from '../../integrations/github.service';
 import { VercelDeployService } from '../../integrations/vercel-deploy.service';
 import { Skill, SkillContext, SkillProgress, SkillResult } from '../skill.interface';
+import {
+  applyPatch,
+  RESPONSIVE_MARKER,
+  RESPONSIVE_PRESET_FILES,
+} from '../presets/responsive-chat.preset';
 import {
   isServerlessRuntime,
   isWriteBlocked,
@@ -42,6 +48,7 @@ const UPGRADE_CATALOG = [
 const ACTION_PROGRESS: Record<string, { stage: string; percent: number; label: string }> = {
   status: { stage: 'status', percent: 12, label: 'Checking self-upgrade capabilities' },
   inspect: { stage: 'inspect', percent: 28, label: 'Inspecting project files' },
+  apply_preset: { stage: 'write', percent: 48, label: 'Applying upgrade preset' },
   write: { stage: 'write', percent: 52, label: 'Applying code changes' },
   run_checks: { stage: 'run_checks', percent: 72, label: 'Running build checks' },
   commit: { stage: 'commit', percent: 86, label: 'Committing changes' },
@@ -52,16 +59,21 @@ const ACTION_PROGRESS: Record<string, { stage: string; percent: number; label: s
 export class SelfImproveSkill implements Skill {
   readonly name = 'self_improve';
   readonly description =
-    'Upgrade JARVIS by editing real repo code via GitHub (cloud) or local disk (desktop). On Vercel, ALWAYS use this tool for frontend/backend source — never read_files or coding_assistant (those are sandbox-only). Use inspect with full file paths (e.g. frontend/src/app/chat/chat.component.scss) or paths[] for multiple files. Workflow: status → inspect → write → pull_request.';
+    'Upgrade JARVIS by editing real repo code via GitHub (cloud) or local disk (desktop). On Vercel, ALWAYS use this tool for frontend/backend source — never read_files or coding_assistant (those are sandbox-only). For responsive/mobile UI requests use apply_preset with preset=responsive_chat (fast, no inspect). Otherwise: inspect → write → pull_request.';
   readonly requiresConfirmation = false;
   readonly parameters = {
     type: 'object',
     properties: {
       action: {
         type: 'string',
-        enum: ['status', 'inspect', 'write', 'run_checks', 'commit', 'pull_request'],
+        enum: ['status', 'inspect', 'apply_preset', 'write', 'run_checks', 'commit', 'pull_request'],
         description:
-          'status=capabilities; inspect=list/read files; write=apply code change; run_checks=build; commit=git commit (desktop); pull_request=open GitHub PR',
+          'status=capabilities; inspect=list/read files; apply_preset=one-shot upgrade (responsive_chat); write=apply code change; run_checks=build; commit=git commit (desktop); pull_request=open GitHub PR',
+      },
+      preset: {
+        type: 'string',
+        enum: ['responsive_chat'],
+        description: 'apply_preset: which bundled upgrade to apply.',
       },
       path: { type: 'string', description: 'Relative path inside the JARVIS repo (inspect/write).' },
       paths: {
@@ -108,6 +120,8 @@ export class SelfImproveSkill implements Skill {
         return this.status(context);
       case 'inspect':
         return this.inspect(args, context);
+      case 'apply_preset':
+        return this.applyPreset(args, context);
       case 'write':
         return this.write(args, context);
       case 'run_checks':
@@ -126,6 +140,9 @@ export class SelfImproveSkill implements Skill {
   }
 
   private actionDetail(action: string, args: Record<string, unknown>): string | undefined {
+    if (action === 'apply_preset') {
+      return typeof args.preset === 'string' ? args.preset : undefined;
+    }
     if (action === 'inspect' || action === 'write') {
       return typeof args.path === 'string' ? args.path : undefined;
     }
@@ -362,6 +379,122 @@ export class SelfImproveSkill implements Skill {
     const key = trimmed.toLowerCase().replace(/\/$/, '');
     const aliased = PATH_ALIASES[trimmed.toLowerCase()] ?? PATH_ALIASES[key];
     return aliased ?? trimmed;
+  }
+
+  private async applyPreset(args: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
+    const preset = String(args.preset ?? '');
+    if (preset !== 'responsive_chat') {
+      return {
+        success: false,
+        output: `Unknown preset "${preset}". Available presets: responsive_chat.`,
+      };
+    }
+
+    const branch = this.resolveBranch(args);
+    const commitMessage =
+      typeof args.message === 'string' && args.message.trim()
+        ? args.message.trim()
+        : 'feat(jarvis): responsive chat and mobile shell';
+
+    this.progress(context, {
+      stage: 'write',
+      message: 'Applying responsive UI preset…',
+      percent: 46,
+      detail: branch,
+    });
+
+    const updated: string[] = [];
+    const skipped: string[] = [];
+    const useGitHub = isServerlessRuntime() || !this.hasLocalRepo();
+
+    if (useGitHub && !this.github.isConfigured()) {
+      return {
+        success: false,
+        output: 'Cloud mode requires GITHUB_TOKEN and GITHUB_REPO to apply presets via GitHub API.',
+      };
+    }
+
+    for (const file of RESPONSIVE_PRESET_FILES) {
+      const existing = await this.readRepoFile(file.path);
+      if (!existing && useGitHub) {
+        return { success: false, output: `Could not read ${file.path} from GitHub.` };
+      }
+      if (existing.includes(file.marker) || isAlreadyResponsive(file.path, existing)) {
+        skipped.push(file.path);
+        continue;
+      }
+
+      const content = applyPatch(existing, file.append, file.marker);
+      if (content === existing) {
+        skipped.push(file.path);
+        continue;
+      }
+
+      if (useGitHub) {
+        await this.github.upsertFile(file.path, content, commitMessage, branch);
+      } else {
+        const target = resolveProjectPath(this.projectRoot, file.path);
+        if (!target) {
+          return { success: false, output: `Access denied: ${file.path}` };
+        }
+        await fs.mkdir(join(target, '..'), { recursive: true });
+        await fs.writeFile(target, content, 'utf8');
+      }
+      updated.push(file.path);
+    }
+
+    this.progress(context, {
+      stage: 'write',
+      message: updated.length ? `Updated ${updated.length} file(s)` : 'Responsive UI already up to date',
+      percent: 58,
+      detail: branch,
+    });
+
+    if (!updated.length) {
+      return {
+        success: true,
+        output: [
+          'Responsive UI is already applied in the repo.',
+          skipped.length ? `Checked: ${skipped.join(', ')}` : '',
+          `No new file writes needed. Branch: ${branch}`,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      };
+    }
+
+    return {
+      success: true,
+      output: [
+        `Applied preset "${preset}".`,
+        `Updated: ${updated.join(', ')}`,
+        skipped.length ? `Already responsive: ${skipped.join(', ')}` : '',
+        `Branch: ${branch}`,
+        'Next: pull_request with the same branch.',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    };
+  }
+
+  private hasLocalRepo(): boolean {
+    return existsSync(join(this.projectRoot, 'package.json'));
+  }
+
+  private async readRepoFile(relative: string): Promise<string> {
+    if (this.github.isConfigured() && isServerlessRuntime()) {
+      const file = await this.github.getFile(relative);
+      return file?.content ?? '';
+    }
+    const target = resolveProjectPath(this.projectRoot, relative);
+    if (!target) {
+      return '';
+    }
+    try {
+      return await fs.readFile(target, 'utf8');
+    } catch {
+      return '';
+    }
   }
 
   private async write(args: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
@@ -614,6 +747,16 @@ export class SelfImproveSkill implements Skill {
     const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
     return `jarvis/self-improve-${stamp}`;
   }
+}
+
+function isAlreadyResponsive(path: string, content: string): boolean {
+  if (path.includes('chat.component.scss')) {
+    return content.includes('@media (max-width: 900px)') && content.includes('100dvh');
+  }
+  if (path.includes('app.component.scss')) {
+    return content.includes('@media (max-width: 768px)') && content.includes('flex-direction: column');
+  }
+  return false;
 }
 
 function runCommand(

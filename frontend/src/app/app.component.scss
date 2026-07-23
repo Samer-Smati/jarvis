@@ -1,6 +1,7 @@
 .shell {
   display: flex;
   height: 100vh;
+  min-height: 100dvh;
   overflow: hidden;
   position: relative;
   z-index: 1;
@@ -230,5 +231,59 @@
   flex: 1;
   min-width: 0;
   height: 100vh;
+  min-height: 0;
   position: relative;
+}
+
+@media (max-width: 768px) {
+  .shell {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.45rem 0.65rem;
+    border-right: none;
+    border-bottom: 1px solid var(--jarvis-border);
+    box-shadow: none;
+  }
+
+  .reactor-wrap {
+    display: none;
+  }
+
+  .brand .tagline {
+    display: none;
+  }
+
+  .brand .name {
+    font-size: 0.85rem;
+  }
+
+  .nav-links {
+    flex-direction: row;
+    gap: 0.35rem;
+    width: auto;
+
+    a span {
+      display: none;
+    }
+
+    a {
+      padding: 0.45rem 0.55rem;
+    }
+  }
+
+  .sys-status {
+    display: none;
+  }
+
+  .content {
+    height: auto;
+    flex: 1;
+  }
 }

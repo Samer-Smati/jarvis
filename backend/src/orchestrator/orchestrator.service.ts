@@ -14,7 +14,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isConcreteSelfImproveRequest, isSelfImproveInfoQuery, isServerlessRuntime } from './fast-chat.util';
+import { isFastChatTurn, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isServerlessRuntime } from './fast-chat.util';
 
 const MAX_TOOL_ITERATIONS = 8;
 const SERVERLESS_MAX_TOOL_ITERATIONS = 4;
@@ -78,6 +78,19 @@ export class OrchestratorService {
     try {
       await this.memory.appendMessage(conversationId, 'user', userText);
 
+      if (isResponsiveUpgradeRequest(userText)) {
+        const handled = await this.runResponsivePresetUpgrade(
+          conversationId,
+          userText,
+          emitter,
+          trigger,
+          clientPlatform,
+        );
+        if (handled) {
+          return;
+        }
+      }
+
       const facts = await this.memory.recallFacts(userText);
       const now = new Date().toLocaleString('en-GB', {
         dateStyle: 'full',
@@ -111,8 +124,11 @@ export class OrchestratorService {
       if (isSelfImproveInfoQuery(userText)) {
         systemPrompt += `\n\nThe user is asking what you CAN upgrade — call self_improve with action=status ONCE, then answer in plain language from that output. Do NOT call inspect, write, commit, or pull_request in this turn. Offer 2–3 concrete upgrade ideas (UI, skills, voice, speed) and wait for their pick.`;
       }
-      if (isConcreteSelfImproveRequest(userText)) {
+      if (isConcreteSelfImproveRequest(userText) && !isResponsiveUpgradeRequest(userText)) {
         systemPrompt += `\n\nThe user wants a REAL code upgrade on cloud (50s limit). Use at most: one inspect with paths for needed files → one write (prefer small targeted edits, not rewriting entire large files) → pull_request. Skip redundant inspects. After pull_request succeeds, stop — do not call more tools. Never say sandbox is unmounted. Screenshots unavailable — use responsive CSS.`;
+      }
+      if (isResponsiveUpgradeRequest(userText)) {
+        systemPrompt += `\n\nThe user wants responsive/mobile UI. Prefer self_improve action=apply_preset preset=responsive_chat then pull_request on the same branch. Do NOT read entire SCSS files first.`;
       }
 
       const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }, ...history];
@@ -321,6 +337,94 @@ export class OrchestratorService {
     }
     return false;
   }
+
+  private async runResponsivePresetUpgrade(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+    clientPlatform: 'desktop' | 'web',
+  ): Promise<boolean> {
+    const skill = this.skills.get('self_improve');
+    if (!skill) {
+      return false;
+    }
+
+    const branch = `jarvis/responsive-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}`;
+    emitter.onProgress?.({
+      stage: 'apply_preset',
+      message: 'Applying responsive UI preset…',
+      percent: 35,
+      toolName: 'self_improve',
+    });
+
+    const presetOutput = await this.executeToolCall(
+      conversationId,
+      {
+        id: 'responsive-preset',
+        name: 'self_improve',
+        arguments: {
+          action: 'apply_preset',
+          preset: 'responsive_chat',
+          branch,
+          message: 'feat(jarvis): responsive chat and mobile shell',
+        },
+      },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    if (presetOutput.startsWith('Error:') || presetOutput.includes('requires GITHUB_TOKEN')) {
+      return false;
+    }
+
+    const alreadyApplied = presetOutput.includes('already applied') || presetOutput.includes('Already responsive');
+    if (alreadyApplied && !presetOutput.includes('Updated:')) {
+      const finalText =
+        'Responsive UI is already live in the repo, sir. Resize the chat or open it on your phone — sticky composer, mobile nav, and breakpoints at 900px / 600px / 768px are in place.';
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    emitter.onProgress?.({
+      stage: 'pull_request',
+      message: 'Opening pull request…',
+      percent: 88,
+      toolName: 'self_improve',
+    });
+
+    const prOutput = await this.executeToolCall(
+      conversationId,
+      {
+        id: 'responsive-pr',
+        name: 'self_improve',
+        arguments: {
+          action: 'pull_request',
+          branch,
+          title: 'Responsive chat and mobile shell',
+          message: `Automated responsive UI upgrade for: "${userText.slice(0, 200)}"`,
+        },
+      },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    const finalText = prOutput.includes('Pull request #')
+      ? `Done, sir. ${prOutput.split('\n')[0]} Merge to main and Vercel will redeploy.`
+      : presetOutput.includes('Updated:')
+        ? `Changes are on branch ${branch}, sir. ${presetOutput.split('\n')[0]} Say "open PR" if you need the pull request link.`
+        : `Responsive upgrade finished, sir. ${presetOutput.split('\n')[0]}`;
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    void this.memory.logEvent(trigger, `Responsive preset: ${userText.slice(0, 120)}`);
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
 }
 
 function selfImproveProgressPercent(action: string): number {
@@ -329,6 +433,8 @@ function selfImproveProgressPercent(action: string): number {
       return 12;
     case 'inspect':
       return 28;
+    case 'apply_preset':
+      return 48;
     case 'write':
       return 52;
     case 'run_checks':
@@ -349,6 +455,8 @@ function selfImproveProgressLabel(action: string, args: Record<string, unknown>)
       return 'Checking upgrade status';
     case 'inspect':
       return path ? `Inspecting ${path}` : 'Inspecting project';
+    case 'apply_preset':
+      return 'Applying upgrade preset';
     case 'write':
       return path ? `Writing ${path}` : 'Writing changes';
     case 'run_checks':
