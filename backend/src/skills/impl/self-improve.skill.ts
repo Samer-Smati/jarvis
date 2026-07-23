@@ -31,6 +31,9 @@ const PATH_ALIASES: Record<string, string> = {
   mobile: 'frontend/src/app',
   chat: 'frontend/src/app/chat',
   skills: 'backend/src/skills',
+  'self-improve': 'backend/src/skills/impl/self-improve.skill.ts',
+  self_improve: 'backend/src/skills/impl/self-improve.skill.ts',
+  brain: 'backend/src/skills/impl/brain.skill.ts',
   orchestrator: 'backend/src/orchestrator',
   llm: 'backend/src/llm',
 };
@@ -59,7 +62,7 @@ const ACTION_PROGRESS: Record<string, { stage: string; percent: number; label: s
 export class SelfImproveSkill implements Skill {
   readonly name = 'self_improve';
   readonly description =
-    'Upgrade JARVIS by editing real repo code via GitHub (cloud) or local disk (desktop). On Vercel, ALWAYS use this tool for frontend/backend source — never read_files or coding_assistant (those are sandbox-only). For responsive/mobile UI requests use apply_preset with preset=responsive_chat (fast, no inspect). Otherwise: inspect → write → pull_request.';
+    'Upgrade JARVIS by editing real repo code via GitHub (cloud) or local disk (desktop). The self_improve skill source is backend/src/skills/impl/self-improve.skill.ts — it is editable like any other file. On Vercel, ALWAYS use this tool for frontend/backend source — never read_files or coding_assistant (those are sandbox-only). For responsive/mobile UI use apply_preset preset=responsive_chat. Otherwise: inspect → write → pull_request.';
   readonly requiresConfirmation = false;
   readonly parameters = {
     type: 'object',
@@ -230,11 +233,17 @@ export class SelfImproveSkill implements Skill {
     }
     lines.push(
       '',
+      'Editable skill sources (ALL in this repo — never say skills are built-in or hidden):',
+      '- self_improve → backend/src/skills/impl/self-improve.skill.ts',
+      '- brain → backend/src/skills/impl/brain.skill.ts',
+      '- other skills → backend/src/skills/impl/*.skill.ts',
+      '',
       'How to answer the user from this status:',
       '- Tell them whether self-upgrade is ready or what config is missing.',
       '- Do NOT propose bumping package.json / bump:version / tagging a release as the upgrade.',
       '- A real upgrade changes product behavior: skills, chat UI, orchestrator, voice, memory, integrations, bugs.',
       '- Ask which concrete improvement they want first, then inspect + write that code.',
+      '- NEVER say self_improve or other skills cannot be modified — they are plain TypeScript in the repo.',
       '',
       'Self-upgrade workflow:',
       '1. inspect paths you need to change',

@@ -43,10 +43,20 @@ export function isResponsiveUpgradeRequest(text: string): boolean {
   );
 }
 
+/** User wants to upgrade the self_improve skill source itself. */
+export function isSelfImproveSkillSourceRequest(text: string): boolean {
+  const t = text.trim();
+  return (
+    /\bself[-_]?improve\b/i.test(t) &&
+    /\b(skill|source|impl|\.ts|file|code)\b/i.test(t) &&
+    /\b(upgrade|improve|fix|update|change|edit|refactor|modify)\b/i.test(t)
+  );
+}
+
 /** User wants a real code change — inspect briefly then write + PR. */
 export function isConcreteSelfImproveRequest(text: string): boolean {
   const t = text.trim();
-  if (isResponsiveUpgradeRequest(t)) {
+  if (isResponsiveUpgradeRequest(t) || isSelfImproveSkillSourceRequest(t)) {
     return true;
   }
   return /\b(improve|upgrade|fix|update|make|change|responsive|refactor|redesign|add|implement)\b/i.test(t) &&

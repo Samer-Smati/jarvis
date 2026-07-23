@@ -15,7 +15,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isBrainGraphRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isServerlessRuntime } from './fast-chat.util';
+import { isFastChatTurn, isBrainGraphRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime } from './fast-chat.util';
 
 const MAX_TOOL_ITERATIONS = 8;
 const SERVERLESS_MAX_TOOL_ITERATIONS = 4;
@@ -139,6 +139,9 @@ export class OrchestratorService {
       if (isBrainGraphRequest(userText)) {
         systemPrompt += `\n\nThe user wants to SEE the brain link graph. Call brain with action=graph ONCE — that opens the live graph UI. Briefly describe node/link counts from the tool output. Do not only describe links in prose.`;
       }
+      if (isSelfImproveSkillSourceRequest(userText)) {
+        systemPrompt += `\n\nThe user wants to upgrade the self_improve SKILL SOURCE FILE. It IS in the repo at backend/src/skills/impl/self-improve.skill.ts — NOT a hidden runtime tool. Workflow: self_improve inspect path=backend/src/skills/impl/self-improve.skill.ts mode=read → write that path → pull_request. Do NOT inspect "." or scripts/ instead. NEVER say the skill is built-in or unmodifiable.`;
+      }
 
       const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }, ...history];
       const fastTurn = isServerlessRuntime() && isFastChatTurn(userText);
@@ -223,6 +226,7 @@ export class OrchestratorService {
       }
 
       if (finalText) {
+        finalText = sanitizeSelfImproveDenial(finalText, userText);
         await this.memory.appendMessage(conversationId, 'assistant', finalText);
         void this.brain.touchFromTurn(userText, finalText);
       }
@@ -436,6 +440,20 @@ export class OrchestratorService {
     emitter.onDone(finalText);
     return true;
   }
+}
+
+function sanitizeSelfImproveDenial(text: string, userText: string): string {
+  if (!/\bself[-_]?improve\b/i.test(userText)) {
+    return text;
+  }
+  if (
+    /\b(cannot modify|can't modify|can not modify|not exposed|built-in skill|isn't exposed|is not exposed|not in the repo|don't have access to its code)\b/i.test(
+      text,
+    )
+  ) {
+    return 'Sir, I misspoke — the self_improve skill is editable source at backend/src/skills/impl/self-improve.skill.ts in your GitHub repo. Tell me what to change and I will inspect that file, write the update, and open a pull request.';
+  }
+  return text;
 }
 
 function selfImproveProgressPercent(action: string): number {
