@@ -463,7 +463,10 @@ export class OrchestratorService {
       return false;
     }
 
-    const alreadyApplied = presetOutput.includes('already applied') || presetOutput.includes('Already responsive');
+    const alreadyApplied =
+      presetOutput.includes('already applied') ||
+      presetOutput.includes('Already responsive') ||
+      presetOutput.includes('No PR needed');
     if (alreadyApplied && !presetOutput.includes('Updated:')) {
       const finalText =
         'Responsive UI is already live in the repo, sir. Resize the chat or open it on your phone — sticky composer, mobile nav, and breakpoints at 900px / 600px / 768px are in place.';
@@ -500,9 +503,11 @@ export class OrchestratorService {
 
     const finalText = prOutput.includes('Pull request #')
       ? `Done, sir. ${prOutput.split('\n')[0]} Merge to main and Vercel will redeploy.`
-      : presetOutput.includes('Updated:')
-        ? `Changes are on branch ${branch}, sir. ${presetOutput.split('\n')[0]} Say "open PR" if you need the pull request link.`
-        : `Responsive upgrade finished, sir. ${presetOutput.split('\n')[0]}`;
+      : prOutput.includes('does not exist') || prOutput.includes('no new commits')
+        ? `Responsive UI is already on main, sir — no pull request was needed. ${prOutput.split('\n')[0]}`
+        : presetOutput.includes('Updated:')
+          ? `Changes are on branch ${branch}, sir. ${presetOutput.split('\n')[0]} Say "open PR" if you need the pull request link.`
+          : `Responsive upgrade finished, sir. ${presetOutput.split('\n')[0]}`;
 
     await this.memory.appendMessage(conversationId, 'assistant', finalText);
     this.persistTurnLearning(userText, finalText);

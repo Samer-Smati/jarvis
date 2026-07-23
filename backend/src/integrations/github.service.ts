@@ -106,6 +106,17 @@ export class GitHubService {
     base?: string,
   ): Promise<{ url: string; number: number }> {
     const targetBase = base ?? (await this.getDefaultBranch());
+    const ahead = await this.commitsAhead(head, targetBase);
+    if (ahead === null) {
+      throw new Error(
+        `GitHub branch "${head}" does not exist. Apply write or apply_preset first so commits land on that branch.`,
+      );
+    }
+    if (ahead === 0) {
+      throw new Error(
+        `GitHub branch "${head}" has no new commits vs ${targetBase}. Changes may already be merged, or no files were written.`,
+      );
+    }
     const pr = await this.request<{ html_url: string; number: number }>(
       `/repos/${this.repoRef!.owner}/${this.repoRef!.repo}/pulls`,
       {
@@ -114,6 +125,22 @@ export class GitHubService {
       },
     );
     return { url: pr.html_url, number: pr.number };
+  }
+
+  /** Commits on head not in base; null if head branch missing. */
+  async commitsAhead(head: string, base?: string): Promise<number | null> {
+    const targetBase = base ?? (await this.getDefaultBranch());
+    try {
+      const compare = await this.request<{ ahead_by: number }>(
+        `/repos/${this.repoRef!.owner}/${this.repoRef!.repo}/compare/${encodeURIComponent(targetBase)}...${encodeURIComponent(head)}`,
+      );
+      return compare.ahead_by ?? 0;
+    } catch (error) {
+      if ((error as GitHubError).status === 404) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   async listDirectory(path: string, ref?: string): Promise<string[]> {

@@ -465,7 +465,7 @@ export class SelfImproveSkill implements Skill {
         output: [
           'Responsive UI is already applied in the repo.',
           skipped.length ? `Checked: ${skipped.join(', ')}` : '',
-          `No new file writes needed. Branch: ${branch}`,
+          'No PR needed — merge is already on main or no file changes were required.',
         ]
           .filter(Boolean)
           .join('\n'),
