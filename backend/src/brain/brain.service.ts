@@ -331,12 +331,20 @@ ${content}`;
     let changed = false;
 
     for (const page of Object.values(vault.pages)) {
+      if (page.path === JARVIS_ENTITY_PATH) {
+        continue;
+      }
       if (page.category === 'entity' && page.path !== JARVIS_ENTITY_PATH) {
         const beforeLinks = page.links.length;
         this.linkPagesInVault(vault, page.path, JARVIS_ENTITY_PATH, true);
         if (page.links.length !== beforeLinks) {
           changed = true;
         }
+        continue;
+      }
+      if (!page.links.includes(JARVIS_ENTITY_PATH)) {
+        this.linkPagesInVault(vault, page.path, JARVIS_ENTITY_PATH, true);
+        changed = true;
       }
     }
 
@@ -508,7 +516,7 @@ ${content}`;
       return;
     }
 
-    const title = fact.slice(0, 80);
+    const title = summarizeFactTitle(fact);
     const path = `facts/${slugify(title)}.md`;
     if (vault.pages[path]) {
       return;
@@ -525,9 +533,7 @@ ${content}`;
       updatedAt: now,
     };
 
-    if (this.shouldLinkToJarvis(title, fact, 'fact')) {
-      this.linkPagesInVault(vault, path, JARVIS_ENTITY_PATH, true);
-    }
+    this.linkPagesInVault(vault, path, JARVIS_ENTITY_PATH, true);
   }
 
   private appendTopicLearning(vault: BrainVault, user: string, assistant: string, now: string): void {
@@ -537,12 +543,17 @@ ${content}`;
     }
 
     const path = `concepts/${slugify(topicTitle)}.md`;
+    const day = now.slice(0, 10);
+    const journalPath = `sessions/${day}.md`;
     const entry = `\n- [${now.slice(0, 16).replace('T', ' ')}] **User:** ${user.slice(0, 220)} → **JARVIS:** ${assistant.slice(0, 180)}`;
     const existing = vault.pages[path];
 
     if (existing) {
       existing.content = `${existing.content}${entry}`.slice(-JOURNAL_MAX_CHARS);
       existing.updatedAt = now;
+      if (vault.pages[journalPath] && !existing.links.includes(journalPath)) {
+        this.linkPagesInVault(vault, path, journalPath, true);
+      }
       return;
     }
 
@@ -556,6 +567,9 @@ ${content}`;
       updatedAt: now,
     };
     this.linkPagesInVault(vault, path, JARVIS_ENTITY_PATH, true);
+    if (vault.pages[journalPath]) {
+      this.linkPagesInVault(vault, path, journalPath, true);
+    }
   }
 
   async listPages(): Promise<BrainPage[]> {
@@ -848,6 +862,9 @@ function shouldAutoLearnTurn(user: string, assistant: string): boolean {
   if (user.length < 4) {
     return false;
   }
+  if (isLowValueForFacts(user)) {
+    return false;
+  }
   const trivialUser =
     /^(hey|hi|hello|yo|hiya|howdy|ok|okay|thanks|thank you|merci|yes|no|sure|bye|goodbye|try again)[!.?\s]*$/i.test(
       user,
@@ -862,10 +879,15 @@ function shouldAutoLearnTurn(user: string, assistant: string): boolean {
 }
 
 function extractFactsFromUser(text: string): string[] {
+  if (isLowValueForFacts(text)) {
+    return [];
+  }
+
   const facts: string[] = [];
   const patterns = [
     /\b(?:I am|I'm|I work|I like|I prefer|I want|I need|I use|I built|I have|my name is|call me)\b[^.!?\n]{2,140}[.!?]?/gi,
     /\b(?:remember that|note that|keep in mind|don't forget)\b[^.!?\n]{2,220}/gi,
+    /\b(?:only me|I am your owner|I'm your owner|you work for me)\b[^.!?\n]{2,180}/gi,
   ];
 
   for (const pattern of patterns) {
@@ -877,18 +899,58 @@ function extractFactsFromUser(text: string): string[] {
     }
   }
 
-  if (text.length >= 30 && !/^(show|what|how|can you|do you|tell me|open)\b/i.test(text)) {
-    facts.push(text.slice(0, 240).replace(/\s+/g, ' ').trim());
-  }
+  return [...new Set(facts)].slice(0, 3);
+}
 
-  return [...new Set(facts)].slice(0, 4);
+function isLowValueForFacts(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 8) {
+    return true;
+  }
+  if (/^https?:\/\//.test(t)) {
+    return true;
+  }
+  if (
+    /^(show|what|how|can you|do you|tell me|open|choose|implement|upgrade|fix|make|just test|now i just demand)/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (/\b(pull request|self-improve|apply preset|test-dummy|cloud time limit)\b/i.test(t)) {
+    return true;
+  }
+  if (/\b(responsive|scrollable|media quer|css|scss)\b/i.test(t) && /\b(upgrade|implement|fix|make)\b/i.test(t)) {
+    return true;
+  }
+  return false;
+}
+
+function summarizeFactTitle(fact: string): string {
+  const owner = fact.match(/\b(?:I am|I'm|my name is|call me)\s+([^,.!?]+)/i);
+  if (owner?.[1]) {
+    return `User: ${owner[1].trim().slice(0, 40)}`;
+  }
+  const remember = fact.match(/\b(?:remember that|note that|keep in mind|don't forget)\s+(.+)/i);
+  if (remember?.[1]) {
+    const words = remember[1].trim().split(/\s+/).slice(0, 5).join(' ');
+    return words.charAt(0).toUpperCase() + words.slice(1).slice(0, 56);
+  }
+  if (/\b(?:only me|your owner|I am your owner)\b/i.test(fact)) {
+    return 'User is owner';
+  }
+  if (fact.length > 56) {
+    const words = fact.split(/\s+/).slice(0, 5).join(' ');
+    return words.length > 12 ? words.slice(0, 56) : 'User note';
+  }
+  return fact.slice(0, 56);
 }
 
 function inferTopicTitle(text: string): string | null {
   const lower = text.toLowerCase();
   const topics: Array<[RegExp, string]> = [
     [/\b(brain|graph|wiki|memory|remember|learn)\b/, 'Brain & Memory'],
-    [/\b(responsive|ui|frontend|mobile|chat|interface|screen)\b/, 'UI & Frontend'],
+    [/\b(responsive|scrollable|ui|frontend|mobile|chat|interface|screen|css|scss|media quer)\b/, 'UI & Frontend'],
     [/\b(upgrade|self.?improve|deploy|github|vercel|pull request)\b/, 'Self Upgrade'],
     [/\b(model|llm|gemini|gpt|claude|ai|openai)\b/, 'AI Models'],
     [/\b(weather|calendar|remind|schedule)\b/, 'Personal Assistant'],
@@ -900,17 +962,6 @@ function inferTopicTitle(text: string): string | null {
   for (const [pattern, title] of topics) {
     if (pattern.test(lower)) {
       return title;
-    }
-  }
-
-  if (text.length >= 24) {
-    const words = text
-      .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
-      .split(/\s+/)
-      .filter((w) => w.length > 3 && !/^(what|when|where|which|that|this|with|from|have|want|need|please|jarvis)$/i.test(w))
-      .slice(0, 3);
-    if (words.length >= 2) {
-      return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
     }
   }
 

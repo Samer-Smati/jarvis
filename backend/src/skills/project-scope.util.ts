@@ -58,6 +58,9 @@ export function isWriteBlocked(relative: string): boolean {
   if (/credentials.*\.json$/i.test(lower)) {
     return true;
   }
+  if (/\b(test-dummy|dummy\.txt|\.dummy\.|test-write\.)/i.test(lower)) {
+    return true;
+  }
   for (const segment of WRITE_BLOCKED) {
     if (lower === segment || lower.startsWith(`${segment}/`) || lower.includes(`/${segment}/`)) {
       return true;

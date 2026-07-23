@@ -72,10 +72,34 @@ export function isAffirmativeLinkProfile(text: string, recentContext: string): b
 /** User wants responsive/mobile UI — use apply_preset fast path on cloud. */
 export function isResponsiveUpgradeRequest(text: string): boolean {
   const t = text.trim();
-  return (
-    /\b(responsive|mobile|screen size|all screens|small screen|tablet|phone|viewport)\b/i.test(t) &&
-    /\b(ui|interface|chat|layout|design|frontend|make|improve|upgrade|fix|adapt)\b/i.test(t)
-  );
+  const responsive =
+    /\b(responsive|mobile|screen size|all screens|small screen|tablet|phone|viewport|media quer(y|ies)|scrollable|overflow-y)\b/i.test(
+      t,
+    );
+  const uiTarget =
+    /\b(ui|interface|chat|layout|design|frontend|message|container|css|scss|shell|composer|make|improve|upgrade|fix|adapt|implement)\b/i.test(
+      t,
+    );
+  if (responsive && uiTarget) {
+    return true;
+  }
+  return /\bresponsive\b/i.test(t) && /\b(chat|ui|css|scss|frontend|container)\b/i.test(t);
+}
+
+/** Skip filing raw upgrade/tool turns into the brain wiki. */
+export function shouldSkipBrainLearning(userText: string, assistantText: string): boolean {
+  const user = userText.trim();
+  const assistant = assistantText.trim();
+  if (isConcreteSelfImproveRequest(user) || isResponsiveUpgradeRequest(user)) {
+    return true;
+  }
+  if (/^(choose|implement|upgrade|fix|make|open pr|just test)\b/i.test(user)) {
+    return true;
+  }
+  if (/cloud time limit|pull request|self-improve|upgrade preset|test-dummy|writing test-/i.test(assistant)) {
+    return true;
+  }
+  return false;
 }
 
 export function extractUrls(text: string): string[] {
