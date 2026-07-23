@@ -6,6 +6,7 @@ import { ApiService } from '../core/api.service';
 import { ChatService } from '../core/chat.service';
 import { ConversationHistoryService } from '../core/conversation-history.service';
 import { ChatMessage, ConfirmationRequest, PermissionRequest, ProgressStep, ToolActivity } from '../core/models';
+import { BrainGraphService, isBrainGraphRequest } from '../brain/brain-graph.service';
 import { VoiceService } from '../core/voice.service';
 
 const CONVERSATION_ID = 'default';
@@ -38,6 +39,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   welcomeActive = false;
   sessionRecap: string | null = null;
   recapLoading = false;
+  showBrainGraph = false;
 
   private subscriptions = new Subscription();
   private welcomeStarted = false;
@@ -54,6 +56,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     private historyStore: ConversationHistoryService,
     private toast: MessageService,
     private voice: VoiceService,
+    private brainGraph: BrainGraphService,
     private cdr: ChangeDetectorRef,
     private zone: NgZone,
   ) {
@@ -67,6 +70,12 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.chat.connect();
+    this.subscriptions.add(
+      this.brainGraph.open$.subscribe((open) => {
+        this.showBrainGraph = open;
+        this.cdr.markForCheck();
+      }),
+    );
     this.subscriptions.add(this.handsFree$.subscribe((v) => { this.handsFree = !!v; this.cdr.markForCheck(); }));
     this.subscriptions.add(this.voiceEnabled$.subscribe((v) => { this.voiceEnabled = !!v; this.cdr.markForCheck(); }));
     this.subscriptions.add(this.listening$.subscribe((v) => { this.listening = !!v; this.cdr.markForCheck(); }));
@@ -195,6 +204,9 @@ export class ChatComponent implements OnInit, OnDestroy {
             window.location.href = url;
           }
         }
+        if (event.output?.includes('BRAIN_GRAPH:')) {
+          this.brainGraph.open();
+        }
         this.voice.speakStreamPauseForTool();
         this.scrollToBottom();
         this.cdr.markForCheck();
@@ -318,6 +330,9 @@ export class ChatComponent implements OnInit, OnDestroy {
     if (!text || this.busy) {
       return;
     }
+    if (isBrainGraphRequest(text)) {
+      this.brainGraph.open();
+    }
     this.voice.stopSpeaking();
     this.voice.stopListening();
     this.voice.speakStreamReset();
@@ -332,6 +347,10 @@ export class ChatComponent implements OnInit, OnDestroy {
       this.messages.slice(0, -2).filter((m) => !m.streaming && m.content?.trim()),
     );
     this.chat.sendMessage(CONVERSATION_ID, text, history);
+  }
+
+  openBrainGraph(): void {
+    this.brainGraph.open();
   }
 
   toggleMic(): void {
@@ -416,6 +435,21 @@ export class ChatComponent implements OnInit, OnDestroy {
           return 'Opening pull request';
         default:
           return 'Self-upgrade';
+      }
+    }
+    if (toolName === 'brain') {
+      const action = String(args?.['action'] ?? '');
+      switch (action) {
+        case 'graph':
+          return 'Opening brain graph';
+        case 'query':
+          return 'Searching brain';
+        case 'remember':
+          return 'Remembering in brain';
+        case 'ingest':
+          return 'Ingesting source';
+        default:
+          return 'Brain';
       }
     }
     return `Using ${toolName.replace(/_/g, ' ')}…`;

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BrainBlobStore } from './brain-blob.store';
 import { createSeedVault } from './brain.seed';
-import { BrainCategory, BrainPage, BrainQueryHit, BrainVault } from './brain.types';
+import { BrainCategory, BrainGraph, BrainGraphEdge, BrainPage, BrainQueryHit, BrainVault } from './brain.types';
 
 const HOT_MAX_CHARS = 2400;
 const LOG_MAX_LINES = 200;
@@ -192,6 +192,76 @@ ${content}`;
     );
   }
 
+  async getGraph(): Promise<BrainGraph> {
+    const vault = await this.ensureLoaded();
+    const pages = Object.values(vault.pages);
+    const pathSet = new Set(pages.map((p) => p.path));
+    const pathByTitle = new Map<string, string>();
+    const pathBySlug = new Map<string, string>();
+
+    for (const page of pages) {
+      pathByTitle.set(page.title.toLowerCase(), page.path);
+      pathBySlug.set(slugify(page.title), page.path);
+      pathBySlug.set(page.path.toLowerCase(), page.path);
+      const base = page.path.split('/').pop() ?? '';
+      if (base) {
+        pathBySlug.set(base.toLowerCase(), page.path);
+        pathBySlug.set(base.replace(/\.md$/i, '').toLowerCase(), page.path);
+      }
+    }
+
+    const linkCounts = new Map<string, number>();
+    const edges: BrainGraphEdge[] = [];
+    const edgeKeys = new Set<string>();
+
+    const bump = (id: string) => linkCounts.set(id, (linkCounts.get(id) ?? 0) + 1);
+
+    const addEdge = (source: string, target: string, kind: 'link' | 'wiki') => {
+      if (source === target || !pathSet.has(source) || !pathSet.has(target)) {
+        return;
+      }
+      const key = [source, target].sort().join('|');
+      if (edgeKeys.has(key)) {
+        return;
+      }
+      edgeKeys.add(key);
+      edges.push({ source, target, kind });
+      bump(source);
+      bump(target);
+    };
+
+    for (const page of pages) {
+      const targets = new Set<string>();
+
+      for (const raw of page.links) {
+        const resolved = resolveBrainLink(raw, pathByTitle, pathBySlug, pathSet);
+        if (resolved) {
+          targets.add(resolved);
+        }
+      }
+
+      for (const match of page.content.matchAll(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g)) {
+        const resolved = resolveBrainLink(match[1], pathByTitle, pathBySlug, pathSet);
+        if (resolved) {
+          targets.add(resolved);
+        }
+      }
+
+      for (const target of targets) {
+        addEdge(page.path, target, 'wiki');
+      }
+    }
+
+    const nodes = pages.map((page) => ({
+      id: page.path,
+      label: page.title,
+      category: page.category,
+      linkCount: linkCounts.get(page.path) ?? 0,
+    }));
+
+    return { nodes, edges, updatedAt: vault.updatedAt };
+  }
+
   private async ensureLoaded(): Promise<BrainVault> {
     if (this.vault) {
       return this.vault;
@@ -297,6 +367,45 @@ ${content}`;
       vault.log = lines.join('\n');
     }
   }
+}
+
+function resolveBrainLink(
+  raw: string,
+  pathByTitle: Map<string, string>,
+  pathBySlug: Map<string, string>,
+  pathSet: Set<string>,
+): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (pathSet.has(trimmed)) {
+    return trimmed;
+  }
+  const lower = trimmed.toLowerCase();
+  if (pathByTitle.has(lower)) {
+    return pathByTitle.get(lower)!;
+  }
+  const slug = slugify(trimmed);
+  if (pathBySlug.has(slug)) {
+    return pathBySlug.get(slug)!;
+  }
+  if (pathBySlug.has(`${slug}.md`)) {
+    return pathBySlug.get(`${slug}.md`)!;
+  }
+  const asPath = trimmed.includes('/') ? trimmed : `concepts/${slug}.md`;
+  if (pathSet.has(asPath)) {
+    return asPath;
+  }
+  const factPath = `facts/${slug}.md`;
+  if (pathSet.has(factPath)) {
+    return factPath;
+  }
+  const entityPath = `entities/${slug}.md`;
+  if (pathSet.has(entityPath)) {
+    return entityPath;
+  }
+  return null;
 }
 
 function slugify(text: string): string {

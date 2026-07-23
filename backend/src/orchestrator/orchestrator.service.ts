@@ -15,7 +15,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isServerlessRuntime } from './fast-chat.util';
+import { isFastChatTurn, isBrainGraphRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isServerlessRuntime } from './fast-chat.util';
 
 const MAX_TOOL_ITERATIONS = 8;
 const SERVERLESS_MAX_TOOL_ITERATIONS = 4;
@@ -135,6 +135,9 @@ export class OrchestratorService {
       }
       if (isResponsiveUpgradeRequest(userText)) {
         systemPrompt += `\n\nThe user wants responsive/mobile UI. Prefer self_improve action=apply_preset preset=responsive_chat then pull_request on the same branch. Do NOT read entire SCSS files first.`;
+      }
+      if (isBrainGraphRequest(userText)) {
+        systemPrompt += `\n\nThe user wants to SEE the brain link graph. Call brain with action=graph ONCE — that opens the live graph UI. Briefly describe node/link counts from the tool output. Do not only describe links in prose.`;
       }
 
       const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }, ...history];

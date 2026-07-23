@@ -27,6 +27,13 @@ export function isSelfImproveInfoQuery(text: string): boolean {
   );
 }
 
+export function isBrainGraphRequest(text: string): boolean {
+  const t = text.trim();
+  return /\b(graph|knowledge graph|mind map|link map|connections|what(?:'s| is) linked|show.*links|visuali[sz]e.*brain)\b/i.test(
+    t,
+  );
+}
+
 /** User wants responsive/mobile UI — use apply_preset fast path on cloud. */
 export function isResponsiveUpgradeRequest(text: string): boolean {
   const t = text.trim();

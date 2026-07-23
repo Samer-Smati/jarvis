@@ -154,6 +154,11 @@ export class ChatController {
     return { status, pageCount: pages.length, pages: pages.slice(0, 50) };
   }
 
+  @Get('brain/graph')
+  brainGraph() {
+    return this.brain.getGraph();
+  }
+
   @Get('brain/query')
   async brainQuery(@Query('q') q?: string) {
     const query = q ?? '';

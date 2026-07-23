@@ -26,3 +26,22 @@ export interface BrainQueryHit {
   score: number;
   excerpt: string;
 }
+
+export interface BrainGraphNode {
+  id: string;
+  label: string;
+  category: BrainCategory;
+  linkCount: number;
+}
+
+export interface BrainGraphEdge {
+  source: string;
+  target: string;
+  kind: 'link' | 'wiki';
+}
+
+export interface BrainGraph {
+  nodes: BrainGraphNode[];
+  edges: BrainGraphEdge[];
+  updatedAt: string;
+}

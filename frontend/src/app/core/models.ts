@@ -113,3 +113,36 @@ export interface StoredMessage {
   content: string;
   createdAt: string;
 }
+
+export type BrainCategory = 'concept' | 'entity' | 'source' | 'session' | 'fact';
+
+export interface BrainGraphNode {
+  id: string;
+  label: string;
+  category: BrainCategory;
+  linkCount: number;
+}
+
+export interface BrainGraphEdge {
+  source: string;
+  target: string;
+  kind: 'link' | 'wiki';
+}
+
+export interface BrainGraph {
+  nodes: BrainGraphNode[];
+  edges: BrainGraphEdge[];
+  updatedAt: string;
+}
+
+export interface GraphLayoutNode {
+  id: string;
+  label: string;
+  category: BrainCategory;
+  linkCount: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+}
+

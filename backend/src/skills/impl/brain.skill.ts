@@ -8,16 +8,16 @@ export class BrainSkill implements Skill {
   readonly description =
     'JARVIS persistent second brain (LLM Wiki / claude-obsidian pattern). ' +
     'Stores linked Markdown knowledge: hot cache, index, concepts, entities, sources, sessions. ' +
-    'Use query to recall knowledge, remember for facts, ingest for sources, save_session after important chats.';
+    'Use query to recall knowledge, remember for facts, ingest for sources, save_session after important chats. Use graph when the user asks to see links, connections, or a knowledge graph.';
   readonly requiresConfirmation = false;
   readonly parameters = {
     type: 'object',
     properties: {
       action: {
         type: 'string',
-        enum: ['status', 'query', 'remember', 'ingest', 'save_session', 'update_hot'],
+        enum: ['status', 'query', 'graph', 'remember', 'ingest', 'save_session', 'update_hot'],
         description:
-          'status=brain overview; query=search vault; remember=store fact/concept; ingest=add source; save_session=file conversation summary; update_hot=refresh recent context',
+          'status=brain overview; query=search vault; graph=open live link graph in UI; remember=store fact/concept; ingest=add source; save_session=file conversation summary; update_hot=refresh recent context',
       },
       query: { type: 'string', description: 'Search text for query action.' },
       title: { type: 'string', description: 'Page title for remember/ingest.' },
@@ -50,6 +50,13 @@ export class BrainSkill implements Skill {
     switch (action) {
       case 'status':
         return { success: true, output: await this.brain.status() };
+      case 'graph': {
+        const graph = await this.brain.getGraph();
+        return {
+          success: true,
+          output: `BRAIN_GRAPH: Opening knowledge graph — ${graph.nodes.length} nodes, ${graph.edges.length} links.`,
+        };
+      }
       case 'query': {
         const q = String(args?.query ?? '');
         if (!q.trim()) {

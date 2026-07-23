@@ -1,0 +1,75 @@
+<div class="brain-graph-panel hud-panel">
+  <header class="graph-header">
+    <div class="title-block">
+      <span class="hud-label">// Brain link graph</span>
+      <span class="stats" *ngIf="nodeCount">{{ nodeCount }} nodes · {{ edgeCount }} links</span>
+    </div>
+    <div class="legend">
+      <span class="legend-item concept">Concept</span>
+      <span class="legend-item entity">Entity</span>
+      <span class="legend-item source">Source</span>
+      <span class="legend-item fact">Fact</span>
+      <span class="legend-item session">Session</span>
+    </div>
+    <button type="button" class="refresh-btn hud-icon-btn" (click)="refresh()" title="Refresh graph">
+      <i class="pi pi-refresh" [class.pi-spin]="loading"></i>
+    </button>
+    <button type="button" class="refresh-btn hud-icon-btn close-btn" (click)="close()" title="Close graph">
+      <i class="pi pi-times"></i>
+    </button>
+  </header>
+
+  <div
+    class="graph-body"
+    #canvas
+    (pointermove)="onPointerMove($event)"
+    (pointerup)="onPointerUp()"
+    (pointerleave)="onPointerUp()">
+    <p *ngIf="loading" class="graph-status">Loading knowledge graph…</p>
+    <p *ngIf="error && !loading" class="graph-status error">{{ error }}</p>
+
+    <svg
+      *ngIf="!loading && layoutNodes.length"
+      class="graph-svg"
+      [attr.viewBox]="'0 0 ' + width + ' ' + height"
+      preserveAspectRatio="xMidYMid meet">
+      <g class="edges">
+        <line
+          *ngFor="let edge of edges"
+          [attr.x1]="nodeCoord(edge.source)?.x"
+          [attr.y1]="nodeCoord(edge.source)?.y"
+          [attr.x2]="nodeCoord(edge.target)?.x"
+          [attr.y2]="nodeCoord(edge.target)?.y"
+          class="edge-line"
+          [class.highlight]="isEdgeHighlighted(edge)" />
+      </g>
+      <g class="nodes">
+        <g
+          *ngFor="let node of layoutNodes"
+          class="node-group"
+          [class.highlight]="isNodeHighlighted(node)"
+          [class.selected]="selectedId === node.id"
+          (pointerdown)="onPointerDown($event, node)"
+          (click)="selectNode(node, $event)">
+          <circle
+            [attr.cx]="node.x"
+            [attr.cy]="node.y"
+            [attr.r]="10 + node.linkCount * 2"
+            [attr.fill]="categoryColor(node.category)"
+            class="node-circle" />
+          <text
+            [attr.x]="node.x"
+            [attr.y]="node.y + 22 + node.linkCount * 2"
+            class="node-label"
+            text-anchor="middle">
+            {{ node.label }}
+          </text>
+        </g>
+      </g>
+    </svg>
+  </div>
+
+  <footer class="graph-footer" *ngIf="updatedAt">
+    Live · updates every 3s · last vault change {{ updatedAt | date: 'short' }}
+  </footer>
+</div>

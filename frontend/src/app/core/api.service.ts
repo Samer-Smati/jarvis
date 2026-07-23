@@ -12,6 +12,7 @@ import {
   StoredMessage,
   SystemStatus,
   TtsStatus,
+  BrainGraph,
 } from './models';
 import { clientPlatform } from './platform.util';
 
@@ -63,6 +64,10 @@ export class ApiService {
 
   facts(): Observable<MemoryFact[]> {
     return this.http.get<MemoryFact[]>(`${this.base}/memory/facts`);
+  }
+
+  brainGraph(): Observable<BrainGraph> {
+    return this.http.get<BrainGraph>(`${this.base}/brain/graph`);
   }
 
   reminders(): Observable<Reminder[]> {

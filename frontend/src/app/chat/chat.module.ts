@@ -7,6 +7,7 @@ import { CardModule } from 'primeng/card';
 import { TagModule } from 'primeng/tag';
 import { TextareaModule } from 'primeng/textarea';
 import { TooltipModule } from 'primeng/tooltip';
+import { BrainModule } from '../brain/brain.module';
 import { ChatComponent } from './chat.component';
 
 @NgModule({
@@ -14,6 +15,7 @@ import { ChatComponent } from './chat.component';
   imports: [
     CommonModule,
     FormsModule,
+    BrainModule,
     ButtonModule,
     CardModule,
     TagModule,

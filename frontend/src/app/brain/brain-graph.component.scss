@@ -1,0 +1,157 @@
+.brain-graph-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: rgba(3, 8, 17, 0.94);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--jarvis-border);
+}
+
+.graph-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--jarvis-border);
+}
+
+.title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.stats {
+  font-size: 0.72rem;
+  color: var(--jarvis-text-dim);
+  letter-spacing: 0.08em;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-left: auto;
+}
+
+.legend-item {
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.45rem;
+  border-radius: 2px;
+  border: 1px solid transparent;
+
+  &.concept {
+    color: #17d1ff;
+    border-color: rgba(23, 209, 255, 0.35);
+  }
+  &.entity {
+    color: #b388ff;
+    border-color: rgba(179, 136, 255, 0.35);
+  }
+  &.source {
+    color: #76ff9a;
+    border-color: rgba(118, 255, 154, 0.35);
+  }
+  &.fact {
+    color: #ffb04c;
+    border-color: rgba(255, 176, 76, 0.35);
+  }
+  &.session {
+    color: #8899aa;
+    border-color: rgba(136, 153, 170, 0.35);
+  }
+}
+
+.refresh-btn {
+  width: 2.4rem;
+  height: 2.4rem;
+}
+
+.graph-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  touch-action: none;
+}
+
+.graph-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.graph-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--jarvis-text-dim);
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 0.12em;
+
+  &.error {
+    color: var(--jarvis-gold);
+  }
+}
+
+.edge-line {
+  stroke: rgba(23, 209, 255, 0.22);
+  stroke-width: 1.2;
+
+  &.highlight {
+    stroke: rgba(255, 176, 76, 0.85);
+    stroke-width: 2;
+  }
+}
+
+.node-group {
+  cursor: grab;
+
+  &.selected .node-circle {
+    stroke: #fff;
+    stroke-width: 2;
+  }
+
+  &.highlight .node-circle {
+    filter: drop-shadow(0 0 8px rgba(255, 176, 76, 0.8));
+  }
+}
+
+.node-circle {
+  opacity: 0.92;
+  stroke: rgba(255, 255, 255, 0.25);
+  stroke-width: 1;
+}
+
+.node-label {
+  fill: var(--jarvis-text);
+  font-size: 10px;
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 0.06em;
+  pointer-events: none;
+  user-select: none;
+}
+
+.graph-footer {
+  padding: 0.45rem 1rem;
+  border-top: 1px solid var(--jarvis-border);
+  font-size: 0.62rem;
+  color: var(--jarvis-text-dim);
+  letter-spacing: 0.1em;
+}
+
+@media (max-width: 600px) {
+  .legend {
+    display: none;
+  }
+
+  .node-label {
+    font-size: 8px;
+  }
+}
