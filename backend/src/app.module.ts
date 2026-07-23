@@ -17,9 +17,10 @@ import { SchedulerModule } from './scheduler/scheduler.module';
 import { SkillsModule } from './skills/skills.module';
 import { VoiceModule } from './voice/voice.module';
 import { HealthModule } from './health/health.module';
+import { isServerlessRuntime, resolveDatabaseUrl } from './database/database.util';
 
 const publicPath = process.env.FRONTEND_PATH ?? join(__dirname, '..', 'public');
-const isServerless = !!process.env.VERCEL || process.env.JARVIS_SERVERLESS === '1';
+const isServerless = isServerlessRuntime();
 const staticModules =
   !isServerless && existsSync(publicPath)
     ? [
@@ -60,6 +61,20 @@ function resolveSqlJsWasmBinary(): Buffer {
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
+        const databaseUrl = resolveDatabaseUrl(config);
+        if (databaseUrl) {
+          return {
+            type: 'postgres' as const,
+            url: databaseUrl,
+            ssl:
+              databaseUrl.includes('neon.tech') || databaseUrl.includes('sslmode=require')
+                ? { rejectUnauthorized: false }
+                : undefined,
+            autoLoadEntities: true,
+            synchronize: true,
+            extra: isServerless ? { max: 3, idleTimeoutMillis: 10_000 } : undefined,
+          };
+        }
         if (isServerless) {
           const dbPath = process.env.DATABASE_PATH ?? '/tmp/jarvis.sqlite';
           mkdirSync(dirname(dbPath), { recursive: true });

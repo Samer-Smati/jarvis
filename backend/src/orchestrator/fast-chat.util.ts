@@ -29,9 +29,44 @@ export function isSelfImproveInfoQuery(text: string): boolean {
 
 export function isBrainGraphRequest(text: string): boolean {
   const t = text.trim();
-  return /\b(graph|knowledge graph|mind map|link map|connections|what(?:'s| is) linked|show.*links|visuali[sz]e.*brain)\b/i.test(
+  return /\b(graph|knowledge graph|mind map|link map|connections|what(?:'s| is) linked|show.*(?:graph|links|brain)|visuali[sz]e.*(?:brain|graph)|brain map|my brain)\b/i.test(
     t,
   );
+}
+
+export function isSaveToBrainRequest(text: string): boolean {
+  const t = text.trim();
+  return /\b(save (that|this|it) (in|to) (your )?brain|remember that|file (that|this) in (your )?brain|save (that|this) (in|to) my brain)\b/i.test(
+    t,
+  );
+}
+
+export function isAboutUserQuery(text: string): boolean {
+  const t = text.trim();
+  return /\b(what do you know about me|anything you know about me|what(?:'s| is) my profile|tell me about me|who am i)\b/i.test(
+    t,
+  );
+}
+
+export function isLinkProfileRequest(text: string): boolean {
+  const t = text.trim();
+  return /\b(link (my )?profile|connect (my )?profile|profile.*linked.*jarvis|why.*not linked|add.*profile.*graph)\b/i.test(
+    t,
+  );
+}
+
+export function isShowBrainPageRequest(text: string): boolean {
+  const t = text.trim();
+  return /\b(show (the |me )?(exact )?markdown|show (me )?the (profile )?page|display (the )?markdown content)\b/i.test(
+    t,
+  );
+}
+
+export function isAffirmativeLinkProfile(text: string, recentContext: string): boolean {
+  if (!/^(yes|yeah|yep|sure|ok|okay|do it|please|go ahead)\b/i.test(text.trim())) {
+    return false;
+  }
+  return /\b(link.*profile|add.*link|profile.*jarvis|create.*profile page|dedicated.*profile)\b/i.test(recentContext);
 }
 
 /** User wants responsive/mobile UI — use apply_preset fast path on cloud. */

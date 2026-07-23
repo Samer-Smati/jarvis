@@ -15,7 +15,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isBrainGraphRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls } from './fast-chat.util';
+import { isFastChatTurn, isBrainGraphRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile } from './fast-chat.util';
 
 const MAX_TOOL_ITERATIONS = 8;
 const SERVERLESS_MAX_TOOL_ITERATIONS = 4;
@@ -80,8 +80,28 @@ export class OrchestratorService {
     try {
       await this.memory.appendMessage(conversationId, 'user', userText);
 
+      const { messages: dbHistory, truncated } = await this.memory.loadConversation(conversationId);
+      const history = mergeClientHistory(dbHistory, clientHistory, userText);
+      const recentContext = history
+        .slice(-8)
+        .map((m) => String(m.content ?? ''))
+        .join('\n');
+
       if (isResponsiveUpgradeRequest(userText)) {
         const handled = await this.runResponsivePresetUpgrade(
+          conversationId,
+          userText,
+          emitter,
+          trigger,
+          clientPlatform,
+        );
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isBrainGraphRequest(userText)) {
+        const handled = await this.runBrainGraphOpen(
           conversationId,
           userText,
           emitter,
@@ -100,14 +120,46 @@ export class OrchestratorService {
         }
       }
 
+      if (isSaveToBrainRequest(userText)) {
+        const handled = await this.runSaveToBrain(conversationId, userText, history, emitter, trigger, clientPlatform);
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isAboutUserQuery(userText)) {
+        const handled = await this.runAboutUser(conversationId, userText, emitter, trigger);
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isLinkProfileRequest(userText) || isAffirmativeLinkProfile(userText, recentContext)) {
+        const handled = await this.runLinkProfileToJarvis(
+          conversationId,
+          userText,
+          emitter,
+          trigger,
+          clientPlatform,
+        );
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isShowBrainPageRequest(userText)) {
+        const handled = await this.runShowBrainPage(conversationId, userText, emitter, trigger);
+        if (handled) {
+          return;
+        }
+      }
+
       const facts = await this.memory.recallFacts(userText);
       const brainContext = await this.brain.getContextBlock(userText);
       const now = new Date().toLocaleString('en-GB', {
         dateStyle: 'full',
         timeStyle: 'short',
       });
-      const { messages: dbHistory, truncated } = await this.memory.loadConversation(conversationId);
-      const history = mergeClientHistory(dbHistory, clientHistory, userText);
       const recentUserTexts = history
         .filter((m) => m.role === 'user')
         .slice(-5)
@@ -239,8 +291,9 @@ export class OrchestratorService {
       if (finalText) {
         finalText = sanitizeSelfImproveDenial(finalText, userText);
         finalText = sanitizeLinkDenial(finalText, userText);
+        finalText = sanitizeBrainDenial(finalText, userText);
         await this.memory.appendMessage(conversationId, 'assistant', finalText);
-        void this.brain.touchFromTurn(userText, finalText);
+        this.persistTurnLearning(userText, finalText);
       }
       void this.memory.logEvent(trigger, `Handled: ${userText.slice(0, 120)}`);
       emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
@@ -347,6 +400,10 @@ export class OrchestratorService {
     return result.output;
   }
 
+  private persistTurnLearning(userText: string, assistantText: string): void {
+    void this.brain.learnFromTurn(userText, assistantText);
+  }
+
   private skillNeedsConfirmation(
     skill: { name: string; requiresConfirmation: boolean },
     args: Record<string, unknown>,
@@ -411,6 +468,7 @@ export class OrchestratorService {
       const finalText =
         'Responsive UI is already live in the repo, sir. Resize the chat or open it on your phone — sticky composer, mobile nav, and breakpoints at 900px / 600px / 768px are in place.';
       await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      this.persistTurnLearning(userText, finalText);
       emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
       emitter.onDone(finalText);
       return true;
@@ -447,6 +505,7 @@ export class OrchestratorService {
         : `Responsive upgrade finished, sir. ${presetOutput.split('\n')[0]}`;
 
     await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    this.persistTurnLearning(userText, finalText);
     void this.memory.logEvent(trigger, `Responsive preset: ${userText.slice(0, 120)}`);
     emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
     emitter.onDone(finalText);
@@ -499,13 +558,183 @@ export class OrchestratorService {
     const excerptMatch = output.match(/Excerpt:\n([\s\S]+)/);
     const title = titleMatch?.[1]?.trim() ?? 'that page';
     const excerpt = excerptMatch?.[1]?.trim().slice(0, 280) ?? '';
+    const isProfile = output.includes('Profile entity saved') || output.includes('BRAIN_GRAPH:');
+
+    if (isProfile) {
+      await this.executeToolCall(
+        conversationId,
+        { id: 'brain-graph-after-ingest', name: 'brain', arguments: { action: 'graph' } },
+        emitter,
+        trigger,
+        clientPlatform,
+      );
+    }
 
     const finalText = excerpt
-      ? `Done, sir. I read ${title} and filed it in my brain. In short: ${excerpt}`
+      ? `Done, sir. I read ${title} and filed it in my brain${isProfile ? ', linked to JARVIS' : ''}. In short: ${excerpt}${isProfile ? ' Open the graph to see your profile connected.' : ''}`
       : `Done, sir. I read and saved ${title} in my brain. Ask me about it anytime, or say "show the graph" to see how it links.`;
 
     await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    this.persistTurnLearning(userText, finalText);
     void this.memory.logEvent(trigger, `URL ingest: ${url.slice(0, 120)}`);
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runBrainGraphOpen(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+    clientPlatform: 'desktop' | 'web',
+  ): Promise<boolean> {
+    const skill = this.skills.get('brain');
+    if (!skill) {
+      return false;
+    }
+
+    emitter.onProgress?.({ stage: 'brain', message: 'Loading knowledge graph…', percent: 42, toolName: 'brain' });
+
+    await this.executeToolCall(
+      conversationId,
+      { id: 'brain-graph', name: 'brain', arguments: { action: 'graph' } },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    const graph = await this.brain.getGraph();
+    const labels = graph.nodes.map((n) => n.label).join(', ');
+    const finalText = `Opening your brain graph, sir — ${graph.nodes.length} notes (${labels}) and ${graph.edges.length} links.`;
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    this.persistTurnLearning(userText, finalText);
+    void this.memory.logEvent(trigger, 'Brain graph opened');
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runSaveToBrain(
+    conversationId: string,
+    userText: string,
+    history: ChatMessage[],
+    emitter: OrchestratorEmitter,
+    trigger: string,
+    clientPlatform: 'desktop' | 'web',
+  ): Promise<boolean> {
+    const lastAssistant = [...history].reverse().find((m) => m.role === 'assistant' && String(m.content ?? '').trim());
+    const priorUsers = history.filter((m) => m.role === 'user');
+    const previousUser = priorUsers.length > 1 ? priorUsers[priorUsers.length - 2] : undefined;
+    const content = String(lastAssistant?.content ?? previousUser?.content ?? userText).slice(0, 4000);
+
+    emitter.onProgress?.({ stage: 'brain', message: 'Saving to brain…', percent: 40, toolName: 'brain' });
+
+    await this.brain.remember('User Profile', content, 'entity');
+    const linkMsg = await this.brain.linkUserEntityToJarvis();
+
+    await this.executeToolCall(
+      conversationId,
+      { id: 'brain-graph-after-save', name: 'brain', arguments: { action: 'graph' } },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    const finalText = `Done, sir. Saved to my brain and linked to JARVIS. ${linkMsg} Open the graph to see the connection.`;
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    this.persistTurnLearning(userText, finalText);
+    void this.memory.logEvent(trigger, 'Saved user info to brain');
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runAboutUser(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+  ): Promise<boolean> {
+    const userPage = await this.brain.findUserEntityPage();
+    const query = await this.brain.query('user profile samer owner engineer', 5);
+    const facts = await this.memory.recallFacts('user profile samer');
+
+    let finalText = '';
+
+    if (userPage) {
+      const snippet = userPage.content.replace(/^#.+$/m, '').trim().slice(0, 420);
+      finalText = `From my brain, sir: I have your profile page "${userPage.title}" linked in the knowledge graph. ${snippet}`;
+    } else if (query.hits.length) {
+      finalText = `From my brain vault, sir: ${query.hits
+        .slice(0, 2)
+        .map((h) => `${h.title} — ${h.excerpt}`)
+        .join(' ')}`;
+    } else if (facts.length) {
+      finalText = `From memory, sir: ${facts.slice(0, 4).join(' ')}`;
+    } else {
+      return false;
+    }
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    this.persistTurnLearning(userText, finalText);
+    void this.memory.logEvent(trigger, 'About user query');
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runLinkProfileToJarvis(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+    clientPlatform: 'desktop' | 'web',
+  ): Promise<boolean> {
+    emitter.onProgress?.({ stage: 'brain', message: 'Linking profile to JARVIS…', percent: 44, toolName: 'brain' });
+
+    const linkMsg = await this.brain.linkUserEntityToJarvis();
+    if (linkMsg.startsWith('No user profile')) {
+      return false;
+    }
+
+    await this.executeToolCall(
+      conversationId,
+      { id: 'brain-graph-after-link', name: 'brain', arguments: { action: 'graph' } },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    const graph = await this.brain.getGraph();
+    const finalText = `${linkMsg} Graph refreshed — ${graph.nodes.length} nodes, ${graph.edges.length} links.`;
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    this.persistTurnLearning(userText, finalText);
+    void this.memory.logEvent(trigger, 'Linked user profile to JARVIS');
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runShowBrainPage(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+  ): Promise<boolean> {
+    const userPage = await this.brain.findUserEntityPage();
+    if (!userPage) {
+      return false;
+    }
+
+    const finalText = userPage.content;
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    this.persistTurnLearning(userText, finalText);
+    void this.memory.logEvent(trigger, `Show brain page: ${userPage.path}`);
     emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
     emitter.onDone(finalText);
     return true;
@@ -522,6 +751,27 @@ function sanitizeLinkDenial(text: string, userText: string): string {
     )
   ) {
     return 'Sir, I can fetch that link — paste the URL again and I will read it and save it to my brain with ingest_url.';
+  }
+  return text;
+}
+
+function sanitizeBrainDenial(text: string, userText: string): string {
+  if (isBrainGraphRequest(userText)) {
+    if (
+      /\b(can't render|cannot render|can't display|cannot display|designed to be explored|While I can't render|I can't render visual graphs)\b/i.test(
+        text,
+      )
+    ) {
+      return 'Opening your brain graph now, sir — use the graph panel to explore linked notes.';
+    }
+  }
+  if (
+    /\b(saved to the brain|profile has been saved|linked to my LLM Wiki|exists as in-memory data rather than a file)\b/i.test(
+      text,
+    ) &&
+    !/\b(BRAIN_GRAPH|Remembered|Ingested|Profile entity|Linked \[\[)\b/i.test(text)
+  ) {
+    return 'Sir, let me actually save that to the brain now — say "save that in your brain" or share your profile URL again and I will file and link it properly.';
   }
   return text;
 }

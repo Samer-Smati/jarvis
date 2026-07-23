@@ -243,6 +243,9 @@ export class ChatComponent implements OnInit, OnDestroy {
         current.statusHint = undefined;
         current.tools = this.compactToolBadges(current.tools);
         this.busy = false;
+        if (event.finalText?.includes('BRAIN_GRAPH:') || /\bOpening your brain graph\b/i.test(event.finalText ?? '')) {
+          this.brainGraph.open();
+        }
         if (!current.content?.trim()) {
           this.messages.pop();
         } else {

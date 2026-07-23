@@ -27,7 +27,9 @@ function bootstrap(): Promise<express.Express> {
       process.env.GROQ_MODEL = process.env.GROQ_MODEL ?? 'llama-3.1-8b-instant';
       process.env.GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-flash-latest';
       process.env.OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? 'openrouter/free';
-      process.env.DATABASE_PATH = process.env.DATABASE_PATH ?? '/tmp/jarvis.sqlite';
+      if (!process.env.DATABASE_URL?.trim()) {
+        process.env.DATABASE_PATH = process.env.DATABASE_PATH ?? '/tmp/jarvis.sqlite';
+      }
 
       const nest = await NestFactory.create(AppModule, new ExpressAdapter(server), {
         logger: ['error', 'warn', 'log'],

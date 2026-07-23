@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { BrainPgStore } from '../brain/brain-pg.store';
 import { EmbeddingService } from '../llm/embedding.service';
 import { ChatMessage } from '../llm/llm.types';
 import { ConversationBlobStore } from './conversation-blob.store';
@@ -26,6 +27,7 @@ export class MemoryService {
     @InjectRepository(SemanticMemoryEntity)
     private readonly semantic: Repository<SemanticMemoryEntity>,
     private readonly embeddings: EmbeddingService,
+    private readonly brainPg: BrainPgStore,
   ) {}
 
   private useBlobForConversations(): boolean {
@@ -111,10 +113,16 @@ export class MemoryService {
     await this.semantic.save(
       this.semantic.create({ text, embedding: vector ? JSON.stringify(vector) : undefined }),
     );
+    void this.brainPg.indexChunk(text, 'fact');
     this.logger.log(`Remembered fact: ${text}`);
   }
 
   async recallFacts(query: string, limit = 5): Promise<string[]> {
+    const pgHits = await this.brainPg.searchSimilar(query, limit);
+    if (pgHits.length) {
+      return pgHits.map((h) => h.text.slice(0, 320));
+    }
+
     const all = await this.semantic.find();
     if (!all.length) {
       return [];

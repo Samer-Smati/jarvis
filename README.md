@@ -199,11 +199,17 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ## Configuration (`backend/.env`)
 
-Copy from root: `copy .env.example backend\.env`
+Copy from: `copy backend\.env.example backend\.env`
+
+Full **Neon PostgreSQL + pgvector** cloud setup: [docs/NEON-SETUP.md](docs/NEON-SETUP.md)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LLM_PROVIDER` | `lmstudio` | `lmstudio` \| `ollama` \| `claude` |
+| `DATABASE_URL` | — | **Neon PostgreSQL** (pooled URL) — permanent cloud memory + pgvector semantic search |
+| `GEMINI_API_KEY` | — | Cloud LLM + embeddings (free at [aistudio.google.com](https://aistudio.google.com/apikey)) |
+| `GEMINI_EMBED_MODEL` | `text-embedding-004` | Cloud embedding model for pgvector |
+| `BLOB_READ_WRITE_TOKEN` | — | Vercel Blob — brain wiki vault on cloud |
+| `LLM_PROVIDER` | `lmstudio` | `lmstudio` \| `ollama` \| `gemini` \| `claude` |
 | `LMSTUDIO_BASE_URL` | `http://localhost:1234/v1` | LM Studio OpenAI-compatible API |
 | `LMSTUDIO_CHAT_MODEL` | `qwen/qwen3.5-9b` | Chat model id |
 | `LMSTUDIO_EMBED_MODEL` | `text-embedding-nomic-embed-text-v1.5` | Embeddings for memory |
@@ -213,7 +219,7 @@ Copy from root: `copy .env.example backend\.env`
 | `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Ollama embeddings |
 | `ANTHROPIC_API_KEY` | — | Required for Claude |
 | `CLAUDE_MODEL` | `claude-sonnet-4-20250514` | Claude model id |
-| `DATABASE_PATH` | `data/jarvis.sqlite` | SQLite database |
+| `DATABASE_PATH` | `data/jarvis.sqlite` | Local SQLite fallback when `DATABASE_URL` is not set |
 | `FILES_ROOT` | `data/files` | Sandboxed filesystem skill |
 | `PORT` | `3000` | Backend HTTP + WebSocket |
 | `CORS_ORIGIN` | `http://localhost:4200` | Allowed frontend origin |

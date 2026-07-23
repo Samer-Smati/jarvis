@@ -21,7 +21,7 @@ export class BrainGraphService {
 
 export function isBrainGraphRequest(text: string): boolean {
   const t = text.trim();
-  return /\b(graph|knowledge graph|mind map|link map|connections|what(?:'s| is) linked|show.*links|visuali[sz]e.*brain|brain map)\b/i.test(
+  return /\b(graph|knowledge graph|mind map|link map|connections|what(?:'s| is) linked|show.*(?:graph|links|brain)|visuali[sz]e.*(?:brain|graph)|brain map|my brain)\b/i.test(
     t,
   );
 }

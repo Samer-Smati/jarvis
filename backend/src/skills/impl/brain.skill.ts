@@ -17,9 +17,9 @@ export class BrainSkill implements Skill {
     properties: {
       action: {
         type: 'string',
-        enum: ['status', 'query', 'graph', 'remember', 'ingest', 'ingest_url', 'save_session', 'update_hot'],
+        enum: ['status', 'query', 'graph', 'remember', 'ingest', 'ingest_url', 'save_session', 'update_hot', 'get_page', 'link_user'],
         description:
-          'status=brain overview; query=search vault; graph=open link graph UI; ingest_url=fetch a URL and file it; remember=store fact; ingest=add pasted text; save_session=file conversation; update_hot=refresh context',
+          'status=brain overview; query=search vault; graph=open link graph UI; ingest_url=fetch a URL and file it; remember=store fact; ingest=add pasted text; save_session=file conversation; update_hot=refresh context; get_page=show markdown for a path; link_user=link user profile entity to JARVIS',
       },
       url: { type: 'string', description: 'HTTP(S) URL for ingest_url.' },
       query: { type: 'string', description: 'Search text for query action.' },
@@ -36,6 +36,7 @@ export class BrainSkill implements Skill {
         description: 'Related topics for save_session.',
       },
       source_type: { type: 'string', description: 'Source label for ingest (e.g. url, note, doc).' },
+      path: { type: 'string', description: 'Brain page path for get_page (e.g. entities/samer-smati.md).' },
     },
     required: ['action'],
   };
@@ -96,20 +97,27 @@ export class BrainSkill implements Skill {
             message: `Filing "${page.title}" in brain…`,
             percent: 55,
           });
-          const body = `URL: ${page.url}\n\n${page.text}`;
-          const output = await this.brain.ingest(page.title, body, 'url');
-          const excerpt = page.text.slice(0, 500).trim();
+          const isProfile = /profile|portfolio|resume|cv|developer|full-stack|portf-/i.test(
+            `${url} ${page.title} ${page.text.slice(0, 1200)}`,
+          );
+          const result = await this.brain.ingestUrlPage(page.title, page.url, page.text, isProfile);
+          const lines = [
+            isProfile && result.entityPath
+              ? `Profile entity saved at ${result.entityPath} and linked to JARVIS.`
+              : `Source saved at ${result.sourcePath}.`,
+            '',
+            `Fetched: ${page.url}`,
+            `Title: ${result.title}`,
+            '',
+            'Excerpt:',
+            result.excerpt + (page.text.length > 500 ? '…' : ''),
+          ];
+          if (isProfile && result.entityPath) {
+            lines.unshift('BRAIN_GRAPH: Profile linked — open graph to see connections.');
+          }
           return {
             success: true,
-            output: [
-              output,
-              '',
-              `Fetched: ${page.url}`,
-              `Title: ${page.title}`,
-              '',
-              'Excerpt:',
-              excerpt + (page.text.length > 500 ? '…' : ''),
-            ].join('\n'),
+            output: lines.join('\n'),
           };
         } catch (error) {
           return { success: false, output: `Could not fetch URL: ${(error as Error).message}` };
@@ -153,6 +161,28 @@ export class BrainSkill implements Skill {
         }
         const output = await this.brain.updateHot(content);
         return { success: true, output };
+      }
+      case 'get_page': {
+        const path = String(args?.path ?? '').trim();
+        let page = path ? await this.brain.getPage(path) : null;
+        if (!page) {
+          page = await this.brain.findUserEntityPage();
+        }
+        if (!page) {
+          return { success: false, output: 'No matching brain page found.' };
+        }
+        return {
+          success: true,
+          output: [`# ${page.title}`, `Path: ${page.path}`, `Category: ${page.category}`, '', page.content].join('\n'),
+        };
+      }
+      case 'link_user': {
+        const output = await this.brain.linkUserEntityToJarvis();
+        const graph = await this.brain.getGraph();
+        return {
+          success: true,
+          output: `${output}\n\nBRAIN_GRAPH: ${graph.nodes.length} nodes, ${graph.edges.length} links.`,
+        };
       }
       default:
         return { success: false, output: `Unknown action "${action}".` };
