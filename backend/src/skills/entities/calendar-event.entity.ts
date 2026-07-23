@@ -9,10 +9,10 @@ export class CalendarEventEntity {
   title: string;
 
   @Index()
-  @Column({ type: 'datetime' })
+  @Column({ type: 'timestamp' })
   startAt: Date;
 
-  @Column({ type: 'datetime', nullable: true })
+  @Column({ type: 'timestamp', nullable: true })
   endAt?: Date;
 
   @Column({ nullable: true })

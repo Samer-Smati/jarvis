@@ -2,13 +2,14 @@ import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 
 
 @Entity('reminders')
 @Index(['fired', 'dueAt'])
-export class ReminderEntity {  @PrimaryGeneratedColumn('uuid')
+export class ReminderEntity {
+  @PrimaryGeneratedColumn('uuid')
   id: string;
 
   @Column()
   text: string;
 
-  @Column({ type: 'datetime' })
+  @Column({ type: 'timestamp' })
   dueAt: Date;
 
   @Column({ default: false })

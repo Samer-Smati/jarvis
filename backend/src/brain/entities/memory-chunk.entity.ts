@@ -18,6 +18,6 @@ export class MemoryChunkEntity {
   @Column({ type: 'text', nullable: true })
   embeddingJson?: string;
 
-  @CreateDateColumn({ type: 'timestamptz' })
+  @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 }

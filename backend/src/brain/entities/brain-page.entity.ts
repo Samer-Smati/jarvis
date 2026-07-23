@@ -17,9 +17,9 @@ export class BrainPageEntity {
   @Column({ type: 'simple-json', default: '[]' })
   links: string[];
 
-  @Column({ type: 'timestamptz' })
+  @Column({ type: 'timestamp' })
   createdAt: Date;
 
-  @UpdateDateColumn({ type: 'timestamptz' })
+  @UpdateDateColumn({ type: 'timestamp' })
   updatedAt: Date;
 }
