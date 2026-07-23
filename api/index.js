@@ -22,6 +22,12 @@ const backendRoot = resolveBackendRoot();
 process.env.JARVIS_BACKEND_ROOT = backendRoot;
 const backendModules = path.join(backendRoot, 'node_modules');
 
+try {
+  require(path.join(backendModules, 'pg'));
+} catch (error) {
+  console.warn('[jarvis] pg preload failed:', error instanceof Error ? error.message : error);
+}
+
 if (!process.env.NODE_PATH?.includes(backendModules)) {
   process.env.NODE_PATH = [backendModules, process.env.NODE_PATH].filter(Boolean).join(path.delimiter);
   Module._initPaths();

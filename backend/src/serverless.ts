@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ExpressAdapter } from '@nestjs/platform-express';
 import express from 'express';
+import 'pg';
 import { AppModule } from './app.module';
 import { resolveServerlessLlmProvider } from './llm/llm-provider.util';
 
