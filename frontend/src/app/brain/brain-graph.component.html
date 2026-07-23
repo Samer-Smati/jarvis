@@ -1,22 +1,17 @@
-<div class="brain-graph-panel hud-panel">
+<div class="brain-graph-panel">
   <header class="graph-header">
     <div class="title-block">
-      <span class="hud-label">// Brain link graph</span>
-      <span class="stats" *ngIf="nodeCount">{{ nodeCount }} nodes · {{ edgeCount }} links</span>
+      <span class="graph-title">Graph view</span>
+      <span class="stats" *ngIf="nodeCount">{{ nodeCount }} notes · {{ edgeCount }} links</span>
     </div>
-    <div class="legend">
-      <span class="legend-item concept">Concept</span>
-      <span class="legend-item entity">Entity</span>
-      <span class="legend-item source">Source</span>
-      <span class="legend-item fact">Fact</span>
-      <span class="legend-item session">Session</span>
+    <div class="header-actions">
+      <button type="button" class="icon-btn" (click)="refresh()" title="Refresh">
+        <i class="pi pi-refresh" [class.pi-spin]="loading"></i>
+      </button>
+      <button type="button" class="icon-btn" (click)="close()" title="Close">
+        <i class="pi pi-times"></i>
+      </button>
     </div>
-    <button type="button" class="refresh-btn hud-icon-btn" (click)="refresh()" title="Refresh graph">
-      <i class="pi pi-refresh" [class.pi-spin]="loading"></i>
-    </button>
-    <button type="button" class="refresh-btn hud-icon-btn close-btn" (click)="close()" title="Close graph">
-      <i class="pi pi-times"></i>
-    </button>
   </header>
 
   <div
@@ -24,8 +19,9 @@
     #canvas
     (pointermove)="onPointerMove($event)"
     (pointerup)="onPointerUp()"
-    (pointerleave)="onPointerUp()">
-    <p *ngIf="loading" class="graph-status">Loading knowledge graph…</p>
+    (pointerleave)="onPointerUp()"
+    (click)="clearSelection()">
+    <p *ngIf="loading" class="graph-status">Loading graph…</p>
     <p *ngIf="error && !loading" class="graph-status error">{{ error }}</p>
 
     <svg
@@ -41,25 +37,25 @@
           [attr.x2]="nodeCoord(edge.target)?.x"
           [attr.y2]="nodeCoord(edge.target)?.y"
           class="edge-line"
-          [class.highlight]="isEdgeHighlighted(edge)" />
+          [class.highlight]="isEdgeHighlighted(edge)"
+          [class.dimmed]="isEdgeDimmed(edge)" />
       </g>
       <g class="nodes">
         <g
           *ngFor="let node of layoutNodes"
           class="node-group"
-          [class.highlight]="isNodeHighlighted(node)"
+          [class.dimmed]="isNodeDimmed(node)"
           [class.selected]="selectedId === node.id"
-          (pointerdown)="onPointerDown($event, node)"
-          (click)="selectNode(node, $event)">
+          (pointerdown)="onPointerDown($event, node)">
           <circle
             [attr.cx]="node.x"
             [attr.cy]="node.y"
-            [attr.r]="10 + node.linkCount * 2"
-            [attr.fill]="categoryColor(node.category)"
+            [attr.r]="nodeRadius(node)"
+            [attr.fill]="nodeFill(node)"
             class="node-circle" />
           <text
             [attr.x]="node.x"
-            [attr.y]="node.y + 22 + node.linkCount * 2"
+            [attr.y]="node.y + labelOffset(node)"
             class="node-label"
             text-anchor="middle">
             {{ node.label }}
@@ -67,9 +63,11 @@
         </g>
       </g>
     </svg>
-  </div>
 
-  <footer class="graph-footer" *ngIf="updatedAt">
-    Live · updates every 3s · last vault change {{ updatedAt | date: 'short' }}
-  </footer>
+    <div class="legend-float" *ngIf="layoutNodes.length && !loading">
+      <span class="legend-dot" style="--dot-color: #b4a7d6">Concept</span>
+      <span class="legend-dot" style="--dot-color: #a78bfa">Entity</span>
+      <span class="legend-dot" style="--dot-color: #7a7a7a">Other</span>
+    </div>
+  </div>
 </div>
