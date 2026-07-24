@@ -18,8 +18,8 @@ import { ClientHistoryMessage, mergeClientHistory } from './client-history.util'
 import { isFastChatTurn, isBrainGraphRequest, isBrainCleanupRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning } from './fast-chat.util';
 
 const MAX_TOOL_ITERATIONS = 8;
-const SERVERLESS_MAX_TOOL_ITERATIONS = 4;
-const SERVERLESS_DEADLINE_MS = 270_000;
+const SERVERLESS_MAX_TOOL_ITERATIONS = 6;
+const SERVERLESS_DEADLINE_MS = 285_000;
 
 const REMEMBER_FACT_TOOL: ToolDefinition = {
   name: 'remember_fact',
@@ -210,7 +210,7 @@ export class OrchestratorService {
         systemPrompt += `\n\nThe user is asking what you CAN upgrade — call self_improve with action=status ONCE, then answer in plain language from that output. Do NOT call inspect, write, commit, or pull_request in this turn. Offer 2–3 concrete upgrade ideas (UI, skills, voice, speed) and wait for their pick.`;
       }
       if (isConcreteSelfImproveRequest(userText) && !isResponsiveUpgradeRequest(userText)) {
-        systemPrompt += `\n\nThe user wants a REAL code upgrade on cloud (50s limit). Use at most: one inspect with paths for needed files → one write (prefer small targeted edits, not rewriting entire large files) → pull_request. Skip redundant inspects. After pull_request succeeds, stop — do not call more tools. Never say sandbox is unmounted. Screenshots unavailable — use responsive CSS.`;
+        systemPrompt += `\n\nThe user wants a REAL code upgrade on cloud. Use at most: one inspect with paths for needed files → one write (prefer small targeted edits, not rewriting entire large files) → pull_request. Skip redundant inspects and status calls. After pull_request succeeds, stop — do not call more tools. Never say sandbox is unmounted.`;
       }
       if (isResponsiveUpgradeRequest(userText)) {
         systemPrompt += `\n\nThe user wants responsive/mobile UI. Prefer self_improve action=apply_preset preset=responsive_chat then pull_request on the same branch. Do NOT read entire SCSS files first.`;
@@ -251,16 +251,19 @@ export class OrchestratorService {
       const maxIterations = isServerlessRuntime() ? SERVERLESS_MAX_TOOL_ITERATIONS : MAX_TOOL_ITERATIONS;
 
       for (let iteration = 0; iteration < maxIterations; iteration++) {
-        const nearDeadline = isServerlessRuntime() && Date.now() > deadline - 10_000;
         const prDone = lastToolOutput.includes('Pull request #');
-        if (nearDeadline || prDone) {
+        if (prDone) {
+          finalText = finalText || `Done, sir. ${lastToolOutput.split('\n')[0]}`;
+          break;
+        }
+
+        const nearDeadline = isServerlessRuntime() && Date.now() > deadline - 5_000;
+        if (nearDeadline) {
           finalText =
             finalText ||
-            (prDone
-              ? `Done, sir. ${lastToolOutput.split('\n')[0]}`
-              : lastToolOutput
-                ? `Cloud time limit reached, sir. Last step: ${lastToolOutput.slice(0, 280)}`
-                : 'Cloud time limit reached before I could finish, sir. Please try again.');
+            (lastToolOutput
+              ? `Cloud time limit reached, sir. Last step: ${lastToolOutput.slice(0, 280)}`
+              : 'Cloud time limit reached before I could finish, sir. Please try again.');
           break;
         }
 
@@ -452,10 +455,6 @@ export class OrchestratorService {
     if (skill.name === 'manage_calendar') {
       const action = String(args?.action ?? '');
       return action === 'delete' || action === 'move';
-    }
-    if (skill.name === 'self_improve') {
-      const action = String(args?.action ?? '');
-      return action === 'write' || action === 'commit' || action === 'pull_request';
     }
     return false;
   }

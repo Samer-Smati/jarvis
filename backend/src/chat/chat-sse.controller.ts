@@ -110,7 +110,7 @@ export class ChatSseController {
       body?.history,
       images.length ? images : undefined,
     );
-    const timeoutMs = process.env.VERCEL ? 290_000 : 120_000;
+    const timeoutMs = process.env.VERCEL ? 295_000 : 120_000;
     try {
       await Promise.race([
         run,
