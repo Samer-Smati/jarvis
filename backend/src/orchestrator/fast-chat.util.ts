@@ -86,6 +86,12 @@ export function isResponsiveUpgradeRequest(text: string): boolean {
   return /\bresponsive\b/i.test(t) && /\b(chat|ui|css|scss|frontend|container)\b/i.test(t);
 }
 
+export function isBrainCleanupRequest(text: string): boolean {
+  const t = text.trim();
+  return /\b(clean\s?up|clear|prune|fix)\b.*\b(brain|graph|wiki|vault)\b/i.test(t) ||
+    /\b(brain|graph|wiki)\b.*\b(clean\s?up|clear|prune|fix)\b/i.test(t);
+}
+
 /** Skip filing raw upgrade/tool turns into the brain wiki. */
 export function shouldSkipBrainLearning(userText: string, assistantText: string): boolean {
   const user = userText.trim();

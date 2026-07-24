@@ -122,6 +122,33 @@ export function applyPatch(existing: string, appendBlock: string, marker: string
   return `${existing.trimEnd()}\n${appendBlock}`;
 }
 
+export interface ResponsiveCheck {
+  label: string;
+  ok: boolean;
+}
+
+export function verifyResponsiveFile(path: string, content: string): ResponsiveCheck[] {
+  if (path.includes('chat.component.scss')) {
+    return [
+      { label: 'Dynamic viewport height (100dvh)', ok: /100dvh/.test(content) },
+      { label: 'Scrollable message list (overflow-y: auto)', ok: /\.messages[\s\S]{0,400}overflow-y:\s*auto/.test(content) },
+      { label: 'Tablet breakpoint (900px)', ok: /@media \(max-width: 900px\)/.test(content) },
+      { label: 'Phone breakpoint (600px)', ok: /@media \(max-width: 600px\)/.test(content) },
+      { label: 'Sticky composer', ok: /\.composer[\s\S]{0,300}position:\s*sticky/.test(content) },
+      { label: 'Touch scrolling (-webkit-overflow-scrolling)', ok: /-webkit-overflow-scrolling:\s*touch/.test(content) },
+      { label: 'JARVIS responsive preset applied', ok: content.includes(RESPONSIVE_MARKER) },
+    ];
+  }
+  if (path.includes('app.component.scss')) {
+    return [
+      { label: 'Shell dynamic viewport (100dvh)', ok: /100dvh/.test(content) },
+      { label: 'Mobile shell column layout (768px)', ok: /@media \(max-width: 768px\)/.test(content) && /flex-direction:\s*column/.test(content) },
+      { label: 'JARVIS responsive preset applied', ok: content.includes(RESPONSIVE_MARKER) },
+    ];
+  }
+  return [];
+}
+
 export const RESPONSIVE_PRESET_FILES = [
   {
     path: 'frontend/src/app/chat/chat.component.scss',

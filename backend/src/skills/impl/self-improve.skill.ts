@@ -11,6 +11,7 @@ import {
   applyPatch,
   RESPONSIVE_MARKER,
   RESPONSIVE_PRESET_FILES,
+  verifyResponsiveFile,
 } from '../presets/responsive-chat.preset';
 import {
   isServerlessRuntime,
@@ -69,9 +70,9 @@ export class SelfImproveSkill implements Skill {
     properties: {
       action: {
         type: 'string',
-        enum: ['status', 'inspect', 'apply_preset', 'write', 'run_checks', 'commit', 'pull_request'],
+        enum: ['status', 'inspect', 'verify_responsive', 'apply_preset', 'write', 'run_checks', 'commit', 'pull_request'],
         description:
-          'status=capabilities; inspect=list/read files; apply_preset=one-shot upgrade (responsive_chat); write=apply code change; run_checks=build; commit=git commit (desktop); pull_request=open GitHub PR',
+          'status=capabilities; inspect=list/read files; verify_responsive=check responsive CSS in repo; apply_preset=one-shot upgrade (responsive_chat); write=apply code change; run_checks=build; commit=git commit (desktop); pull_request=open GitHub PR',
       },
       preset: {
         type: 'string',
@@ -123,6 +124,8 @@ export class SelfImproveSkill implements Skill {
         return this.status(context);
       case 'inspect':
         return this.inspect(args, context);
+      case 'verify_responsive':
+        return this.verifyResponsive(context);
       case 'apply_preset':
         return this.applyPreset(args, context);
       case 'write':
@@ -390,6 +393,44 @@ export class SelfImproveSkill implements Skill {
     return aliased ?? trimmed;
   }
 
+  private async verifyResponsive(context: SkillContext): Promise<SkillResult> {
+    this.progress(context, {
+      stage: 'inspect',
+      message: 'Verifying responsive UI files…',
+      percent: 32,
+    });
+
+    const lines: string[] = ['Responsive UI verification:'];
+    let allOk = true;
+
+    for (const file of RESPONSIVE_PRESET_FILES) {
+      const content = await this.readRepoFile(file.path);
+      if (!content) {
+        lines.push(`\n${file.path}: NOT FOUND`);
+        allOk = false;
+        continue;
+      }
+      const checks = verifyResponsiveFile(file.path, content);
+      lines.push(`\n${file.path}:`);
+      for (const check of checks) {
+        lines.push(`  ${check.ok ? '✓' : '✗'} ${check.label}`);
+        if (!check.ok) {
+          allOk = false;
+        }
+      }
+    }
+
+    lines.push(allOk ? '\nAll responsive checks passed.' : '\nSome checks failed — apply_preset may still patch missing pieces.');
+
+    this.progress(context, {
+      stage: 'inspect',
+      message: allOk ? 'Responsive UI verified' : 'Responsive gaps found',
+      percent: 42,
+    });
+
+    return { success: true, output: lines.join('\n') };
+  }
+
   private async applyPreset(args: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const preset = String(args.preset ?? '');
     if (preset !== 'responsive_chat') {
@@ -460,12 +501,15 @@ export class SelfImproveSkill implements Skill {
     });
 
     if (!updated.length) {
+      const verify = await this.verifyResponsive(context);
       return {
         success: true,
         output: [
           'Responsive UI is already applied in the repo.',
           skipped.length ? `Checked: ${skipped.join(', ')}` : '',
           'No PR needed — merge is already on main or no file changes were required.',
+          '',
+          verify.output,
         ]
           .filter(Boolean)
           .join('\n'),

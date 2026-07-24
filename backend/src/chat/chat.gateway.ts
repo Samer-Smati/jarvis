@@ -11,12 +11,14 @@ import { GuardrailService } from '../guardrails/guardrail.service';
 import { OrchestratorEmitter } from '../orchestrator/orchestrator.events';
 import { OrchestratorService } from '../orchestrator/orchestrator.service';
 import { PermissionsService } from '../permissions/permissions.service';
+import type { ChatImagePart } from '../llm/llm.types';
 
 interface UserMessagePayload {
   conversationId: string;
   text: string;
   platform?: 'desktop' | 'web';
   history?: Array<{ role: string; content: string; createdAt?: string }>;
+  images?: ChatImagePart[];
 }
 
 interface ConfirmationResponsePayload {
@@ -47,13 +49,12 @@ export class ChatGateway {
     @MessageBody() payload: UserMessagePayload,
   ): Promise<void> {
     const conversationId = payload?.conversationId ?? 'default';
-    const text = payload?.text?.trim();
-    if (!text) {
+    const text = payload?.text?.trim() ?? '';
+    const images = payload?.images?.slice(0, 4);
+    if (!text && !images?.length) {
       return;
     }
-    this.logger.log(`[${conversationId}] user: ${text.slice(0, 80)}`);
-    // Scope run events to the requesting client so other open tabs
-    // don't also render/speak the response (double-voice bug).
+    this.logger.log(`[${conversationId}] user: ${text.slice(0, 80)}${images?.length ? ` (+${images.length} img)` : ''}`);
     const emitter = this.buildEmitter(conversationId, client);
     void this.orchestrator.handleUserMessage(
       conversationId,
@@ -62,6 +63,7 @@ export class ChatGateway {
       'chat',
       payload?.platform === 'web' ? 'web' : 'desktop',
       payload?.history,
+      images?.length ? images : undefined,
     );
   }
 

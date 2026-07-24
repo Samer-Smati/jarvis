@@ -27,6 +27,18 @@ export interface ChatMessage {
   progress?: ProgressStep[];
   progressPercent?: number;
   tools?: ToolActivity[];
+  images?: ChatImageAttachment[];
+}
+
+export interface ChatImageAttachment {
+  url: string;
+  name?: string;
+  mimeType?: string;
+}
+
+export interface ChatImagePayload {
+  mimeType: string;
+  data: string;
 }
 
 export interface ConfirmationRequest {

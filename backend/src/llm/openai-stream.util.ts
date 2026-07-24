@@ -8,9 +8,15 @@ export interface OpenAiStreamConfig {
   extraHeaders?: Record<string, string>;
 }
 
+interface OpenAiContentPart {
+  type: 'text' | 'image_url';
+  text?: string;
+  image_url?: { url: string };
+}
+
 interface OpenAiMessage {
   role: string;
-  content: string | null;
+  content: string | OpenAiContentPart[] | null;
   tool_call_id?: string;
   tool_calls?: {
     id: string;
@@ -263,7 +269,30 @@ function toOpenAiMessage(message: ChatMessage): OpenAiMessage {
       })),
     };
   }
-  return { role: message.role, content: message.content };
+  const content = buildOpenAiContent(message.content, message.images);
+  return { role: message.role, content };
+}
+
+function buildOpenAiContent(
+  text: string,
+  images?: ChatMessage['images'],
+): string | OpenAiContentPart[] {
+  if (!images?.length) {
+    return text;
+  }
+  const parts: OpenAiContentPart[] = [];
+  const trimmed = text.trim();
+  parts.push({
+    type: 'text',
+    text: trimmed || 'The user sent image(s). Describe what you see and respond helpfully.',
+  });
+  for (const image of images.slice(0, 4)) {
+    parts.push({
+      type: 'image_url',
+      image_url: { url: `data:${image.mimeType};base64,${image.data}` },
+    });
+  }
+  return parts;
 }
 
 function parseTextToolCalls(content: string): { content: string; toolCalls: ToolCall[] } {

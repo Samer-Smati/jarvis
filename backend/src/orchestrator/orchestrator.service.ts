@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { BrainService } from '../brain/brain.service';
 import { GuardrailService } from '../guardrails/guardrail.service';
-import type { ChatMessage, LlmProvider, ToolCall, ToolDefinition } from '../llm/llm.types';
+import type { ChatMessage, LlmProvider, ToolCall, ToolDefinition, ChatImagePart } from '../llm/llm.types';
 import { LLM_PROVIDER } from '../llm/llm.types';
 import { MemoryService } from '../memory/memory.service';
 import { scopeForDeviceTarget } from '../permissions/permission.types';
@@ -15,7 +15,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isBrainGraphRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning } from './fast-chat.util';
+import { isFastChatTurn, isBrainGraphRequest, isBrainCleanupRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning } from './fast-chat.util';
 
 const MAX_TOOL_ITERATIONS = 8;
 const SERVERLESS_MAX_TOOL_ITERATIONS = 4;
@@ -73,12 +73,19 @@ export class OrchestratorService {
     trigger = 'chat',
     clientPlatform: 'desktop' | 'web' = 'desktop',
     clientHistory?: ClientHistoryMessage[],
+    images?: ChatImagePart[],
   ): Promise<void> {
     const abort = new AbortController();
     this.activeRuns.set(conversationId, abort);
 
     try {
-      await this.memory.appendMessage(conversationId, 'user', userText);
+      const storedText =
+        images?.length && !userText.trim()
+          ? `[${images.length} image(s) attached]`
+          : images?.length
+            ? `${userText.trim()} [${images.length} image(s) attached]`
+            : userText;
+      await this.memory.appendMessage(conversationId, 'user', storedText);
 
       const { messages: dbHistory, truncated } = await this.memory.loadConversation(conversationId);
       const history = mergeClientHistory(dbHistory, clientHistory, userText);
@@ -87,8 +94,21 @@ export class OrchestratorService {
         .map((m) => String(m.content ?? ''))
         .join('\n');
 
-      if (isResponsiveUpgradeRequest(userText)) {
+      if (isResponsiveUpgradeRequest(userText) && !images?.length) {
         const handled = await this.runResponsivePresetUpgrade(
+          conversationId,
+          userText,
+          emitter,
+          trigger,
+          clientPlatform,
+        );
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isBrainCleanupRequest(userText)) {
+        const handled = await this.runBrainCleanup(
           conversationId,
           userText,
           emitter,
@@ -205,9 +225,24 @@ export class OrchestratorService {
       if (urls.length && !isUrlIngestTurn(userText)) {
         systemPrompt += `\n\nThe user mentioned a URL (${urls[0]}). You CAN fetch it with brain action=ingest_url. Never refuse link access.`;
       }
+      if (images?.length) {
+        systemPrompt += `\n\nThe user attached ${images.length} image(s) this turn. Describe what you see in the image(s) and answer their question.`;
+      }
 
       const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }, ...history];
-      const fastTurn = isServerlessRuntime() && isFastChatTurn(userText);
+      if (images?.length) {
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].role === 'user') {
+            messages[i] = {
+              ...messages[i],
+              content: userText.trim() || 'Please look at the attached image(s).',
+              images,
+            };
+            break;
+          }
+        }
+      }
+      const fastTurn = isServerlessRuntime() && isFastChatTurn(userText) && !images?.length;
       const tools = fastTurn ? [] : [...this.skills.toolDefinitions(), REMEMBER_FACT_TOOL];
 
       let finalText = '';
@@ -438,6 +473,26 @@ export class OrchestratorService {
     }
 
     const branch = `jarvis/responsive-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}`;
+
+    emitter.onProgress?.({
+      stage: 'inspect',
+      message: 'Verifying responsive UI in repo…',
+      percent: 22,
+      toolName: 'self_improve',
+    });
+
+    const verifyOutput = await this.executeToolCall(
+      conversationId,
+      {
+        id: 'responsive-verify',
+        name: 'self_improve',
+        arguments: { action: 'verify_responsive' },
+      },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
     emitter.onProgress?.({
       stage: 'apply_preset',
       message: 'Applying responsive UI preset…',
@@ -471,8 +526,16 @@ export class OrchestratorService {
       presetOutput.includes('Already responsive') ||
       presetOutput.includes('No PR needed');
     if (alreadyApplied && !presetOutput.includes('Updated:')) {
-      const finalText =
-        'Responsive UI is already live in the repo, sir. Resize the chat or open it on your phone — sticky composer, mobile nav, and breakpoints at 900px / 600px / 768px are in place.';
+      const checkLines = verifyOutput
+        .split('\n')
+        .filter((line) => line.trim().startsWith('✓') || line.trim().startsWith('✗'))
+        .slice(0, 8)
+        .join('\n');
+      const finalText = [
+        'I checked the repo, sir — responsive chat UI is already in place on main.',
+        checkLines ? `\nVerification:\n${checkLines}` : '',
+        '\nResize the browser or open on your phone: scrollable messages, sticky composer, and breakpoints at 900px / 600px / 768px.',
+      ].join('');
       await this.memory.appendMessage(conversationId, 'assistant', finalText);
       this.persistTurnLearning(userText, finalText);
       emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
@@ -590,6 +653,47 @@ export class OrchestratorService {
     return true;
   }
 
+  private async runBrainCleanup(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+    clientPlatform: 'desktop' | 'web',
+  ): Promise<boolean> {
+    const skill = this.skills.get('brain');
+    if (!skill) {
+      return false;
+    }
+
+    emitter.onProgress?.({ stage: 'brain', message: 'Cleaning up brain vault…', percent: 30, toolName: 'brain' });
+
+    const output = await this.executeToolCall(
+      conversationId,
+      { id: 'brain-cleanup', name: 'brain', arguments: { action: 'cleanup' } },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    await this.executeToolCall(
+      conversationId,
+      { id: 'brain-graph-after-cleanup', name: 'brain', arguments: { action: 'graph' } },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    const finalText = output.includes('removed')
+      ? `Brain cleaned up, sir. ${output.split('\n')[0]} The graph is refreshed — orphan command pages are gone.`
+      : `Brain vault is tidy, sir. ${output.split('\n')[0]}`;
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    void this.memory.logEvent(trigger, 'Brain cleanup');
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
   private async runBrainGraphOpen(
     conversationId: string,
     userText: string,
@@ -603,6 +707,8 @@ export class OrchestratorService {
     }
 
     emitter.onProgress?.({ stage: 'brain', message: 'Loading knowledge graph…', percent: 42, toolName: 'brain' });
+
+    void this.brain.cleanupVault();
 
     await this.executeToolCall(
       conversationId,

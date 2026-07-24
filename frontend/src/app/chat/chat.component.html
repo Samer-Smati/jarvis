@@ -101,6 +101,9 @@
             [pTooltip]="tool.output || argsPreview(tool.args)">
           </p-tag>
         </div>
+        <div class="message-images" *ngIf="message.images?.length">
+          <img *ngFor="let img of message.images" [src]="img.url" [alt]="img.name || 'Attached image'" />
+        </div>
         <div class="content">
           <span *ngIf="!message.content?.trim() && message.streaming" class="thinking">{{ message.statusHint || latestProgress(message)?.message || 'Working, sir…' }}</span>
           {{ message.content }}<span class="cursor" *ngIf="message.streaming && message.content?.trim()">▌</span>
@@ -135,7 +138,30 @@
     </div>
   </div>
 
-  <div class="composer hud-panel">
+  <div
+    class="composer hud-panel"
+    [class.drag-over]="composerDragOver"
+    (dragover)="onDragOver($event)"
+    (dragleave)="onDragLeave($event)"
+    (drop)="onDrop($event)">
+    <input #fileInput type="file" accept="image/*" multiple hidden (change)="onFileSelected($event)" />
+    <div class="pending-images" *ngIf="pendingImages.length">
+      <div class="pending-thumb" *ngFor="let img of pendingImages; let i = index">
+        <img [src]="img.url" [alt]="img.name || 'Pending image'" />
+        <button type="button" class="remove-image" (click)="removePendingImage(i)" title="Remove image">
+          <i class="pi pi-times"></i>
+        </button>
+      </div>
+    </div>
+    <div class="composer-row">
+    <button
+      type="button"
+      class="attach-btn"
+      (click)="openFilePicker()"
+      title="Attach image"
+      [disabled]="busy || pendingImages.length >= 4">
+      <i class="pi pi-image"></i>
+    </button>
     <button
       type="button"
       class="mic-btn"
@@ -151,10 +177,12 @@
       pTextarea
       [(ngModel)]="input"
       rows="1"
-      [placeholder]="transcribing ? 'Processing your speech...' : (listening ? 'Listening — speak in any language...' : 'Speak or type in any language...')"
-      (keydown.enter)="$event.preventDefault(); send()">
+      [placeholder]="transcribing ? 'Processing your speech...' : (listening ? 'Listening — speak in any language...' : 'Speak, type, paste, or drop images...')"
+      (keydown.enter)="$event.preventDefault(); send()"
+      (paste)="onPaste($event)">
     </textarea>
-    <p-button icon="pi pi-send" [disabled]="busy || !input.trim()" (onClick)="send()"></p-button>
+    <p-button icon="pi pi-send" [disabled]="busy || (!input.trim() && !pendingImages.length)" (onClick)="send()"></p-button>
+    </div>
   </div>
 
   <app-brain-graph *ngIf="showBrainGraph" [visible]="showBrainGraph"></app-brain-graph>

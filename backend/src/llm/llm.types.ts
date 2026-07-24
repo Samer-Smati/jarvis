@@ -1,8 +1,14 @@
 export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
 
+export interface ChatImagePart {
+  mimeType: string;
+  data: string;
+}
+
 export interface ChatMessage {
   role: ChatRole;
   content: string;
+  images?: ChatImagePart[];
   toolCallId?: string;
   toolName?: string;
   toolCalls?: ToolCall[];

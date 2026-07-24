@@ -589,6 +589,32 @@ ${content}`;
     return vaultGraph;
   }
 
+  async cleanupVault(): Promise<{ removed: string[]; kept: number }> {
+    const vault = await this.ensureLoaded();
+    const removed: string[] = [];
+
+    for (const [path, page] of Object.entries(vault.pages)) {
+      if (isProtectedBrainPage(page)) {
+        continue;
+      }
+      if (isGarbageBrainPage(page)) {
+        delete vault.pages[path];
+        removed.push(`${page.title} (${path})`);
+      }
+    }
+
+    if (removed.length) {
+      this.rebuildIndex(vault);
+      this.appendLog(vault, `cleanup: removed ${removed.length} low-quality page(s)`);
+      vault.updatedAt = new Date().toISOString();
+      this.repairVault(vault);
+      await this.persist(vault);
+      void this.pgStore.syncVault(vault);
+    }
+
+    return { removed, kept: Object.keys(vault.pages).length };
+  }
+
   private buildGraphFromVault(vault: BrainVault): BrainGraph {
     const pages = Object.values(vault.pages);
     const pathSet = new Set(pages.map((p) => p.path));
@@ -944,6 +970,72 @@ function summarizeFactTitle(fact: string): string {
     return words.length > 12 ? words.slice(0, 56) : 'User note';
   }
   return fact.slice(0, 56);
+}
+
+const KNOWN_CONCEPT_HUBS = new Set([
+  'LLM Wiki Pattern',
+  'Compounding Knowledge',
+  'Continuous Learning',
+  'Brain & Memory',
+  'UI & Frontend',
+  'Self Upgrade',
+  'AI Models',
+  'Personal Assistant',
+  'User Profile',
+  'Voice',
+  'Engineering',
+]);
+
+function isProtectedBrainPage(page: BrainPage): boolean {
+  if (page.path === JARVIS_ENTITY_PATH) {
+    return true;
+  }
+  if (page.category === 'entity' || page.category === 'source') {
+    return true;
+  }
+  if (page.category === 'session') {
+    return true;
+  }
+  if (page.category === 'concept' && KNOWN_CONCEPT_HUBS.has(page.title)) {
+    return true;
+  }
+  if (page.category === 'fact' && page.title === 'User is owner') {
+    return true;
+  }
+  return false;
+}
+
+function isGarbageBrainPage(page: BrainPage): boolean {
+  const title = page.title.trim();
+  if (page.category === 'fact') {
+    if (title.length > 55) {
+      return true;
+    }
+    if (/^(choose|implement|upgrade|show|so tell|just test|now i|this is my)/i.test(title)) {
+      return true;
+    }
+    if (/https?:\/\//.test(title)) {
+      return true;
+    }
+    if (title.split(/\s+/).length > 8) {
+      return true;
+    }
+    if (/recommand|recomand|porfolio/i.test(title)) {
+      return true;
+    }
+  }
+  if (page.category === 'concept') {
+    if (KNOWN_CONCEPT_HUBS.has(title)) {
+      return false;
+    }
+    if (title.split(/\s+/).length > 4) {
+      return true;
+    }
+    if (/recommand|recomand|porfolio|your owner make|tell more about|best improve/i.test(title)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function inferTopicTitle(text: string): string | null {

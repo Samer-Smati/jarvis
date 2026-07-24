@@ -4,12 +4,44 @@ import { GuardrailService } from '../guardrails/guardrail.service';
 import { OrchestratorEmitter } from '../orchestrator/orchestrator.events';
 import { OrchestratorService } from '../orchestrator/orchestrator.service';
 import { PermissionsService } from '../permissions/permissions.service';
+import type { ChatImagePart } from '../llm/llm.types';
 
 interface ChatStreamBody {
   conversationId?: string;
   text?: string;
   platform?: 'desktop' | 'web';
   history?: Array<{ role: string; content: string; createdAt?: string }>;
+  images?: ChatImagePart[];
+}
+
+const MAX_IMAGES = 4;
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+
+function sanitizeImages(raw: unknown): ChatImagePart[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const out: ChatImagePart[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+    const mimeType = String((item as ChatImagePart).mimeType ?? '').toLowerCase();
+    const data = String((item as ChatImagePart).data ?? '').replace(/\s/g, '');
+    if (!ALLOWED_IMAGE_TYPES.has(mimeType) || !data) {
+      continue;
+    }
+    const approxBytes = Math.ceil((data.length * 3) / 4);
+    if (approxBytes > MAX_IMAGE_BYTES) {
+      continue;
+    }
+    out.push({ mimeType, data });
+    if (out.length >= MAX_IMAGES) {
+      break;
+    }
+  }
+  return out;
 }
 
 @Controller('api/chat')
@@ -25,9 +57,10 @@ export class ChatSseController {
   @Post('stream')
   async stream(@Body() body: ChatStreamBody, @Res() res: Response): Promise<void> {
     const conversationId = body?.conversationId ?? 'default';
-    const text = body?.text?.trim();
-    if (!text) {
-      res.status(400).json({ message: 'text is required' });
+    const text = body?.text?.trim() ?? '';
+    const images = sanitizeImages(body?.images);
+    if (!text && !images.length) {
+      res.status(400).json({ message: 'text or images required' });
       return;
     }
 
@@ -75,6 +108,7 @@ export class ChatSseController {
       'chat',
       body?.platform === 'web' ? 'web' : 'desktop',
       body?.history,
+      images.length ? images : undefined,
     );
     const timeoutMs = process.env.VERCEL ? 290_000 : 120_000;
     try {

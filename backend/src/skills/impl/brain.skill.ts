@@ -17,9 +17,9 @@ export class BrainSkill implements Skill {
     properties: {
       action: {
         type: 'string',
-        enum: ['status', 'query', 'graph', 'remember', 'ingest', 'ingest_url', 'save_session', 'update_hot', 'get_page', 'link_user'],
+        enum: ['status', 'query', 'graph', 'remember', 'ingest', 'ingest_url', 'save_session', 'update_hot', 'get_page', 'link_user', 'cleanup'],
         description:
-          'status=brain overview; query=search vault; graph=open link graph UI; ingest_url=fetch a URL and file it; remember=store fact; ingest=add pasted text; save_session=file conversation; update_hot=refresh context; get_page=show markdown for a path; link_user=link user profile entity to JARVIS',
+          'status=brain overview; query=search vault; graph=open link graph UI; ingest_url=fetch a URL and file it; remember=store fact; ingest=add pasted text; save_session=file conversation; update_hot=refresh context; get_page=show markdown for a path; link_user=link user profile entity to JARVIS; cleanup=remove low-quality auto-learned pages',
       },
       url: { type: 'string', description: 'HTTP(S) URL for ingest_url.' },
       query: { type: 'string', description: 'Search text for query action.' },
@@ -182,6 +182,22 @@ export class BrainSkill implements Skill {
         return {
           success: true,
           output: `${output}\n\nBRAIN_GRAPH: ${graph.nodes.length} nodes, ${graph.edges.length} links.`,
+        };
+      }
+      case 'cleanup': {
+        const result = await this.brain.cleanupVault();
+        const graph = await this.brain.getGraph();
+        const removedList =
+          result.removed.length > 0
+            ? result.removed.map((r) => `- ${r}`).join('\n')
+            : 'No garbage pages found.';
+        return {
+          success: true,
+          output: [
+            `Brain cleanup complete — removed ${result.removed.length} page(s), ${result.kept} remain.`,
+            removedList,
+            `BRAIN_GRAPH: ${graph.nodes.length} nodes, ${graph.edges.length} links.`,
+          ].join('\n\n'),
         };
       }
       default:

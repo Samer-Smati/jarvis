@@ -5,12 +5,14 @@ import { pairwise } from 'rxjs/operators';
 import { ApiService } from '../core/api.service';
 import { ChatService } from '../core/chat.service';
 import { ConversationHistoryService } from '../core/conversation-history.service';
-import { ChatMessage, ConfirmationRequest, PermissionRequest, ProgressStep, ToolActivity } from '../core/models';
+import { ChatMessage, ChatImageAttachment, ChatImagePayload, ConfirmationRequest, PermissionRequest, ProgressStep, ToolActivity } from '../core/models';
 import { BrainGraphService, isBrainGraphRequest } from '../brain/brain-graph.service';
 import { VoiceService } from '../core/voice.service';
 
 const CONVERSATION_ID = 'default';
 const RECAP_SESSION_KEY = 'jarvis.recapDone';
+const MAX_IMAGES = 4;
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
 @Component({
   selector: 'app-chat',
@@ -21,8 +23,12 @@ const RECAP_SESSION_KEY = 'jarvis.recapDone';
 })
 export class ChatComponent implements OnInit, OnDestroy {
   @ViewChild('scrollPane') scrollPane?: ElementRef<HTMLElement>;
+  @ViewChild('fileInput') fileInput?: ElementRef<HTMLInputElement>;
 
   messages: ChatMessage[] = [];
+  pendingImages: ChatImageAttachment[] = [];
+  composerDragOver = false;
+  private pendingImageFiles = new Map<string, File>();
   confirmations: ConfirmationRequest[] = [];
   permissionRequests: PermissionRequest[] = [];
   input = '';
@@ -330,7 +336,7 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   send(): void {
     const text = this.input.trim();
-    if (!text || this.busy) {
+    if ((!text && !this.pendingImages.length) || this.busy) {
       return;
     }
     if (isBrainGraphRequest(text)) {
@@ -339,17 +345,161 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.voice.stopSpeaking();
     this.voice.stopListening();
     this.voice.speakStreamReset();
-    this.messages.push({ role: 'user', content: text, createdAt: new Date().toISOString() });
+    const images = [...this.pendingImages];
+    this.messages.push({
+      role: 'user',
+      content: text,
+      images: images.length ? images : undefined,
+      createdAt: new Date().toISOString(),
+    });
     this.messages.push({ role: 'assistant', content: '', streaming: true, tools: [] });
     this.persistConversation();
     this.busy = true;
     this.input = '';
+    this.pendingImages = [];
+    this.pendingImageFiles.clear();
     this.scrollToBottom();
     this.cdr.markForCheck();
     const history = this.historyStore.toPersisted(
-      this.messages.slice(0, -2).filter((m) => !m.streaming && m.content?.trim()),
+      this.messages.slice(0, -2).filter((m) => !m.streaming && (m.content?.trim() || m.images?.length)),
     );
-    this.chat.sendMessage(CONVERSATION_ID, text, history);
+    void this.sendWithImages(text, history, images);
+  }
+
+  private async sendWithImages(
+    text: string,
+    history: Array<{ role: string; content: string; createdAt?: string }>,
+    images: ChatImageAttachment[],
+  ): Promise<void> {
+    const payloads: ChatImagePayload[] = [];
+    for (const image of images.slice(0, MAX_IMAGES)) {
+      const payload = await this.imageAttachmentToPayload(image);
+      if (payload) {
+        payloads.push(payload);
+      }
+    }
+    this.chat.sendMessage(CONVERSATION_ID, text, history, payloads.length ? payloads : undefined);
+  }
+
+  onFileSelected(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const files = input.files;
+    if (files?.length) {
+      void this.addImageFiles(Array.from(files));
+    }
+    input.value = '';
+  }
+
+  onPaste(event: ClipboardEvent): void {
+    const items = event.clipboardData?.items;
+    if (!items?.length) {
+      return;
+    }
+    const files: File[] = [];
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          files.push(file);
+        }
+      }
+    }
+    if (files.length) {
+      event.preventDefault();
+      void this.addImageFiles(files);
+    }
+  }
+
+  onDragOver(event: DragEvent): void {
+    event.preventDefault();
+    this.composerDragOver = true;
+    this.cdr.markForCheck();
+  }
+
+  onDragLeave(event: DragEvent): void {
+    event.preventDefault();
+    this.composerDragOver = false;
+    this.cdr.markForCheck();
+  }
+
+  onDrop(event: DragEvent): void {
+    event.preventDefault();
+    this.composerDragOver = false;
+    const files = event.dataTransfer?.files;
+    if (files?.length) {
+      void this.addImageFiles(Array.from(files).filter((f) => f.type.startsWith('image/')));
+    }
+    this.cdr.markForCheck();
+  }
+
+  openFilePicker(): void {
+    this.fileInput?.nativeElement?.click();
+  }
+
+  removePendingImage(index: number): void {
+    const removed = this.pendingImages[index];
+    if (removed?.url.startsWith('blob:')) {
+      this.pendingImageFiles.delete(removed.url);
+      URL.revokeObjectURL(removed.url);
+    }
+    this.pendingImages = this.pendingImages.filter((_, i) => i !== index);
+    this.cdr.markForCheck();
+  }
+
+  private async addImageFiles(files: File[]): Promise<void> {
+    for (const file of files) {
+      if (!file.type.startsWith('image/') || file.size > MAX_IMAGE_BYTES) {
+        this.toast.add({
+          severity: 'warn',
+          summary: 'Image skipped',
+          detail: file.size > MAX_IMAGE_BYTES ? 'Max 4 MB per image.' : 'Images only.',
+        });
+        continue;
+      }
+      if (this.pendingImages.length >= MAX_IMAGES) {
+        this.toast.add({ severity: 'warn', summary: 'Limit reached', detail: `Max ${MAX_IMAGES} images per message.` });
+        break;
+      }
+      const url = URL.createObjectURL(file);
+      this.pendingImageFiles.set(url, file);
+      this.pendingImages = [...this.pendingImages, { url, name: file.name, mimeType: file.type }];
+    }
+    this.cdr.markForCheck();
+  }
+
+  private async imageAttachmentToPayload(image: ChatImageAttachment): Promise<ChatImagePayload | null> {
+    const mimeType = image.mimeType ?? 'image/png';
+    try {
+      const file = this.pendingImageFiles.get(image.url);
+      if (file) {
+        const data = await this.fileToBase64(file);
+        return { mimeType: file.type || mimeType, data };
+      }
+      if (image.url.startsWith('data:')) {
+        const match = image.url.match(/^data:([^;]+);base64,(.+)$/);
+        if (match?.[1] && match[2]) {
+          return { mimeType: match[1], data: match[2] };
+        }
+      }
+      const blob = await fetch(image.url).then((r) => r.blob());
+      const data = await this.fileToBase64(blob);
+      return { mimeType: blob.type || mimeType, data };
+    } catch {
+      return null;
+    }
+  }
+
+  private fileToBase64(file: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result ?? '');
+        const base64 = result.includes(',') ? result.split(',')[1] : result;
+        resolve(base64);
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
   }
 
   openBrainGraph(): void {
