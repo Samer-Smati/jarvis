@@ -6,6 +6,9 @@ import { AppModule } from './app.module';
 import { resolveServerlessLlmProvider } from './llm/llm-provider.util';
 
 const server = express();
+const JSON_BODY_LIMIT = '4mb';
+server.use(express.json({ limit: JSON_BODY_LIMIT }));
+server.use(express.urlencoded({ extended: true, limit: JSON_BODY_LIMIT }));
 let ready: Promise<express.Express> | null = null;
 
 function bootstrap(): Promise<express.Express> {
@@ -34,6 +37,7 @@ function bootstrap(): Promise<express.Express> {
 
       const nest = await NestFactory.create(AppModule, new ExpressAdapter(server), {
         logger: ['error', 'warn', 'log'],
+        bodyParser: false,
       });
       nest.enableCors({ origin: true, credentials: true });
       await nest.init();

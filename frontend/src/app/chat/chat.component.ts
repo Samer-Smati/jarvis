@@ -8,11 +8,12 @@ import { ConversationHistoryService } from '../core/conversation-history.service
 import { ChatMessage, ChatImageAttachment, ChatImagePayload, ConfirmationRequest, PermissionRequest, ProgressStep, ToolActivity } from '../core/models';
 import { BrainGraphService, isBrainGraphRequest } from '../brain/brain-graph.service';
 import { VoiceService } from '../core/voice.service';
+import { compressImageForChat } from '../core/image-compress.util';
 
 const CONVERSATION_ID = 'default';
 const RECAP_SESSION_KEY = 'jarvis.recapDone';
 const MAX_IMAGES = 4;
-const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 900_000;
 
 @Component({
   selector: 'app-chat',
@@ -447,12 +448,13 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   private async addImageFiles(files: File[]): Promise<void> {
-    for (const file of files) {
+    for (const raw of files) {
+      const file = await compressImageForChat(raw);
       if (!file.type.startsWith('image/') || file.size > MAX_IMAGE_BYTES) {
         this.toast.add({
           severity: 'warn',
           summary: 'Image skipped',
-          detail: file.size > MAX_IMAGE_BYTES ? 'Max 4 MB per image.' : 'Images only.',
+          detail: file.size > MAX_IMAGE_BYTES ? 'Image too large after compression (max ~900 KB).' : 'Images only.',
         });
         continue;
       }

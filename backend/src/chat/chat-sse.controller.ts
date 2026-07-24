@@ -15,7 +15,7 @@ interface ChatStreamBody {
 }
 
 const MAX_IMAGES = 4;
-const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 900_000;
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
 function sanitizeImages(raw: unknown): ChatImagePart[] {

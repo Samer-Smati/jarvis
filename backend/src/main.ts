@@ -2,7 +2,10 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import express from 'express';
 import { AppModule } from './app.module';
+
+const JSON_BODY_LIMIT = '4mb';
 
 const logger = new Logger('Bootstrap');
 
@@ -33,7 +36,9 @@ async function bootstrap() {
     }
   }
 
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
+  app.use(express.json({ limit: JSON_BODY_LIMIT }));
+  app.use(express.urlencoded({ extended: true, limit: JSON_BODY_LIMIT }));
   app.enableCors({
     origin: process.env.CORS_ORIGIN ?? ['http://localhost:4200', 'http://localhost:3847'],
   });

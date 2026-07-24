@@ -177,8 +177,12 @@ export class ChatService {
         body: JSON.stringify({ conversationId, text, platform: clientPlatform(), history, images }),
       });
       if (!res.ok || !res.body) {
+        const detail =
+          res.status === 413
+            ? 'Image too large for cloud upload — try a smaller screenshot or one image at a time.'
+            : `Chat failed (${res.status})`;
         this.zone.run(() =>
-          this.errorSubject.next({ conversationId, message: `Chat failed (${res.status})` }),
+          this.errorSubject.next({ conversationId, message: detail }),
         );
         return;
       }
