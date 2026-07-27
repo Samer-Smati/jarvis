@@ -1,4 +1,5 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { dateTimeColumnType } from '../../database/database.util';
 
 @Entity('reminders')
 @Index(['fired', 'dueAt'])
@@ -9,7 +10,7 @@ export class ReminderEntity {
   @Column()
   text: string;
 
-  @Column({ type: 'timestamp' })
+  @Column({ type: dateTimeColumnType() })
   dueAt: Date;
 
   @Column({ default: false })

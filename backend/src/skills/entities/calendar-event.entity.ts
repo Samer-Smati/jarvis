@@ -1,4 +1,5 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { dateTimeColumnType } from '../../database/database.util';
 
 @Entity('calendar_events')
 export class CalendarEventEntity {
@@ -9,10 +10,10 @@ export class CalendarEventEntity {
   title: string;
 
   @Index()
-  @Column({ type: 'timestamp' })
+  @Column({ type: dateTimeColumnType() })
   startAt: Date;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: dateTimeColumnType(), nullable: true })
   endAt?: Date;
 
   @Column({ nullable: true })

@@ -1,4 +1,5 @@
 import { Column, Entity, PrimaryColumn, UpdateDateColumn } from 'typeorm';
+import { dateTimeColumnType } from '../../database/database.util';
 
 @Entity('brain_pages')
 export class BrainPageEntity {
@@ -17,9 +18,9 @@ export class BrainPageEntity {
   @Column({ type: 'simple-json', default: '[]' })
   links: string[];
 
-  @Column({ type: 'timestamp' })
+  @Column({ type: dateTimeColumnType() })
   createdAt: Date;
 
-  @UpdateDateColumn({ type: 'timestamp' })
+  @UpdateDateColumn({ type: dateTimeColumnType() })
   updatedAt: Date;
 }

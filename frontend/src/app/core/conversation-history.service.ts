@@ -38,10 +38,25 @@ export class ConversationHistoryService {
         createdAt: m.createdAt,
       }));
 
-    if (apiMapped.length >= local.length) {
-      return apiMapped;
+    // Union both sources so a new day / empty API sync never drops older local turns.
+    const seen = new Set<string>();
+    const merged: PersistedMessage[] = [];
+    for (const message of [...apiMapped, ...local]) {
+      const key = `${message.role}\0${message.content.trim()}`;
+      if (!message.content?.trim() || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      merged.push(message);
     }
-    return local;
+
+    merged.sort((a, b) => {
+      const aTime = Date.parse(a.createdAt) || 0;
+      const bTime = Date.parse(b.createdAt) || 0;
+      return aTime - bTime;
+    });
+
+    return merged.slice(-MAX_STORED);
   }
 
   toPersisted(messages: Array<{ role: 'user' | 'assistant'; content: string; createdAt?: string }>): PersistedMessage[] {

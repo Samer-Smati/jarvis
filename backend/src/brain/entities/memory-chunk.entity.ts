@@ -1,4 +1,5 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { dateTimeColumnType } from '../../database/database.util';
 
 @Entity('memory_chunks')
 export class MemoryChunkEntity {
@@ -18,6 +19,6 @@ export class MemoryChunkEntity {
   @Column({ type: 'text', nullable: true })
   embeddingJson?: string;
 
-  @CreateDateColumn({ type: 'timestamp' })
+  @CreateDateColumn({ type: dateTimeColumnType() })
   createdAt: Date;
 }

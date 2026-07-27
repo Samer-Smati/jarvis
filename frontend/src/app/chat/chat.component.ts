@@ -24,6 +24,7 @@ const MAX_IMAGE_BYTES = 900_000;
 })
 export class ChatComponent implements OnInit, OnDestroy {
   @ViewChild('scrollPane') scrollPane?: ElementRef<HTMLElement>;
+  @ViewChild('bottomAnchor') bottomAnchor?: ElementRef<HTMLElement>;
   @ViewChild('fileInput') fileInput?: ElementRef<HTMLInputElement>;
 
   messages: ChatMessage[] = [];
@@ -271,6 +272,8 @@ export class ChatComponent implements OnInit, OnDestroy {
         current.content = event.message || 'Something went wrong, sir.';
         current.streaming = false;
         this.busy = false;
+        this.persistConversation();
+        this.scrollToBottom();
         this.cdr.markForCheck();
         this.toast.add({ severity: 'error', summary: 'JARVIS', detail: event.message });
       }),
@@ -329,10 +332,26 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   private scrollToBottom(): void {
-    if (this.scrollPane?.nativeElement) {
-      const el = this.scrollPane.nativeElement;
-      el.scrollTop = el.scrollHeight;
-    }
+    const run = (): void => {
+      const anchor = this.bottomAnchor?.nativeElement;
+      if (anchor) {
+        anchor.scrollIntoView({ block: 'end', behavior: 'auto' });
+        return;
+      }
+      const el = this.scrollPane?.nativeElement;
+      if (el) {
+        el.scrollTop = el.scrollHeight;
+      }
+    };
+    // OnPush: wait until Angular paints new bubbles, then pin to latest message.
+    this.zone.runOutsideAngular(() => {
+      queueMicrotask(() => {
+        requestAnimationFrame(() => {
+          run();
+          requestAnimationFrame(run);
+        });
+      });
+    });
   }
 
   send(): void {
@@ -359,8 +378,8 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.input = '';
     this.pendingImages = [];
     this.pendingImageFiles.clear();
-    this.scrollToBottom();
     this.cdr.markForCheck();
+    this.scrollToBottom();
     const history = this.historyStore.toPersisted(
       this.messages.slice(0, -2).filter((m) => !m.streaming && (m.content?.trim() || m.images?.length)),
     );
@@ -658,8 +677,11 @@ export class ChatComponent implements OnInit, OnDestroy {
             error: () => undefined,
           });
         }
-        this.scrollToBottom();
         this.cdr.markForCheck();
+        this.scrollToBottom();
+        // History can paint late (recap panel + long list) — pin again after layout.
+        setTimeout(() => this.scrollToBottom(), 50);
+        setTimeout(() => this.scrollToBottom(), 250);
         if (this.messages.length) {
           this.maybeRecap();
         } else {
@@ -673,8 +695,10 @@ export class ChatComponent implements OnInit, OnDestroy {
             content: m.content,
             createdAt: m.createdAt,
           }));
-          this.scrollToBottom();
           this.cdr.markForCheck();
+          this.scrollToBottom();
+          setTimeout(() => this.scrollToBottom(), 50);
+          setTimeout(() => this.scrollToBottom(), 250);
           this.maybeRecap();
           return;
         }
