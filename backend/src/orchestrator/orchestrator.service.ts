@@ -15,7 +15,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isBrainGraphRequest, isBrainCleanupRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning } from './fast-chat.util';
+import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning } from './fast-chat.util';
 
 const MAX_TOOL_ITERATIONS = 8;
 const SERVERLESS_MAX_TOOL_ITERATIONS = 6;
@@ -109,6 +109,19 @@ export class OrchestratorService {
 
       if (isBrainCleanupRequest(userText)) {
         const handled = await this.runBrainCleanup(
+          conversationId,
+          userText,
+          emitter,
+          trigger,
+          clientPlatform,
+        );
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isBrainConsolidateRequest(userText)) {
+        const handled = await this.runBrainConsolidate(
           conversationId,
           userText,
           emitter,
@@ -217,6 +230,9 @@ export class OrchestratorService {
       }
       if (isBrainGraphRequest(userText)) {
         systemPrompt += `\n\nThe user wants to SEE the brain link graph. Call brain with action=graph ONCE — that opens the live graph UI. Briefly describe node/link counts from the tool output. Do not only describe links in prose.`;
+      }
+      if (isBrainConsolidateRequest(userText)) {
+        systemPrompt += `\n\nThe user wants brain pages LINKED for real. Call brain action=consolidate ONCE (writes [[wiki]] edges), then briefly report how many new links were created from the tool output. Do not only describe linking in prose.`;
       }
       if (isSelfImproveSkillSourceRequest(userText)) {
         systemPrompt += `\n\nThe user wants to upgrade the self_improve SKILL SOURCE FILE. It IS in the repo at backend/src/skills/impl/self-improve.skill.ts — NOT a hidden runtime tool. Workflow: self_improve inspect path=backend/src/skills/impl/self-improve.skill.ts mode=read → write that path → pull_request. Do NOT inspect "." or scripts/ instead. NEVER say the skill is built-in or unmodifiable.`;
@@ -688,6 +704,57 @@ export class OrchestratorService {
 
     await this.memory.appendMessage(conversationId, 'assistant', finalText);
     void this.memory.logEvent(trigger, 'Brain cleanup');
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runBrainConsolidate(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+    clientPlatform: 'desktop' | 'web',
+  ): Promise<boolean> {
+    const skill = this.skills.get('brain');
+    if (!skill) {
+      return false;
+    }
+
+    emitter.onProgress?.({
+      stage: 'brain',
+      message: 'Scanning nodes and writing graph links…',
+      percent: 36,
+      toolName: 'brain',
+    });
+
+    const output = await this.executeToolCall(
+      conversationId,
+      { id: 'brain-consolidate', name: 'brain', arguments: { action: 'consolidate' } },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    await this.executeToolCall(
+      conversationId,
+      { id: 'brain-graph-after-consolidate', name: 'brain', arguments: { action: 'graph' } },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    const graph = await this.brain.getGraph();
+    const linkedMatch = output.match(/(\d+)\s+new pairs/i);
+    const linked = linkedMatch?.[1] ?? '0';
+    const finalText =
+      `Relational mapping complete, sir — wrote ${linked} new link pair(s). ` +
+      `Graph now has ${graph.nodes.length} notes and ${graph.edges.length} links. ` +
+      `Refresh the graph panel if it was already open.`;
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    this.persistTurnLearning(userText, finalText);
+    void this.memory.logEvent(trigger, 'Brain consolidate links');
     emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
     emitter.onDone(finalText);
     return true;

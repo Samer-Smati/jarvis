@@ -196,12 +196,79 @@ export class BrainPgStore {
   private buildGraphFromVault(vault: BrainVault): BrainGraph {
     const pages = Object.values(vault.pages);
     const pathSet = new Set(pages.map((p) => p.path));
-    const edges: BrainGraphEdge[] = [];
-    const edgeKeys = new Set<string>();
+    const pathByTitle = new Map<string, string>();
+    const pathBySlug = new Map<string, string>();
 
     for (const page of pages) {
-      for (const target of page.links) {
-        if (!pathSet.has(target) || target === page.path) {
+      pathByTitle.set(page.title.toLowerCase(), page.path);
+      const slug = page.title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 64) || 'note';
+      pathBySlug.set(slug, page.path);
+      pathBySlug.set(page.path.toLowerCase(), page.path);
+      const base = page.path.split('/').pop() ?? '';
+      if (base) {
+        pathBySlug.set(base.toLowerCase(), page.path);
+        pathBySlug.set(base.replace(/\.md$/i, '').toLowerCase(), page.path);
+      }
+    }
+
+    const resolve = (raw: string): string | null => {
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        return null;
+      }
+      if (pathSet.has(trimmed)) {
+        return trimmed;
+      }
+      const lower = trimmed.toLowerCase();
+      if (pathByTitle.has(lower)) {
+        return pathByTitle.get(lower)!;
+      }
+      const slug =
+        trimmed
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+          .slice(0, 64) || 'note';
+      if (pathBySlug.has(slug)) {
+        return pathBySlug.get(slug)!;
+      }
+      if (pathBySlug.has(`${slug}.md`)) {
+        return pathBySlug.get(`${slug}.md`)!;
+      }
+      for (const folder of ['concepts', 'facts', 'entities', 'sources', 'sessions']) {
+        const candidate = `${folder}/${slug}.md`;
+        if (pathSet.has(candidate)) {
+          return candidate;
+        }
+      }
+      return null;
+    };
+
+    const edges: BrainGraphEdge[] = [];
+    const edgeKeys = new Set<string>();
+    const linkCounts = new Map<string, number>();
+    const bump = (id: string) => linkCounts.set(id, (linkCounts.get(id) ?? 0) + 1);
+
+    for (const page of pages) {
+      const targets = new Set<string>();
+      for (const raw of page.links) {
+        const resolved = resolve(raw);
+        if (resolved) {
+          targets.add(resolved);
+        }
+      }
+      for (const match of page.content.matchAll(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g)) {
+        const resolved = resolve(match[1]);
+        if (resolved) {
+          targets.add(resolved);
+        }
+      }
+      for (const target of targets) {
+        if (target === page.path) {
           continue;
         }
         const key = [page.path, target].sort().join('|');
@@ -210,11 +277,18 @@ export class BrainPgStore {
         }
         edgeKeys.add(key);
         edges.push({ source: page.path, target, kind: 'link' });
+        bump(page.path);
+        bump(target);
       }
     }
 
     return {
-      nodes: pages.map((p) => ({ id: p.path, label: p.title, category: p.category, linkCount: 0 })),
+      nodes: pages.map((p) => ({
+        id: p.path,
+        label: p.title,
+        category: p.category,
+        linkCount: linkCounts.get(p.path) ?? 0,
+      })),
       edges,
       updatedAt: vault.updatedAt,
     };

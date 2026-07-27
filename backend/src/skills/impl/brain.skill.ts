@@ -10,16 +10,31 @@ export class BrainSkill implements Skill {
     'JARVIS persistent second brain (LLM Wiki / claude-obsidian pattern). ' +
     'Stores linked Markdown knowledge: hot cache, index, concepts, entities, sources, sessions. ' +
     'Use ingest_url when the user sends a link — fetches the page and files it in the brain. ' +
-    'Use query, remember, ingest, save_session, update_hot, graph as needed.';
+    'Use consolidate when the user asks to scan/link/connect nodes — that WRITES real graph edges. ' +
+    'Use query, remember, ingest, save_session, update_hot, graph, link_pages as needed.';
   readonly requiresConfirmation = false;
   readonly parameters = {
     type: 'object',
     properties: {
       action: {
         type: 'string',
-        enum: ['status', 'query', 'graph', 'remember', 'ingest', 'ingest_url', 'save_session', 'update_hot', 'get_page', 'link_user', 'cleanup'],
+        enum: [
+          'status',
+          'query',
+          'graph',
+          'remember',
+          'ingest',
+          'ingest_url',
+          'save_session',
+          'update_hot',
+          'get_page',
+          'link_user',
+          'link_pages',
+          'consolidate',
+          'cleanup',
+        ],
         description:
-          'status=brain overview; query=search vault; graph=open link graph UI; ingest_url=fetch a URL and file it; remember=store fact; ingest=add pasted text; save_session=file conversation; update_hot=refresh context; get_page=show markdown for a path; link_user=link user profile entity to JARVIS; cleanup=remove low-quality auto-learned pages',
+          'status=brain overview; query=search vault; graph=open link graph UI (read-only); ingest_url=fetch a URL and file it; remember=store fact; ingest=add pasted text; save_session=file conversation; update_hot=refresh context; get_page=show markdown for a path; link_user=link user profile entity to JARVIS; link_pages=create an edge between two pages (by title or path); consolidate=scan all pages, identify logical connections, and WRITE wiki links; cleanup=remove low-quality auto-learned pages',
       },
       url: { type: 'string', description: 'HTTP(S) URL for ingest_url.' },
       query: { type: 'string', description: 'Search text for query action.' },
@@ -37,6 +52,18 @@ export class BrainSkill implements Skill {
       },
       source_type: { type: 'string', description: 'Source label for ingest (e.g. url, note, doc).' },
       path: { type: 'string', description: 'Brain page path for get_page (e.g. entities/samer-smati.md).' },
+      from_path: {
+        type: 'string',
+        description: 'Source page title or path for link_pages (e.g. "LLM Wiki Pattern" or concepts/llm-wiki-pattern.md).',
+      },
+      to_path: {
+        type: 'string',
+        description: 'Target page title or path for link_pages.',
+      },
+      bidirectional: {
+        type: 'boolean',
+        description: 'For link_pages — link both directions (default true).',
+      },
     },
     required: ['action'],
   };
@@ -182,6 +209,40 @@ export class BrainSkill implements Skill {
         return {
           success: true,
           output: `${output}\n\nBRAIN_GRAPH: ${graph.nodes.length} nodes, ${graph.edges.length} links.`,
+        };
+      }
+      case 'link_pages': {
+        const fromPath = String(args?.from_path ?? args?.from ?? '').trim();
+        const toPath = String(args?.to_path ?? args?.to ?? '').trim();
+        if (!fromPath || !toPath) {
+          return { success: false, output: '"from_path" and "to_path" (titles or paths) are required for link_pages.' };
+        }
+        const bidirectional = args?.bidirectional !== false;
+        const output = await this.brain.linkPagesByRef(fromPath, toPath, bidirectional);
+        const graph = await this.brain.getGraph();
+        const ok = output.startsWith('Linked');
+        return {
+          success: ok,
+          output: `${output}\n\nBRAIN_GRAPH: ${graph.nodes.length} nodes, ${graph.edges.length} links.`,
+        };
+      }
+      case 'consolidate': {
+        const result = await this.brain.consolidateLinks();
+        const pairLines =
+          result.pairs.length > 0
+            ? result.pairs.slice(0, 40).map((p) => `- ${p}`).join('\n')
+            : 'No new pairs — pages may already be linked or lack overlapping topics.';
+        return {
+          success: true,
+          output: [
+            `BRAIN_GRAPH: Consolidated knowledge graph — ${result.nodeCount} nodes, ${result.edgeCount} links (${result.linked} new pairs).`,
+            '',
+            'New links:',
+            pairLines,
+            result.pairs.length > 40 ? `…and ${result.pairs.length - 40} more.` : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
         };
       }
       case 'cleanup': {

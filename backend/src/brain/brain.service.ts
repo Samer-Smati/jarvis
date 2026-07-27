@@ -64,7 +64,7 @@ export class BrainService implements OnModuleInit {
       'Hot cache preview:',
       vault.hot.slice(0, 400) + (vault.hot.length > 400 ? '…' : ''),
       '',
-      'Use brain skill: query, remember, ingest, ingest_url, save_session, update_hot. Every conversation turn is auto-filed into the brain.',
+      'Use brain skill: query, remember, ingest, ingest_url, save_session, update_hot, consolidate, link_pages. Every conversation turn is auto-filed into the brain.',
     );
     return lines.join('\n');
   }
@@ -286,6 +286,104 @@ ${content}`;
     this.linkPagesInVault(vault, fromPath, toPath, bidirectional);
     this.rebuildIndex(vault);
     await this.persist(vault);
+  }
+
+  async linkPagesByRef(fromRef: string, toRef: string, bidirectional = true): Promise<string> {
+    const vault = await this.ensureLoaded();
+    const fromPath = this.resolvePageRef(vault, fromRef);
+    const toPath = this.resolvePageRef(vault, toRef);
+    if (!fromPath || !toPath) {
+      const missing = [!fromPath ? fromRef : null, !toPath ? toRef : null].filter(Boolean).join(', ');
+      return `Could not find brain page(s): ${missing}`;
+    }
+    if (fromPath === toPath) {
+      return 'Cannot link a page to itself.';
+    }
+    this.linkPagesInVault(vault, fromPath, toPath, bidirectional);
+    this.rebuildIndex(vault);
+    this.appendLog(vault, `link: ${fromPath} ↔ ${toPath}`);
+    await this.persist(vault);
+    const from = vault.pages[fromPath];
+    const to = vault.pages[toPath];
+    return `Linked [[${from?.title ?? fromPath}]] ↔ [[${to?.title ?? toPath}]] in the brain graph.`;
+  }
+
+  /**
+   * Scan all vault pages and create wiki edges between logically related notes
+   * (shared title/content tokens, known topic hubs). Persists and syncs PG.
+   */
+  async consolidateLinks(): Promise<{ linked: number; pairs: string[]; edgeCount: number; nodeCount: number }> {
+    const vault = await this.ensureLoaded();
+    const pages = Object.values(vault.pages);
+    const stop = CONSOLIDATE_STOPWORDS;
+    const tokensByPath = new Map<string, Set<string>>();
+
+    for (const page of pages) {
+      const tokens = tokenize(`${page.title} ${page.content.slice(0, 900)}`).filter(
+        (t) => t.length > 3 && !stop.has(t),
+      );
+      tokensByPath.set(page.path, new Set(tokens));
+    }
+
+    const before = this.buildGraphFromVault(vault).edges.length;
+    const pairs: string[] = [];
+    const maxNew = Math.min(120, Math.max(24, pages.length * 3));
+
+    for (let i = 0; i < pages.length; i++) {
+      for (let j = i + 1; j < pages.length; j++) {
+        if (pairs.length >= maxNew) {
+          break;
+        }
+        const a = pages[i];
+        const b = pages[j];
+        if (a.links.includes(b.path) || b.links.includes(a.path)) {
+          continue;
+        }
+        if (!pagesAreRelated(a, b, tokensByPath.get(a.path)!, tokensByPath.get(b.path)!)) {
+          continue;
+        }
+        this.linkPagesInVault(vault, a.path, b.path, true);
+        pairs.push(`${a.title} ↔ ${b.title}`);
+      }
+    }
+
+    if (pairs.length) {
+      this.rebuildIndex(vault);
+      this.appendLog(vault, `consolidate: linked ${pairs.length} pair(s) (was ${before} edges)`);
+      await this.persist(vault);
+    }
+
+    const graph = this.buildGraphFromVault(vault);
+    return {
+      linked: pairs.length,
+      pairs,
+      edgeCount: graph.edges.length,
+      nodeCount: graph.nodes.length,
+    };
+  }
+
+  private resolvePageRef(vault: BrainVault, ref: string): string | null {
+    const trimmed = ref.trim();
+    if (!trimmed) {
+      return null;
+    }
+    if (vault.pages[trimmed]) {
+      return trimmed;
+    }
+    const pages = Object.values(vault.pages);
+    const pathSet = new Set(pages.map((p) => p.path));
+    const pathByTitle = new Map<string, string>();
+    const pathBySlug = new Map<string, string>();
+    for (const page of pages) {
+      pathByTitle.set(page.title.toLowerCase(), page.path);
+      pathBySlug.set(slugify(page.title), page.path);
+      const base = page.path.split('/').pop() ?? '';
+      if (base) {
+        pathBySlug.set(base.toLowerCase(), page.path);
+        pathBySlug.set(base.replace(/\.md$/i, '').toLowerCase(), page.path);
+      }
+    }
+    return resolveBrainLink(trimmed, pathByTitle, pathBySlug, pathSet);
   }
 
   private shouldLinkToJarvis(title: string, content: string, category: BrainCategory): boolean {
@@ -583,7 +681,12 @@ ${content}`;
     const pgGraph = await this.pgStore.loadGraph();
     const vault = await this.ensureLoaded();
     const vaultGraph = this.buildGraphFromVault(vault);
-    if (pgGraph && pgGraph.nodes.length >= vaultGraph.nodes.length) {
+    // Prefer PG only when it has at least as many edges — weak PG sync must not hide vault wiki links.
+    if (
+      pgGraph &&
+      pgGraph.nodes.length >= vaultGraph.nodes.length &&
+      pgGraph.edges.length >= vaultGraph.edges.length
+    ) {
       return pgGraph;
     }
     return vaultGraph;
@@ -1069,9 +1172,101 @@ function tokenize(text: string): string[] {
 }
 
 function extractWikiLinks(content: string): string[] {
-  const matches = content.matchAll(/\[\[([^\]]+)\]\]/g);
-  return [...matches].map((m) => slugify(m[1]) + '.md');
+  const matches = content.matchAll(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g);
+  return [...new Set([...matches].map((m) => {
+    const title = m[1].trim();
+    return title.includes('/') ? title : `${slugify(title)}.md`;
+  }))];
 }
+
+const CONSOLIDATE_STOPWORDS = new Set([
+  'this',
+  'that',
+  'with',
+  'from',
+  'your',
+  'have',
+  'will',
+  'about',
+  'into',
+  'more',
+  'than',
+  'then',
+  'them',
+  'they',
+  'what',
+  'when',
+  'where',
+  'which',
+  'while',
+  'make',
+  'made',
+  'just',
+  'only',
+  'also',
+  'some',
+  'such',
+  'like',
+  'want',
+  'need',
+  'tell',
+  'know',
+  'page',
+  'note',
+  'related',
+  'conversation',
+  'https',
+  'http',
+  'www',
+]);
+
+function pagesAreRelated(
+  a: BrainPage,
+  b: BrainPage,
+  tokensA: Set<string>,
+  tokensB: Set<string>,
+): boolean {
+  if (sameTopicHub(a.title, b.title) || sameTopicHub(a.title, b.content) || sameTopicHub(b.title, a.content)) {
+    return true;
+  }
+
+  const titleA = tokenize(a.title).filter((t) => t.length > 3 && !CONSOLIDATE_STOPWORDS.has(t));
+  const titleB = tokenize(b.title).filter((t) => t.length > 3 && !CONSOLIDATE_STOPWORDS.has(t));
+  const titleOverlap = titleA.filter((t) => titleB.includes(t)).length;
+  if (titleOverlap >= 1 && (titleA.length <= 3 || titleB.length <= 3 || titleOverlap >= 2)) {
+    return true;
+  }
+
+  let shared = 0;
+  for (const t of tokensA) {
+    if (tokensB.has(t)) {
+      shared += 1;
+      if (shared >= 2) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function sameTopicHub(left: string, right: string): boolean {
+  const L = left.toLowerCase();
+  const R = right.toLowerCase();
+  for (const pattern of TOPIC_HUB_PATTERNS) {
+    if (pattern.test(L) && pattern.test(R)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+const TOPIC_HUB_PATTERNS: RegExp[] = [
+  /hugging\s*face|\bllm\b|\bmodels?\b|wiki pattern/,
+  /recommend|recommand|improve|upgrade|self\s*upgrade|continuous\s*learn|skills?/,
+  /brain|memory|compounding\s*knowledge|wiki/,
+  /ui|frontend|interface|design/,
+  /\bjarvis\b|personal\s*assistant|owner|portfolio|profile/,
+];
 
 function excerpt(content: string, terms: string[], maxLen: number): string {
   const lower = content.toLowerCase();

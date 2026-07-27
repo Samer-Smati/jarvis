@@ -29,9 +29,37 @@ export function isSelfImproveInfoQuery(text: string): boolean {
 
 export function isBrainGraphRequest(text: string): boolean {
   const t = text.trim();
-  return /\b(graph|knowledge graph|mind map|link map|connections|what(?:'s| is) linked|show.*(?:graph|links|brain)|visuali[sz]e.*(?:brain|graph)|brain map|my brain)\b/i.test(
+  if (isBrainConsolidateRequest(t)) {
+    return false;
+  }
+  return /\b(graph|knowledge graph|mind map|link map|what(?:'s| is) linked|show.*(?:graph|links|brain)|visuali[sz]e.*(?:brain|graph)|brain map|my brain)\b/i.test(
     t,
   );
+}
+
+/** User wants real wiki edges written between brain pages — not just open the graph UI. */
+export function isBrainConsolidateRequest(text: string): boolean {
+  const t = text.trim();
+  if (
+    /\b(link (everything|all|them|those|nodes|pages|notes)|connect (everything|all|them|those|nodes|pages|notes)|wire|re-?wire|consolidate|mesh)\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (/\b(scan|identify|find|analyze|analyse).{0,60}\b(connection|link|related|nodes?)\b/i.test(t)) {
+    return true;
+  }
+  if (/\b(why|how).{0,50}\b(not|aren'?t|isn'?t|no).{0,30}\blink/i.test(t)) {
+    return true;
+  }
+  if (/\b(nodes?|pages?|notes?).{0,40}\blink\b/i.test(t) && /\b(brain|graph|wiki|vault)\b/i.test(t)) {
+    return true;
+  }
+  if (/\bstill the same\b/i.test(t) && /\b(picture|image|graph|link|node)/i.test(t)) {
+    return true;
+  }
+  return false;
 }
 
 export function isSaveToBrainRequest(text: string): boolean {
@@ -50,7 +78,10 @@ export function isAboutUserQuery(text: string): boolean {
 
 export function isLinkProfileRequest(text: string): boolean {
   const t = text.trim();
-  return /\b(link (my )?profile|connect (my )?profile|profile.*linked.*jarvis|why.*not linked|add.*profile.*graph)\b/i.test(
+  if (isBrainConsolidateRequest(t)) {
+    return false;
+  }
+  return /\b(link (my )?profile|connect (my )?profile|profile.*linked.*jarvis|why.*profile.*not linked|add.*profile.*graph)\b/i.test(
     t,
   );
 }
