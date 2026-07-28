@@ -1,7 +1,7 @@
 import {
   buildWebSearchUnavailableMessage,
   isFailedWebSearchOutput,
-  mapBraveResults,
+  mapTavilyResults,
   formatSearchHits,
 } from './web-search.util';
 import { WebSearchSkill } from './web-search.skill';
@@ -19,9 +19,9 @@ describe('web-search.util', () => {
     expect(msg.toLowerCase()).toContain('outdated');
   });
 
-  it('maps Brave API rows to search hits', () => {
-    const hits = mapBraveResults([
-      { title: 'Example', url: 'https://example.com', description: 'Snippet text' },
+  it('maps Tavily API rows to search hits', () => {
+    const hits = mapTavilyResults([
+      { title: 'Example', url: 'https://example.com', content: 'Snippet text' },
     ]);
     expect(formatSearchHits(hits)[0]).toContain('Example');
     expect(formatSearchHits(hits)[0]).toContain('https://example.com');
@@ -30,41 +30,39 @@ describe('web-search.util', () => {
 
 describe('WebSearchSkill', () => {
   const originalFetch = global.fetch;
-  const originalKey = process.env.BRAVE_SEARCH_API_KEY;
+  const originalKey = process.env.TAVILY_API_KEY;
 
   afterEach(() => {
     global.fetch = originalFetch;
     if (originalKey === undefined) {
-      delete process.env.BRAVE_SEARCH_API_KEY;
+      delete process.env.TAVILY_API_KEY;
     } else {
-      process.env.BRAVE_SEARCH_API_KEY = originalKey;
+      process.env.TAVILY_API_KEY = originalKey;
     }
   });
 
-  it('returns failure when BRAVE_SEARCH_API_KEY is missing', async () => {
-    delete process.env.BRAVE_SEARCH_API_KEY;
+  it('returns failure when TAVILY_API_KEY is missing', async () => {
+    delete process.env.TAVILY_API_KEY;
     const skill = new WebSearchSkill();
     const result = await skill.execute({ query: 'best llm 2026' }, { conversationId: 't' });
     expect(result.success).toBe(false);
-    expect(result.output).toMatch(/BRAVE_SEARCH_API_KEY/i);
+    expect(result.output).toMatch(/TAVILY_API_KEY/i);
   });
 
-  it('returns Brave web results on success', async () => {
-    process.env.BRAVE_SEARCH_API_KEY = 'test-key';
+  it('returns Tavily web results on success', async () => {
+    process.env.TAVILY_API_KEY = 'tvly-test-key';
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
       status: 200,
       text: async () =>
         JSON.stringify({
-          web: {
-            results: [
-              {
-                title: 'Best LLMs 2026',
-                url: 'https://example.com/llm',
-                description: 'Current rankings',
-              },
-            ],
-          },
+          results: [
+            {
+              title: 'Best LLMs 2026',
+              url: 'https://example.com/llm',
+              content: 'Current rankings',
+            },
+          ],
         }),
     }) as unknown as typeof fetch;
 
@@ -77,13 +75,15 @@ describe('WebSearchSkill', () => {
     expect(result.success).toBe(true);
     expect(result.output).toContain('Best LLMs 2026');
     expect(result.output).toContain('https://example.com/llm');
-    const braveCall = (global.fetch as jest.Mock).mock.calls[0];
-    expect(String(braveCall[0])).toContain('api.search.brave.com/res/v1/web/search');
-    expect(braveCall[1]?.headers?.['X-Subscription-Token']).toBe('test-key');
+    const tavilyCall = (global.fetch as jest.Mock).mock.calls[0];
+    expect(String(tavilyCall[0])).toBe('https://api.tavily.com/search');
+    const body = JSON.parse(String(tavilyCall[1]?.body));
+    expect(body.api_key).toBe('tvly-test-key');
+    expect(body.query).toBe('current news headlines');
   });
 
-  it('surfaces Brave HTTP errors in output', async () => {
-    process.env.BRAVE_SEARCH_API_KEY = 'test-key';
+  it('surfaces Tavily HTTP errors in output', async () => {
+    process.env.TAVILY_API_KEY = 'tvly-test-key';
     global.fetch = jest.fn().mockResolvedValue({
       ok: false,
       status: 403,
@@ -94,6 +94,6 @@ describe('WebSearchSkill', () => {
     const result = await skill.execute({ query: 'test' }, { conversationId: 't' });
 
     expect(result.success).toBe(false);
-    expect(result.output).toMatch(/Brave Search HTTP 403/i);
+    expect(result.output).toMatch(/Tavily Search HTTP 403/i);
   });
 });

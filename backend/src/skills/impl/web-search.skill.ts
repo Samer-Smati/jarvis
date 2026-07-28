@@ -2,19 +2,19 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Skill, SkillContext, SkillResult } from '../skill.interface';
 import {
   formatSearchHits,
-  mapBraveResults,
-  type BraveWebResult,
+  mapTavilyResults,
   type SearchHit,
+  type TavilyWebResult,
 } from './web-search.util';
 
-const BRAVE_SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search';
+const TAVILY_SEARCH_URL = 'https://api.tavily.com/search';
 const DEFAULT_TIMEOUT_MS = 12_000;
 const SERVERLESS_TIMEOUT_MS = 20_000;
 const USER_AGENT =
   'Mozilla/5.0 (compatible; JARVIS/1.0; +https://github.com/Samer-Smati/jarvis)';
 
-interface BraveSearchResponse {
-  web?: { results?: BraveWebResult[] };
+interface TavilySearchResponse {
+  results?: TavilyWebResult[];
 }
 
 @Injectable()
@@ -23,7 +23,7 @@ export class WebSearchSkill implements Skill {
 
   readonly name = 'web_search';
   readonly description =
-    'Search the web via Brave Search API and return a short summary with source links (optional Hugging Face Hub enrichment for model queries).';
+    'Search the web via Tavily Search API (free tier) and return a short summary with source links (optional Hugging Face Hub enrichment for model queries).';
   readonly requiresConfirmation = false;
   readonly parameters = {
     type: 'object',
@@ -43,12 +43,12 @@ export class WebSearchSkill implements Skill {
       return { success: false, output: 'Missing "query" argument.' };
     }
 
-    const apiKey = process.env.BRAVE_SEARCH_API_KEY?.trim();
+    const apiKey = process.env.TAVILY_API_KEY?.trim();
     if (!apiKey) {
       return {
         success: false,
         output:
-          'Search error: BRAVE_SEARCH_API_KEY is not set. Add a Brave Search API key to enable web_search.',
+          'Search error: TAVILY_API_KEY is not set. Sign up free at https://tavily.com (1,000 searches/month, no credit card) and add your API key.',
       };
     }
 
@@ -66,8 +66,8 @@ export class WebSearchSkill implements Skill {
         percent: 55,
       });
 
-      const brave = await this.braveWebSearch(query, apiKey, timeoutMs);
-      const lines = [...formatSearchHits(brave.hits)];
+      const tavily = await this.tavilyWebSearch(query, apiKey, timeoutMs);
+      const lines = [...formatSearchHits(tavily.hits)];
 
       if (this.shouldQueryHfHub(query)) {
         context.onProgress?.({
@@ -83,7 +83,7 @@ export class WebSearchSkill implements Skill {
       }
 
       if (!lines.length) {
-        const detail = `[provider=brave status=${brave.status} hits=0${brave.error ? ` error=${brave.error}` : ''}]`;
+        const detail = `[provider=tavily status=${tavily.status} hits=0${tavily.error ? ` error=${tavily.error}` : ''}]`;
         this.logger.warn(`web_search empty results for "${query}": ${detail}`);
         return {
           success: false,
@@ -99,49 +99,51 @@ export class WebSearchSkill implements Skill {
     }
   }
 
-  private async braveWebSearch(
+  private async tavilyWebSearch(
     query: string,
     apiKey: string,
     timeoutMs: number,
   ): Promise<{ hits: SearchHit[]; status: number; error?: string }> {
-    const url = new URL(BRAVE_SEARCH_URL);
-    url.searchParams.set('q', query);
-    url.searchParams.set('count', '8');
-
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetch(url, {
-        method: 'GET',
+      const response = await fetch(TAVILY_SEARCH_URL, {
+        method: 'POST',
         signal: controller.signal,
         headers: {
           Accept: 'application/json',
-          'Accept-Encoding': 'gzip',
-          'X-Subscription-Token': apiKey,
+          'Content-Type': 'application/json',
           'User-Agent': USER_AGENT,
         },
+        body: JSON.stringify({
+          api_key: apiKey,
+          query,
+          search_depth: 'basic',
+          include_answer: false,
+          max_results: 8,
+        }),
       });
 
       const body = await response.text();
       if (!response.ok) {
         const snippet = body.slice(0, 200).replace(/\s+/g, ' ').trim();
         throw new Error(
-          `Brave Search HTTP ${response.status}${snippet ? `: ${snippet}` : ''}`,
+          `Tavily Search HTTP ${response.status}${snippet ? `: ${snippet}` : ''}`,
         );
       }
 
-      let parsed: BraveSearchResponse;
+      let parsed: TavilySearchResponse;
       try {
-        parsed = JSON.parse(body) as BraveSearchResponse;
+        parsed = JSON.parse(body) as TavilySearchResponse;
       } catch {
-        throw new Error('Brave Search returned invalid JSON');
+        throw new Error('Tavily Search returned invalid JSON');
       }
 
-      const hits = mapBraveResults(parsed.web?.results ?? []);
+      const hits = mapTavilyResults(parsed.results ?? []);
       return { hits, status: response.status };
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
-        throw new Error(`Timed out after ${timeoutMs}ms calling Brave Search`);
+        throw new Error(`Timed out after ${timeoutMs}ms calling Tavily Search`);
       }
       throw error;
     } finally {

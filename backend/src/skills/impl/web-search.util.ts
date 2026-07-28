@@ -28,7 +28,7 @@ export function isFailedWebSearchOutput(output: string): boolean {
   if (text.startsWith('Missing "query"')) {
     return true;
   }
-  if (/BRAVE_SEARCH_API_KEY/i.test(text)) {
+  if (/TAVILY_API_KEY/i.test(text)) {
     return true;
   }
   if (text.includes('Permission denied')) {
@@ -43,10 +43,10 @@ export interface SearchHit {
   snippet?: string;
 }
 
-export interface BraveWebResult {
+export interface TavilyWebResult {
   title?: string;
   url?: string;
-  description?: string;
+  content?: string;
 }
 
 export function formatSearchHits(hits: SearchHit[]): string[] {
@@ -55,7 +55,7 @@ export function formatSearchHits(hits: SearchHit[]): string[] {
   );
 }
 
-export function mapBraveResults(results: BraveWebResult[]): SearchHit[] {
+export function mapTavilyResults(results: TavilyWebResult[]): SearchHit[] {
   const hits: SearchHit[] = [];
   for (const row of results) {
     const title = row.title?.trim();
@@ -66,7 +66,7 @@ export function mapBraveResults(results: BraveWebResult[]): SearchHit[] {
     hits.push({
       title,
       url,
-      snippet: row.description?.trim() || undefined,
+      snippet: row.content?.trim() || undefined,
     });
     if (hits.length >= 8) {
       break;

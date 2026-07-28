@@ -11,7 +11,7 @@ export const TIER_ORDER: SkillPermissionTier[] = ['read', 'write', 'network', 's
 
 export const SKILL_PERMISSIONS: SkillPermission[] = [
   { name: 'get_current_datetime', tier: 'read' },
-  { name: 'web_search', tier: 'network', requiresEnv: ['BRAVE_SEARCH_API_KEY'] },
+  { name: 'web_search', tier: 'network', requiresEnv: ['TAVILY_API_KEY'] },
   { name: 'get_weather', tier: 'network' },
   { name: 'manage_reminders', tier: 'write' },
   { name: 'manage_calendar', tier: 'write' },
