@@ -20,7 +20,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation } from './fast-chat.util';
+import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery } from './fast-chat.util';
 
 const MAX_TOOL_ITERATIONS = 8;
 const SERVERLESS_MAX_TOOL_ITERATIONS = 6;
@@ -121,6 +121,19 @@ export class OrchestratorService {
 
       if (isWeatherRequest(userText) && !images?.length) {
         const handled = await this.runWeatherLookup(
+          conversationId,
+          userText,
+          emitter,
+          trigger,
+          clientPlatform,
+        );
+        if (handled) {
+          return;
+        }
+      }
+
+      if (requiresWebSearch(userText) && !images?.length) {
+        const handled = await this.runWebSearchLookup(
           conversationId,
           userText,
           emitter,
@@ -289,6 +302,9 @@ export class OrchestratorService {
       if (isSelfImproveSkillSourceRequest(userText)) {
         systemPrompt += `\n\nThe user wants to upgrade the self_improve SKILL SOURCE FILE. It IS in the repo at backend/src/skills/impl/self-improve.skill.ts — NOT a hidden runtime tool. Workflow: self_improve inspect path=backend/src/skills/impl/self-improve.skill.ts mode=read → write that path → pull_request. Do NOT inspect "." or scripts/ instead. NEVER say the skill is built-in or unmodifiable.`;
       }
+      if (requiresWebSearch(userText)) {
+        systemPrompt += `\n\nThis turn REQUIRES live web data. You MUST call web_search with a focused query before answering. Do not answer from training data or memory alone — search first, then synthesize from results with source links.`;
+      }
       const urls = extractUrls(userText);
       if (urls.length && !isUrlIngestTurn(userText)) {
         systemPrompt += `\n\nThe user mentioned a URL (${urls[0]}). You CAN fetch it with brain action=ingest_url. Never refuse link access.`;
@@ -364,6 +380,42 @@ export class OrchestratorService {
         );
 
         if (!result.toolCalls.length) {
+          if (requiresWebSearch(userText) && !toolsUsed.includes('web_search')) {
+            const query = extractWebSearchQuery(userText);
+            emitter.onProgress?.({
+              stage: 'web_search',
+              message: 'Searching the web (required)…',
+              percent: Math.min(35 + iteration * 8, 80),
+              toolName: 'web_search',
+            });
+            toolsUsed.push('web_search');
+            const searchOutput = await this.executeToolCall(
+              conversationId,
+              { id: `web-search-required-${iteration}`, name: 'web_search', arguments: { query } },
+              emitter,
+              trigger,
+              clientPlatform,
+            );
+            messages.push({
+              role: 'assistant',
+              content: result.content || 'Searching the web for current information…',
+              toolCalls: [
+                {
+                  id: `web-search-required-${iteration}`,
+                  name: 'web_search',
+                  arguments: { query },
+                },
+              ],
+            });
+            messages.push({
+              role: 'tool',
+              content: searchOutput + buildToolResultLanguageReminder(languageMode),
+              toolCallId: `web-search-required-${iteration}`,
+              toolName: 'web_search',
+            });
+            lastToolOutput = searchOutput;
+            continue;
+          }
           finalText = (result.content || streamedContent).trim();
           break;
         }
@@ -844,6 +896,91 @@ export class OrchestratorService {
     await this.memory.appendMessage(conversationId, 'assistant', finalText);
     this.persistTurnLearning(userText, finalText);
     void this.memory.logEvent(trigger, `Weather: ${location}`);
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runWebSearchLookup(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+    clientPlatform: 'desktop' | 'web',
+  ): Promise<boolean> {
+    const skill = this.skills.get('web_search');
+    if (!skill) {
+      return false;
+    }
+
+    const profile = runtimeProfile();
+    if (!isSkillAllowedOnRuntime('web_search', profile)) {
+      return false;
+    }
+
+    const perm = permissionForSkill('web_search');
+    const grantedTier = maxSkillTier();
+    if (perm && !isTierGranted(perm.tier, grantedTier)) {
+      const msg = tierDenialMessage('web_search', perm.tier, grantedTier);
+      await this.memory.appendMessage(conversationId, 'assistant', msg);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(msg);
+      return true;
+    }
+
+    const query = extractWebSearchQuery(userText);
+    emitter.onProgress?.({
+      stage: 'web_search',
+      message: 'Searching the web (required)…',
+      percent: 35,
+      toolName: 'web_search',
+    });
+
+    const searchOutput = await this.executeToolCall(
+      conversationId,
+      {
+        id: 'web-search-required',
+        name: 'web_search',
+        arguments: { query },
+      },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    const taskRoute = this.taskRouter.resolve(userText, undefined, userText.length);
+    const synthesisPrompt =
+      `${this.personality.getActivePrompt()}\n\n` +
+      `The user asked a question that requires current web information. ` +
+      `Answer using the web search results below. Cite source links. ` +
+      `If results are thin or inconclusive, say so plainly.\n\n` +
+      `Web search results:\n${searchOutput}`;
+
+    let streamed = '';
+    const result = await this.llmService.chatWithRoute(userText, {
+      messages: [
+        { role: 'system', content: synthesisPrompt },
+        { role: 'user', content: userText },
+      ],
+      tools: [],
+      route: taskRoute.route,
+      onToken: (token) => {
+        streamed += token;
+        emitter.onToken(token);
+      },
+    });
+    this.taskRouter.recordUsage(estimateTurnTokens([{ role: 'user', content: userText }], result.content));
+
+    let finalText = (result.content || streamed).trim();
+    if (!finalText || finalText.length < 20) {
+      finalText = searchOutput.startsWith('Error:') || searchOutput.includes('Permission denied')
+        ? `I couldn't complete the web search, sir. ${searchOutput.split('\n')[0]}`
+        : searchOutput;
+    }
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    this.persistTurnLearning(userText, finalText);
+    void this.memory.logEvent(trigger, `Web search: ${query.slice(0, 80)}`);
     emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
     emitter.onDone(finalText);
     return true;

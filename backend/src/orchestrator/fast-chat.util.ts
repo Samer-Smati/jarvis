@@ -4,7 +4,11 @@ export function isFastChatTurn(text: string): boolean {
   if (!t || t.length > 36) {
     return false;
   }
-  if (/\b(search|weather|calendar|remind|email|upgrade|update|deploy|github|code|fix|build|self.?improve)\b/i.test(t)) {
+  if (
+    /\b(search|verify|weather|calendar|remind|email|upgrade|update|deploy|github|code|fix|build|self.?improve|look up|check online|ranking|pricing)\b/i.test(
+      t,
+    )
+  ) {
     return false;
   }
   return /^(hey|hi|hello|yo|hiya|howdy|salut|bonjour|bonsoir|ahlan|marhaba|ca va|ça va|ok|okay|thanks|thank you|merci|good morning|good afternoon|good evening|what'?s up|sup)\b/i.test(
@@ -147,6 +151,77 @@ export function isBrainCleanupRequest(text: string): boolean {
   const t = text.trim();
   return /\b(clean\s?up|clear|prune|fix)\b.*\b(brain|graph|wiki|vault)\b/i.test(t) ||
     /\b(brain|graph|wiki)\b.*\b(clean\s?up|clear|prune|fix)\b/i.test(t);
+}
+
+/** User explicitly instructs Jarvis to search or verify online before answering. */
+export function isExplicitWebSearchRequest(text: string): boolean {
+  const t = text.trim();
+  if (
+    /\b(search the web|search online|web search|google (this|it|for|that)|look (this|it|that) up|check online|browse the web|use the web)\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (/\bsearch\b.{0,48}\b(verify|before answering|online|on the web|web|and confirm)\b/i.test(t)) {
+    return true;
+  }
+  if (/\b(verify|confirm|double[- ]check)\b.{0,48}\b(search|online|on the web|web|before answering)\b/i.test(t)) {
+    return true;
+  }
+  if (/\b(find out|look up|fact[- ]check)\b.{0,32}\b(online|on the web|web)\b/i.test(t)) {
+    return true;
+  }
+  return false;
+}
+
+/** Questions about live rankings, availability, or "best X in [year]" need fresh web data. */
+export function isCurrentStateQuestion(text: string): boolean {
+  const t = text.trim();
+  const hasRecency =
+    /\b(current|latest|today|now|right now|as of|still|this year|202[4-9]|203[0-9])\b/i.test(t);
+  const hasRanking =
+    /\b(best|top|ranking|rankings|ranked|#1|leading|fastest|cheapest|most popular|benchmark|leaderboard|sota|state of the art)\b/i.test(
+      t,
+    );
+  if (hasRanking && (hasRecency || /\b(best .{3,80} (in|for) 20\d{2})\b/i.test(t))) {
+    return true;
+  }
+  if (
+    /\b(llm|model|ai|gpt|claude|gemini|groq|openai|anthropic|llama|mistral)\b/i.test(t) &&
+    /\b(ranking|rankings|benchmark|leaderboard|best|top|compare|vs\.?|versus)\b/i.test(t)
+  ) {
+    return true;
+  }
+  if (
+    /\b(price|pricing|cost|subscription|available|availability|access|waitlist|in stock|release date|launched|announced)\b/i.test(
+      t,
+    ) &&
+    (hasRecency || /\b(how much|is .{2,60} available|can i (still )?get|do they still)\b/i.test(t))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function requiresWebSearch(text: string): boolean {
+  return isExplicitWebSearchRequest(text) || isCurrentStateQuestion(text);
+}
+
+export function extractWebSearchQuery(text: string): string {
+  const t = text.trim();
+  let q = t
+    .replace(/^(please |can you |could you |jarvis,? )/i, '')
+    .replace(
+      /\b(search the web (to )?(verify|and verify|before answering|for me)?|verify (this )?(online|on the web|before answering)|check online|look (this|it|that) up( for me)?|use the web to|find out online)\b/gi,
+      ' ',
+    )
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (q.length < 8) {
+    return t.slice(0, 200);
+  }
+  return q.slice(0, 200);
 }
 
 /** User asks for weather — call get_weather directly (no permission needed). */

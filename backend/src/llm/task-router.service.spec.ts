@@ -33,6 +33,16 @@ describe('TaskRouterService budget and context caps', () => {
     expect(route.task).toBe('reasoning');
     expect(route.userNotice).toMatch(/large conversation history/i);
   });
+
+  it('classifies explicit web search as tool_heavy', () => {
+    const route = router.resolve('search the web to verify before answering', undefined, 500);
+    expect(route.requestedTask).toBe('tool_heavy');
+  });
+
+  it('classifies current-state ranking questions as tool_heavy', () => {
+    const route = router.resolve('What are the best LLM rankings in 2026?', undefined, 500);
+    expect(route.requestedTask).toBe('tool_heavy');
+  });
 });
 
 describe('Skill permission tiers', () => {

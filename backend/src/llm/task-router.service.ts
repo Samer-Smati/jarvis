@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { isServerlessRuntime } from '../orchestrator/fast-chat.util';
+import { isServerlessRuntime, requiresWebSearch } from '../orchestrator/fast-chat.util';
 import type { ChatImagePart } from './llm.types';
 
 export type TaskType = 'quick_qa' | 'coding' | 'reasoning' | 'creative' | 'tool_heavy' | 'personal';
@@ -37,7 +37,7 @@ const CODING_PATTERN =
 const CREATIVE_PATTERN = /\b(write a story|poem|creative|brainstorm|imagine|fiction|song lyrics)\b/i;
 const REASONING_PATTERN = /\b(analyze|compare|explain why|pros and cons|trade.?off|architecture|design decision|strategy)\b/i;
 const TOOL_HEAVY_PATTERN =
-  /\b(upgrade|self.?improve|pull request|github|deploy|ingest|calendar|weather|search the web|smart home)\b/i;
+  /\b(upgrade|self.?improve|pull request|github|deploy|ingest|calendar|weather|search the web|smart home|web search|check online|look (this|it) up)\b/i;
 
 const DEFAULT_MAX_INPUT: Record<TaskType, number> = {
   quick_qa: 12_000,
@@ -86,6 +86,9 @@ export class TaskRouterService {
 
     if (images?.length) {
       return 'reasoning';
+    }
+    if (requiresWebSearch(trimmed)) {
+      return 'tool_heavy';
     }
     if (TOOL_HEAVY_PATTERN.test(trimmed)) {
       return 'tool_heavy';
