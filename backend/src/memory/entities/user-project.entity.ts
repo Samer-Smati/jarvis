@@ -1,4 +1,5 @@
 import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import { dateTimeColumnType } from '../../database/database.util';
 import type { ProjectStatus } from '../memory.types';
 
 @Entity('user_projects')
@@ -21,7 +22,7 @@ export class UserProjectEntity {
   @Column({ type: 'boolean', default: false })
   pinned: boolean;
 
-  @Column({ type: 'datetime', nullable: true })
+  @Column({ type: dateTimeColumnType(), nullable: true })
   forgottenAt?: Date;
 
   @CreateDateColumn()

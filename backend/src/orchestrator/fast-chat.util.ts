@@ -64,9 +64,35 @@ export function isBrainConsolidateRequest(text: string): boolean {
 
 export function isSaveToBrainRequest(text: string): boolean {
   const t = text.trim();
+  if (isExplicitLessonRequest(t)) {
+    return false;
+  }
   return /\b(save (that|this|it) (in|to) (your )?brain|remember that|file (that|this) in (your )?brain|save (that|this) (in|to) my brain)\b/i.test(
     t,
   );
+}
+
+/** Narrow correction pattern — experiential lesson, not a profile fact. */
+export function isExplicitLessonRequest(text: string): boolean {
+  const t = text.trim();
+  if (!/\bremember\s+that\s+when\b/i.test(t)) {
+    return false;
+  }
+  return /\b(i mean|use|refer to|should mean|means)\b/i.test(t);
+}
+
+export function extractExplicitLessonText(text: string): string | null {
+  const t = text.trim();
+  const match = t.match(/\bremember\s+that\s+when\s+(.+)/i);
+  if (!match?.[1]) {
+    return null;
+  }
+  let body = match[1].trim().replace(/\s+/g, ' ');
+  body = body.replace(/^i\s+/i, 'When the user ');
+  if (!/[.!?]$/.test(body)) {
+    body += '.';
+  }
+  return body.slice(0, 220);
 }
 
 export function isAboutUserQuery(text: string): boolean {

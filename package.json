@@ -40,7 +40,8 @@
     "android:sync": "npm run build:mobile --prefix frontend && npx cap sync android --cwd frontend",
     "android:open": "npx cap open android --cwd frontend",
     "android:apk": "node scripts/build-android-apk.js",
-    "export-feedback": "npx ts-node scripts/export-feedback.ts"
+    "export-feedback": "npx ts-node scripts/export-feedback.ts",
+    "calibrate-lessons": "npm run calibrate-lessons --prefix backend"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.2",

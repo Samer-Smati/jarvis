@@ -164,3 +164,32 @@ export interface GraphLayoutNode {
   vy: number;
 }
 
+export type LessonStatus = 'active' | 'needs_review' | 'archived';
+
+export interface Lesson {
+  id: string;
+  taskType: string;
+  triggerContext: string;
+  lessonText: string;
+  confidenceScore: number;
+  reinforcementCount: number;
+  retrievalCount: number;
+  sourceInteractionId?: string;
+  status: LessonStatus;
+  pinned: boolean;
+  lastUsedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LessonSourceInteraction {
+  id: string;
+  prompt: string;
+  response: string;
+  correction?: string;
+  createdAt?: string;
+  conversationId?: string;
+  rating?: number;
+  taskRoute?: string;
+}
+

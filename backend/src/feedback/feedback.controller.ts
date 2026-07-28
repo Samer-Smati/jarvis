@@ -39,4 +39,24 @@ export class FeedbackController {
     const min = minRating ? parseInt(minRating, 10) : 4;
     return this.feedback.listForExport(min);
   }
+
+  @Get(':id')
+  async getOne(@Param('id') id: string) {
+    const row = await this.feedback.getById(id);
+    if (!row) {
+      return { interaction: null };
+    }
+    return {
+      interaction: {
+        id: row.id,
+        conversationId: row.conversationId,
+        prompt: row.prompt,
+        response: row.response,
+        correction: row.correction,
+        rating: row.rating,
+        taskRoute: row.taskRoute,
+        createdAt: row.createdAt,
+      },
+    };
+  }
 }

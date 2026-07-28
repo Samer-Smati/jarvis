@@ -7,6 +7,8 @@ export interface MemoryContextBlock {
   preferences: string[];
   projects: string[];
   conversationHits: string[];
+  lessons: string[];
+  lessonIds: string[];
 }
 
 export interface RememberTypedInput {

@@ -1,4 +1,5 @@
 import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import { dateTimeColumnType } from '../../database/database.util';
 
 @Entity('user_preferences')
 export class UserPreferenceEntity {
@@ -20,7 +21,7 @@ export class UserPreferenceEntity {
   @Column({ type: 'boolean', default: false })
   pinned: boolean;
 
-  @Column({ type: 'datetime', nullable: true })
+  @Column({ type: dateTimeColumnType(), nullable: true })
   forgottenAt?: Date;
 
   @CreateDateColumn()

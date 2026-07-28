@@ -7,6 +7,7 @@ import { LlmService } from '../llm/llm.service';
 import { TaskRouterService } from '../llm/task-router.service';
 import { MemoryService } from '../memory/memory.service';
 import { FeedbackService } from '../feedback/feedback.service';
+import { LessonsService } from '../lessons/lessons.service';
 import { scopeForDeviceTarget } from '../permissions/permission.types';
 import { PermissionsService } from '../permissions/permissions.service';
 import { SkillRegistry } from '../skills/skill.registry';
@@ -19,7 +20,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation } from './fast-chat.util';
+import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation } from './fast-chat.util';
 
 const MAX_TOOL_ITERATIONS = 8;
 const SERVERLESS_MAX_TOOL_ITERATIONS = 6;
@@ -53,6 +54,7 @@ export class OrchestratorService {
     private readonly permissions: PermissionsService,
     private readonly personality: PersonalityService,
     private readonly feedback: FeedbackService,
+    private readonly lessons: LessonsService,
   ) {}
 
   get providerName(): string {
@@ -176,6 +178,13 @@ export class OrchestratorService {
         }
       }
 
+      if (isExplicitLessonRequest(userText) && !images?.length) {
+        const handled = await this.runExplicitLessonSave(conversationId, userText, history, emitter, trigger);
+        if (handled) {
+          return;
+        }
+      }
+
       if (isSaveToBrainRequest(userText)) {
         const handled = await this.runSaveToBrain(conversationId, userText, history, emitter, trigger, clientPlatform);
         if (handled) {
@@ -210,7 +219,14 @@ export class OrchestratorService {
         }
       }
 
-      const memoryContext = await this.memory.buildContext(userText);
+      const contextChars =
+        history.reduce((sum, m) => sum + String(m.content ?? '').length, 0) + userText.length;
+      const taskRoute = this.taskRouter.resolve(userText, images, contextChars);
+
+      const memoryContext = await this.memory.buildContext(userText, taskRoute.task);
+      if (memoryContext.lessonIds?.length) {
+        void this.lessons.recordRetrieval(memoryContext.lessonIds);
+      }
       const facts = memoryContext.facts;
       const brainContext = await this.brain.getContextBlock(userText);
       const now = new Date().toLocaleString('en-GB', {
@@ -236,6 +252,9 @@ export class OrchestratorService {
       }
       if (memoryContext.conversationHits.length) {
         systemPrompt += `\n\nRelevant past conversations:\n${memoryContext.conversationHits.map((h) => `- ${h}`).join('\n')}`;
+      }
+      if (memoryContext.lessons?.length) {
+        systemPrompt += `\n\nThings I've learned:\n${memoryContext.lessons.map((l) => `- ${l}`).join('\n')}`;
       }
       if (brainContext.trim()) {
         systemPrompt += `\n\nJARVIS Brain (persistent wiki — hot cache + linked pages, claude-obsidian pattern):\n${brainContext}`;
@@ -278,8 +297,6 @@ export class OrchestratorService {
         systemPrompt += `\n\nThe user attached ${images.length} image(s) this turn. Describe what you see in the image(s) and answer their question.`;
       }
 
-      const contextChars = history.reduce((sum, m) => sum + String(m.content ?? '').length, 0) + userText.length;
-      const taskRoute = this.taskRouter.resolve(userText, images, contextChars);
       systemPrompt += `\n\nLLM route: ${taskRoute.task} (${taskRoute.reason}).`;
       if (taskRoute.userNotice) {
         systemPrompt += `\n\nBriefly mention to the user (one short sentence): ${taskRoute.userNotice}`;
@@ -955,6 +972,39 @@ export class OrchestratorService {
     await this.memory.appendMessage(conversationId, 'assistant', finalText);
     this.persistTurnLearning(userText, finalText);
     void this.memory.logEvent(trigger, 'Brain graph opened');
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runExplicitLessonSave(
+    conversationId: string,
+    userText: string,
+    history: ChatMessage[],
+    emitter: OrchestratorEmitter,
+    trigger: string,
+  ): Promise<boolean> {
+    const lessonText = extractExplicitLessonText(userText);
+    if (!lessonText) {
+      return false;
+    }
+
+    const contextChars =
+      history.reduce((sum, m) => sum + String(m.content ?? '').length, 0) + userText.length;
+    const taskRoute = this.taskRouter.resolve(userText, undefined, contextChars);
+
+    emitter.onProgress?.({ stage: 'memory', message: 'Saving lesson…', percent: 50 });
+
+    await this.lessons.createDirect({
+      lessonText,
+      triggerContext: userText.slice(0, 500),
+      taskType: taskRoute.task,
+    });
+
+    const finalText = `Understood — I'll remember: ${lessonText}`;
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    void this.memory.logEvent(trigger, `Explicit lesson saved: ${lessonText.slice(0, 80)}`);
     emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
     emitter.onDone(finalText);
     return true;

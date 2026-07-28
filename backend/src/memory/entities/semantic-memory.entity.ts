@@ -1,4 +1,5 @@
 import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import { dateTimeColumnType } from '../../database/database.util';
 import type { MemoryType } from '../memory.types';
 
 @Entity('semantic_memories')
@@ -21,10 +22,10 @@ export class SemanticMemoryEntity {
   @Column({ type: 'boolean', default: false })
   pinned: boolean;
 
-  @Column({ type: 'datetime', nullable: true })
+  @Column({ type: dateTimeColumnType(), nullable: true })
   forgottenAt?: Date;
 
-  @Column({ type: 'datetime', nullable: true })
+  @Column({ type: dateTimeColumnType(), nullable: true })
   lastVerified?: Date;
 
   @Column({ type: 'text', nullable: true })

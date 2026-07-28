@@ -12,6 +12,7 @@ import { UserPreferenceEntity } from './entities/user-preference.entity';
 import { UserProjectEntity } from './entities/user-project.entity';
 import { MemoryRepository } from './memory.repository';
 import { CreateProjectInput, MemoryContextBlock, RememberTypedInput } from './memory.types';
+import { LessonsService } from '../lessons/lessons.service';
 
 const MAX_LLM_HISTORY =
   process.env.VERCEL || process.env.JARVIS_SERVERLESS === '1' ? 30 : 200;
@@ -37,6 +38,7 @@ export class MemoryService {
     private readonly embeddings: EmbeddingService,
     private readonly brainPg: BrainPgStore,
     private readonly repository: MemoryRepository,
+    private readonly lessons: LessonsService,
   ) {}
 
   private useBlobForConversations(): boolean {
@@ -148,16 +150,17 @@ export class MemoryService {
     return project;
   }
 
-  async buildContext(query: string): Promise<MemoryContextBlock> {
+  async buildContext(query: string, taskType?: string): Promise<MemoryContextBlock> {
     const forgotten = await this.repository.listForgottenFactTexts();
     const filterForgotten = (items: string[]) =>
       items.filter((t) => !forgotten.has(t.trim().toLowerCase()));
 
-    const [factsRaw, prefs, projects, pgHits] = await Promise.all([
+    const [factsRaw, prefs, projects, pgHits, lessonCtx] = await Promise.all([
       this.recallFacts(query, MAX_CONTEXT_CHUNKS),
       this.repository.listActivePreferences(6),
       this.repository.listActiveProjects(4),
       this.brainPg.searchSimilar(query, MAX_CONTEXT_CHUNKS),
+      this.lessons.findRelevantLessons(query, taskType),
     ]);
 
     const pinnedFacts = await this.repository.findPinnedFacts(4);
@@ -178,6 +181,8 @@ export class MemoryService {
         p.description ? `${p.name} (${p.status}): ${p.description}` : `${p.name} (${p.status})`,
       ),
       conversationHits: dedupedHits,
+      lessons: lessonCtx.texts,
+      lessonIds: lessonCtx.ids,
     };
   }
 

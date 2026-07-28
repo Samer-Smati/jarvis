@@ -1,6 +1,7 @@
 import { PermissionsService } from '../permissions/permissions.service';
 import { GuardrailService } from '../guardrails/guardrail.service';
 import { FeedbackService } from '../feedback/feedback.service';
+import { LessonsService } from '../lessons/lessons.service';
 import { BrainService } from '../brain/brain.service';
 import { LlmChatResult, LlmProvider } from '../llm/llm.types';
 import { LlmService } from '../llm/llm.service';
@@ -44,6 +45,7 @@ describe('OrchestratorService', () => {
   let permissions: jest.Mocked<Pick<PermissionsService, 'isGranted' | 'requestGrant'>>;
   let personality: jest.Mocked<Pick<PersonalityService, 'getActivePrompt'>>;
   let feedback: jest.Mocked<Pick<FeedbackService, 'logInteraction'>>;
+  let lessons: jest.Mocked<Pick<LessonsService, 'recordRetrieval' | 'createDirect'>>;
   let skill: Skill;
   let registry: SkillRegistry;
 
@@ -59,6 +61,7 @@ describe('OrchestratorService', () => {
       permissions as unknown as PermissionsService,
       personality as unknown as PersonalityService,
       feedback as unknown as FeedbackService,
+      lessons as unknown as LessonsService,
     );
 
   beforeEach(() => {
@@ -78,7 +81,14 @@ describe('OrchestratorService', () => {
     memory = {
       appendMessage: jest.fn().mockResolvedValue(undefined),
       loadConversation: jest.fn().mockResolvedValue({ messages: [], truncated: 0 }),
-      buildContext: jest.fn().mockResolvedValue({ facts: [], preferences: [], projects: [], conversationHits: [] }),
+      buildContext: jest.fn().mockResolvedValue({
+        facts: [],
+        preferences: [],
+        projects: [],
+        conversationHits: [],
+        lessons: [],
+        lessonIds: [],
+      }),
       rememberFact: jest.fn().mockResolvedValue(undefined),
       logEvent: jest.fn().mockResolvedValue(undefined),
       indexConversationTurn: jest.fn().mockResolvedValue(undefined),
@@ -93,6 +103,10 @@ describe('OrchestratorService', () => {
     };
     feedback = {
       logInteraction: jest.fn().mockResolvedValue({ id: 'log-1' }),
+    };
+    lessons = {
+      recordRetrieval: jest.fn().mockResolvedValue(undefined),
+      createDirect: jest.fn().mockResolvedValue({ id: 'lesson-1' }),
     };
     guardrails = {
       requestConfirmation: jest.fn(),

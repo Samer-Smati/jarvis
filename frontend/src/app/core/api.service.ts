@@ -5,6 +5,8 @@ import { environment } from '../../environments/environment';
 import {
   AuditEntry,
   EpisodicEvent,
+  Lesson,
+  LessonSourceInteraction,
   MemoryFact,
   PermissionGrant,
   Reminder,
@@ -80,6 +82,44 @@ export class ApiService {
 
   rateFeedback(id: string, rating: number, correction?: string): Observable<unknown> {
     return this.http.patch(`${this.base}/feedback/${id}`, { rating, correction });
+  }
+
+  feedbackDetail(id: string): Observable<{ interaction: LessonSourceInteraction | null }> {
+    return this.http.get<{ interaction: LessonSourceInteraction | null }>(`${this.base}/feedback/${id}`);
+  }
+
+  lessons(): Observable<{ lessons: Lesson[]; grouped: Record<string, Lesson[]> }> {
+    return this.http.get<{ lessons: Lesson[]; grouped: Record<string, Lesson[]> }>(`${this.base}/lessons`);
+  }
+
+  lessonDetail(id: string): Observable<{ lesson: Lesson | null; source: LessonSourceInteraction | null }> {
+    return this.http.get<{ lesson: Lesson | null; source: LessonSourceInteraction | null }>(
+      `${this.base}/lessons/${id}`,
+    );
+  }
+
+  updateLesson(id: string, lessonText: string): Observable<Lesson> {
+    return this.http.patch<Lesson>(`${this.base}/lessons/${id}`, { lessonText });
+  }
+
+  pinLesson(id: string, pinned: boolean): Observable<Lesson> {
+    return this.http.patch<Lesson>(`${this.base}/lessons/${id}/pin`, { pinned });
+  }
+
+  approveLesson(id: string): Observable<Lesson> {
+    return this.http.post<Lesson>(`${this.base}/lessons/${id}/approve`, {});
+  }
+
+  rejectLesson(id: string): Observable<Lesson> {
+    return this.http.post<Lesson>(`${this.base}/lessons/${id}/reject`, {});
+  }
+
+  deleteLesson(id: string): Observable<Lesson> {
+    return this.http.delete<Lesson>(`${this.base}/lessons/${id}`);
+  }
+
+  lessonsPruneDryRun(days = 30): Observable<{ count: number; candidates: Lesson[] }> {
+    return this.http.post<{ count: number; candidates: Lesson[] }>(`${this.base}/lessons/prune-dry-run`, { days });
   }
 
   personaCompare(): Observable<{ active: string; draft: string; changed: boolean }> {

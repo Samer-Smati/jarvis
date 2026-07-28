@@ -11,7 +11,10 @@ function resolveBackendRoot() {
     path.join(__dirname, '..', 'backend'),
   ];
   for (const dir of candidates) {
-    if (fs.existsSync(path.join(dir, 'dist', 'serverless.js'))) {
+    if (
+      fs.existsSync(path.join(dir, 'dist', 'serverless.js')) ||
+      fs.existsSync(path.join(dir, 'dist', 'src', 'serverless.js'))
+    ) {
       return dir;
     }
   }
@@ -39,7 +42,24 @@ async function loadNestHandler() {
   if (nestHandler) {
     return nestHandler;
   }
-  const mod = require(path.join(backendRoot, 'dist', 'serverless'));
+  const handlerCandidates = [
+    path.join(backendRoot, 'dist', 'serverless'),
+    path.join(backendRoot, 'dist', 'src', 'serverless'),
+  ];
+  let mod;
+  for (const entry of handlerCandidates) {
+    try {
+      mod = require(entry);
+      break;
+    } catch (error) {
+      if (error?.code !== 'MODULE_NOT_FOUND') {
+        throw error;
+      }
+    }
+  }
+  if (!mod) {
+    throw new Error(`serverless handler not found (checked: ${handlerCandidates.join(', ')})`);
+  }
   nestHandler = mod.default ?? mod;
   if (typeof nestHandler !== 'function') {
     throw new Error('serverless handler export missing');

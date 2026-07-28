@@ -201,10 +201,18 @@ export class TaskRouterService {
   }
 
   private loadConfigFile(): RoutingFile {
-    if (!existsSync(this.configPath)) {
-      throw new Error(`Routing config not found: ${this.configPath}`);
+    const candidates = [
+      this.configPath,
+      join(__dirname, '..', 'llm', 'llm-routing.config.json'),
+      join(process.cwd(), 'backend', 'dist', 'llm', 'llm-routing.config.json'),
+      join(process.cwd(), 'dist', 'llm', 'llm-routing.config.json'),
+    ];
+    for (const filePath of candidates) {
+      if (existsSync(filePath)) {
+        return JSON.parse(readFileSync(filePath, 'utf8')) as RoutingFile;
+      }
     }
-    return JSON.parse(readFileSync(this.configPath, 'utf8')) as RoutingFile;
+    throw new Error(`Routing config not found (checked: ${candidates.join(', ')})`);
   }
 
   private isOverBudget(): boolean {

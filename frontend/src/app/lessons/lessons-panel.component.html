@@ -1,0 +1,65 @@
+<div class="lessons-page">
+  <header class="hud-header">
+    <span class="hud-label">// Lessons learned</span>
+    <a routerLink="/" class="hud-link">Back to chat</a>
+  </header>
+
+  <p *ngIf="loading">Loading lessons…</p>
+
+  <div *ngIf="!loading && !taskTypes.length" class="hud-panel">
+    <p>No lessons yet. Correct JARVIS or say "remember that when … I mean …" in chat.</p>
+  </div>
+
+  <div *ngFor="let taskType of taskTypes" class="task-group hud-panel">
+    <span class="hud-label">// {{ taskType }}</span>
+    <div
+      *ngFor="let lesson of grouped[taskType]"
+      class="lesson-row hud-panel"
+      [class.needs-review]="lesson.status === 'needs_review'">
+      <div>
+        <textarea
+          pTextarea
+          class="edit-area"
+          [ngModel]="lesson.lessonText"
+          (blur)="saveEdit(lesson, $any($event.target).value)"
+          rows="2"></textarea>
+        <div class="meta">
+          Reinforced {{ lesson.reinforcementCount }}× · Used {{ lesson.retrievalCount }}× · Last used
+          {{ formatDate(lesson.lastUsedAt) }}
+          <span *ngIf="lesson.status === 'needs_review'"> · Needs review</span>
+        </div>
+        <button type="button" class="hud-link" *ngIf="lesson.sourceInteractionId" (click)="openSource(lesson)">
+          View source interaction
+        </button>
+      </div>
+      <div class="actions">
+        <button pButton type="button" [label]="lesson.pinned ? 'Unpin' : 'Pin'" (click)="togglePin(lesson)"></button>
+        <button
+          pButton
+          type="button"
+          label="Approve"
+          *ngIf="lesson.status === 'needs_review'"
+          (click)="approve(lesson)"></button>
+        <button
+          pButton
+          type="button"
+          label="Reject"
+          severity="secondary"
+          *ngIf="lesson.status === 'needs_review'"
+          (click)="reject(lesson)"></button>
+        <button pButton type="button" label="Archive" severity="danger" (click)="archive(lesson)"></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="source-modal hud-panel" *ngIf="sourceOpen && source">
+    <span class="hud-label">// Source interaction</span>
+    <p><strong>Prompt</strong></p>
+    <pre>{{ source.prompt }}</pre>
+    <p><strong>Response</strong></p>
+    <pre>{{ source.response }}</pre>
+    <p *ngIf="source.correction"><strong>Correction</strong></p>
+    <pre *ngIf="source.correction">{{ source.correction }}</pre>
+    <button pButton type="button" label="Close" (click)="closeSource()"></button>
+  </div>
+</div>

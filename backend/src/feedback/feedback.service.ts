@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { LessonsService } from '../lessons/lessons.service';
 import { redactSensitive } from './feedback-redact.util';
 import { InteractionLogEntity } from './entities/interaction-log.entity';
 
@@ -21,6 +22,7 @@ export class FeedbackService {
   constructor(
     @InjectRepository(InteractionLogEntity)
     private readonly logs: Repository<InteractionLogEntity>,
+    private readonly lessons: LessonsService,
   ) {}
 
   async logInteraction(input: LogInteractionInput): Promise<InteractionLogEntity> {
@@ -45,7 +47,17 @@ export class FeedbackService {
     if (correction?.trim()) {
       row.correction = redactSensitive(correction.trim().slice(0, 4000));
     }
-    return this.logs.save(row);
+    const saved = await this.logs.save(row);
+    if ((saved.rating ?? 5) <= 2 || saved.correction?.trim()) {
+      void this.lessons.extractFromInteraction(saved.id).catch((err: Error) => {
+        this.logger.warn(`Lesson extraction failed: ${err.message}`);
+      });
+    }
+    return saved;
+  }
+
+  async getById(id: string): Promise<InteractionLogEntity | null> {
+    return this.logs.findOne({ where: { id } });
   }
 
   async listForExport(minRating = 4, limit = 2000): Promise<InteractionLogEntity[]> {
