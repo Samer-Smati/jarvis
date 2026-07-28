@@ -20,7 +20,24 @@ interface SearchHit {
   snippet?: string;
 }
 
+interface HtmlAttemptDiagnostic {
+  label: string;
+  status?: number;
+  error?: string;
+  hits: number;
+  captcha: boolean;
+  htmlLength: number;
+}
+
+interface SearchDiagnostics {
+  query: string;
+  instantLines: number;
+  htmlAttempts: HtmlAttemptDiagnostic[];
+  hfLines: number;
+}
+
 const DEFAULT_TIMEOUT_MS = 12_000;
+const SERVERLESS_TIMEOUT_MS = 20_000;
 const USER_AGENT =
   'Mozilla/5.0 (compatible; JARVIS/1.0; +https://github.com/Samer-Smati/jarvis)';
 
@@ -50,16 +67,24 @@ export class WebSearchSkill implements Skill {
       return { success: false, output: 'Missing "query" argument.' };
     }
 
-    const timeoutMs = clampTimeout(args?.timeout);
+    const timeoutMs = clampTimeout(args?.timeout, isServerlessRuntime());
     context.onProgress?.({
       stage: 'web_search',
       message: `Searching: ${query}`,
       percent: 35,
     });
 
+    const diagnostics: SearchDiagnostics = {
+      query,
+      instantLines: 0,
+      htmlAttempts: [],
+      hfLines: 0,
+    };
+
     try {
       const lines: string[] = [];
       const instant = await this.instantAnswer(query, timeoutMs);
+      diagnostics.instantLines = instant.length;
       lines.push(...instant);
 
       context.onProgress?.({
@@ -67,8 +92,9 @@ export class WebSearchSkill implements Skill {
         message: 'Fetching web results…',
         percent: 55,
       });
-      const htmlHits = await this.htmlSearch(query, timeoutMs);
-      for (const hit of htmlHits.slice(0, 6)) {
+      const htmlResult = await this.htmlSearch(query, timeoutMs);
+      diagnostics.htmlAttempts = htmlResult.diagnostics;
+      for (const hit of htmlResult.hits.slice(0, 6)) {
         lines.push(
           hit.snippet
             ? `- ${hit.title}: ${hit.snippet} (${hit.url})`
@@ -76,13 +102,14 @@ export class WebSearchSkill implements Skill {
         );
       }
 
-      if (/hugging\s*face|huggingface|hf\.co/i.test(query)) {
+      if (this.shouldQueryHfHub(query)) {
         context.onProgress?.({
           stage: 'web_search',
           message: 'Checking Hugging Face Hub…',
           percent: 70,
         });
         const hf = await this.huggingFaceModels(query, timeoutMs);
+        diagnostics.hfLines = hf.length;
         if (hf.length) {
           lines.push('', 'Hugging Face Hub models:');
           lines.push(...hf);
@@ -90,18 +117,30 @@ export class WebSearchSkill implements Skill {
       }
 
       if (!lines.length) {
+        const detail = formatSearchDiagnostics(diagnostics);
+        this.logger.warn(`web_search empty results: ${detail}`);
         return {
           success: false,
-          output: `No web results found for "${query}". Try a shorter or more specific query.`,
+          output: `No web results found for "${query}". ${detail}`,
         };
       }
 
       return { success: true, output: lines.join('\n') };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`web_search failed: ${message}`);
-      return { success: false, output: `Search error: ${message}` };
+      const detail = formatSearchDiagnostics(diagnostics);
+      this.logger.warn(`web_search failed: ${message} | ${detail}`);
+      return { success: false, output: `Search error: ${message}. ${detail}` };
     }
+  }
+
+  private shouldQueryHfHub(query: string): boolean {
+    if (/hugging\s*face|huggingface|hf\.co/i.test(query)) {
+      return true;
+    }
+    return /\b(llm|llms|open.?source model|language model|gemma|llama|qwen|mistral|deepseek|model hub)\b/i.test(
+      query,
+    );
   }
 
   private async instantAnswer(query: string, timeoutMs: number): Promise<string[]> {
@@ -130,9 +169,13 @@ export class WebSearchSkill implements Skill {
     }
   }
 
-  private async htmlSearch(query: string, timeoutMs: number): Promise<SearchHit[]> {
-    const attempts: Array<{ url: string; init: RequestInit }> = [
+  private async htmlSearch(
+    query: string,
+    timeoutMs: number,
+  ): Promise<{ hits: SearchHit[]; diagnostics: HtmlAttemptDiagnostic[] }> {
+    const attempts: Array<{ label: string; url: string; init: RequestInit }> = [
       {
+        label: 'html-post',
         url: 'https://html.duckduckgo.com/html/',
         init: {
           method: 'POST',
@@ -145,7 +188,19 @@ export class WebSearchSkill implements Skill {
         },
       },
       {
+        label: 'html-get',
         url: `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+        init: {
+          method: 'GET',
+          headers: {
+            Accept: 'text/html',
+            'User-Agent': USER_AGENT,
+          },
+        },
+      },
+      {
+        label: 'lite-get',
+        url: `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`,
         init: {
           method: 'GET',
           headers: {
@@ -156,18 +211,37 @@ export class WebSearchSkill implements Skill {
       },
     ];
 
+    const diagnostics: HtmlAttemptDiagnostic[] = [];
+
     for (const endpoint of attempts) {
       try {
-        const html = await this.fetchText(endpoint.url, timeoutMs, endpoint.init);
-        const hits = parseDuckDuckGoHtml(html);
+        const { status, text: html } = await this.fetchTextWithStatus(endpoint.url, timeoutMs, endpoint.init);
+        const captcha = /captcha|challenge-form|anomaly-modal/i.test(html);
+        const hits = captcha
+          ? []
+          : dedupeHits([...parseDuckDuckGoHtml(html), ...parseDuckDuckGoLiteHtml(html)]);
+        diagnostics.push({
+          label: endpoint.label,
+          status,
+          hits: hits.length,
+          captcha,
+          htmlLength: html.length,
+        });
         if (hits.length) {
-          return hits;
+          return { hits, diagnostics };
         }
       } catch (error) {
-        this.logger.debug(`html search attempt failed: ${(error as Error).message}`);
+        diagnostics.push({
+          label: endpoint.label,
+          error: (error as Error).message,
+          hits: 0,
+          captcha: false,
+          htmlLength: 0,
+        });
+        this.logger.debug(`${endpoint.label} search failed: ${(error as Error).message}`);
       }
     }
-    return [];
+    return { hits: [], diagnostics };
   }
 
   private async huggingFaceModels(query: string, timeoutMs: number): Promise<string[]> {
@@ -205,6 +279,15 @@ export class WebSearchSkill implements Skill {
   }
 
   private async fetchText(url: string, timeoutMs: number, init?: RequestInit): Promise<string> {
+    const { text } = await this.fetchTextWithStatus(url, timeoutMs, init);
+    return text;
+  }
+
+  private async fetchTextWithStatus(
+    url: string,
+    timeoutMs: number,
+    init?: RequestInit,
+  ): Promise<{ status: number; text: string }> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -217,13 +300,14 @@ export class WebSearchSkill implements Skill {
           ...(init?.headers ?? {}),
         },
       });
+      const text = await response.text();
       if (!response.ok) {
         throw new Error(`HTTP ${response.status} for ${url}`);
       }
-      return await response.text();
+      return { status: response.status, text };
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
-        throw new Error(`Timed out after ${timeoutMs}ms`);
+        throw new Error(`Timed out after ${timeoutMs}ms fetching ${url}`);
       }
       throw error;
     } finally {
@@ -244,12 +328,59 @@ export class WebSearchSkill implements Skill {
   }
 }
 
-function clampTimeout(raw: unknown): number {
+function clampTimeout(raw: unknown, serverless = false): number {
   const n = typeof raw === 'number' ? raw : Number(raw);
+  const fallback = serverless ? SERVERLESS_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
   if (!Number.isFinite(n) || n <= 0) {
-    return DEFAULT_TIMEOUT_MS;
+    return fallback;
   }
   return Math.min(Math.max(Math.floor(n), 3000), 25_000);
+}
+
+function isServerlessRuntime(): boolean {
+  return !!process.env.VERCEL || process.env.JARVIS_SERVERLESS === '1';
+}
+
+export function parseDuckDuckGoLiteHtml(html: string): SearchHit[] {
+  const hits: SearchHit[] = [];
+  const re =
+    /<a\b[^>]*class=['"]result-link['"][^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>|<a\b[^>]*href="([^"]+)"[^>]*class=['"]result-link['"][^>]*>([\s\S]*?)<\/a>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(html)) && hits.length < 8) {
+    const href = match[1] ?? match[3] ?? '';
+    const titleRaw = match[2] ?? match[4] ?? '';
+    const url = cleanDuckDuckGoUrl(decodeBasicEntities(href));
+    const title = decodeBasicEntities(stripTags(titleRaw)).trim();
+    if (url && title) {
+      hits.push({ title, url });
+    }
+  }
+  return hits;
+}
+
+function formatSearchDiagnostics(diagnostics: SearchDiagnostics): string {
+  const htmlSummary = diagnostics.htmlAttempts
+    .map((attempt) => {
+      if (attempt.error) {
+        return `${attempt.label}=error(${attempt.error})`;
+      }
+      return `${attempt.label}=status${attempt.status ?? '?'} hits=${attempt.hits} len=${attempt.htmlLength}${attempt.captcha ? ' captcha' : ''}`;
+    })
+    .join('; ');
+  return `[instant=${diagnostics.instantLines} hf=${diagnostics.hfLines}${htmlSummary ? ` html(${htmlSummary})` : ''}]`;
+}
+
+function dedupeHits(hits: SearchHit[]): SearchHit[] {
+  const seen = new Set<string>();
+  const out: SearchHit[] = [];
+  for (const hit of hits) {
+    if (seen.has(hit.url)) {
+      continue;
+    }
+    seen.add(hit.url);
+    out.push(hit);
+  }
+  return out;
 }
 
 function parseDuckDuckGoHtml(html: string): SearchHit[] {

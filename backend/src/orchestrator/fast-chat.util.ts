@@ -216,10 +216,17 @@ export function extractWebSearchQuery(text: string, now: Date = new Date()): str
       /\b(search the web (to )?(verify|and verify|before answering|for me)?|verify (this )?(online|on the web|before answering)|check online|look (this|it|that) up( for me)?|use the web to|find out online)\b/gi,
       ' ',
     )
+    .replace(/\b(before answering|before you reply|and verify)\b/gi, ' ')
+    .replace(/^[\s:,\-–]+|[\s:,\-–?]+$/g, '')
     .replace(/\s+/g, ' ')
     .trim();
   if (q.length < 8) {
-    q = t.slice(0, 200);
+    q = t
+      .replace(/\b(before answering|before you reply)\b/gi, ' ')
+      .replace(/^[\s:,\-–]+|[\s:,\-–?]+$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 200);
   }
   return injectSearchRecencyYear(t, q, now);
 }

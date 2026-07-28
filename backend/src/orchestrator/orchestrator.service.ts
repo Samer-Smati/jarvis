@@ -600,9 +600,19 @@ export class OrchestratorService {
     await this.guardrails.audit(
       skill.name,
       trigger,
-      JSON.stringify(call.arguments),
+      result.success
+        ? JSON.stringify(call.arguments)
+        : JSON.stringify({
+            ...call.arguments,
+            error: result.output.slice(0, 800),
+          }),
       result.success ? 'success' : 'failure',
     );
+    if (!result.success) {
+      this.logger.warn(
+        `Skill ${skill.name} failed: ${result.output.slice(0, 300)} (args=${JSON.stringify(call.arguments).slice(0, 200)})`,
+      );
+    }
     emitter.onToolEnd(call.name, result.output, result.success);
     return result.output;
   }
