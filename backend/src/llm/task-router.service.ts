@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { isServerlessRuntime, requiresWebSearch } from '../orchestrator/fast-chat.util';
+import { isServerlessRuntime, isWebSearchMetaQuestion, requiresWebSearch } from '../orchestrator/fast-chat.util';
 import type { ChatImagePart } from './llm.types';
 
 export type TaskType = 'quick_qa' | 'coding' | 'reasoning' | 'creative' | 'tool_heavy' | 'personal';
@@ -90,7 +90,7 @@ export class TaskRouterService {
     if (requiresWebSearch(trimmed)) {
       return 'tool_heavy';
     }
-    if (TOOL_HEAVY_PATTERN.test(trimmed)) {
+    if (!isWebSearchMetaQuestion(trimmed) && TOOL_HEAVY_PATTERN.test(trimmed)) {
       return 'tool_heavy';
     }
     if (CODING_PATTERN.test(trimmed)) {

@@ -60,6 +60,13 @@ export class FeedbackService {
     return this.logs.findOne({ where: { id } });
   }
 
+  async getLastForConversation(conversationId: string): Promise<InteractionLogEntity | null> {
+    return this.logs.findOne({
+      where: { conversationId },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
   async listForExport(minRating = 4, limit = 2000): Promise<InteractionLogEntity[]> {
     const qb = this.logs
       .createQueryBuilder('log')

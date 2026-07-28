@@ -4,15 +4,27 @@ import {
   isSaveToBrainRequest,
   isExplicitWebSearchRequest,
   isCurrentStateQuestion,
+  isWebSearchMetaQuestion,
   requiresWebSearch,
   extractWebSearchQuery,
+  hasMeaningfulSearchQueryExtract,
 } from './fast-chat.util';
+
+const META_SENTENCE =
+  'Confirm: did that answer come from a live web search, or from your training data? Be direct.';
 
 describe('web search intent', () => {
   it('detects explicit search-before-answer instructions', () => {
     expect(isExplicitWebSearchRequest('search the web to verify before answering')).toBe(true);
     expect(isExplicitWebSearchRequest('Please verify this online before you reply')).toBe(true);
     expect(isExplicitWebSearchRequest('look this up on the web')).toBe(true);
+  });
+
+  it('does not treat meta questions about prior search behavior as search requests', () => {
+    expect(isWebSearchMetaQuestion(META_SENTENCE)).toBe(true);
+    expect(isExplicitWebSearchRequest(META_SENTENCE)).toBe(false);
+    expect(requiresWebSearch(META_SENTENCE)).toBe(false);
+    expect(hasMeaningfulSearchQueryExtract(META_SENTENCE)).toBe(false);
   });
 
   it('detects current-state ranking and availability questions', () => {

@@ -43,6 +43,15 @@ describe('TaskRouterService budget and context caps', () => {
     const route = router.resolve('What are the best LLM rankings in 2026?', undefined, 500);
     expect(route.requestedTask).toBe('tool_heavy');
   });
+
+  it('does not classify web-search meta questions as tool_heavy', () => {
+    const route = router.resolve(
+      'Confirm: did that answer come from a live web search, or from your training data? Be direct.',
+      undefined,
+      500,
+    );
+    expect(route.requestedTask).not.toBe('tool_heavy');
+  });
 });
 
 describe('Skill permission tiers', () => {

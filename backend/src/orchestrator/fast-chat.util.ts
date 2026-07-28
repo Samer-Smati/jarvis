@@ -153,8 +153,42 @@ export function isBrainCleanupRequest(text: string): boolean {
     /\b(brain|graph|wiki)\b.*\b(clean\s?up|clear|prune|fix)\b/i.test(t);
 }
 
+/** User asks whether a prior answer used web search / tools — not a request to search the web. */
+export function isWebSearchMetaQuestion(text: string): boolean {
+  const t = text.trim();
+  if (
+    /\b(did you|did that|did it|have you|was that|was it|does that|did this)\b.{0,80}\b(search|web search|look(ed)? up|use the web|training data|from memory|from your memory|tool call|tools?)\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(confirm|verify|clarify|tell me honestly|be direct|be honest)\b.{0,60}\b(that you|whether you|if you|that answer|that response|that reply|did that|did you)\b/i.test(
+      t,
+    ) &&
+    /\b(search|web search|training data|memory|tool|live data|live web)\b/i.test(t)
+  ) {
+    return true;
+  }
+  if (
+    /\b(come from|came from|based on)\b.{0,50}\b(live web search|web search|training data|your training|memory|model knowledge)\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (/\babout (your|the) (last|previous|prior|that) (answer|response|reply|turn)\b/i.test(t)) {
+    return true;
+  }
+  return false;
+}
+
 /** User explicitly instructs Jarvis to search or verify online before answering. */
 export function isExplicitWebSearchRequest(text: string): boolean {
+  if (isWebSearchMetaQuestion(text)) {
+    return false;
+  }
   const t = text.trim();
   if (
     /\b(search the web|search online|web search|google (this|it|for|that)|look (this|it|that) up|check online|browse the web|use the web)\b/i.test(
@@ -204,8 +238,47 @@ export function isCurrentStateQuestion(text: string): boolean {
   return false;
 }
 
-export function requiresWebSearch(text: string): boolean {
-  return isExplicitWebSearchRequest(text) || isCurrentStateQuestion(text);
+export function requiresWebSearch(text: string, now: Date = new Date()): boolean {
+  if (isWebSearchMetaQuestion(text)) {
+    return false;
+  }
+  const explicit = isExplicitWebSearchRequest(text);
+  const currentState = isCurrentStateQuestion(text);
+  if (!explicit && !currentState) {
+    return false;
+  }
+  if (explicit && !currentState && !hasMeaningfulSearchQueryExtract(text, now)) {
+    return false;
+  }
+  return true;
+}
+
+/** True when extractWebSearchQuery stripped instruction fluff — not just echoed the user message. */
+export function hasMeaningfulSearchQueryExtract(text: string, now: Date = new Date()): boolean {
+  const extracted = extractWebSearchQuery(text, now);
+  const normOrig = normalizeSearchCompare(text);
+  const normExt = normalizeSearchCompare(extracted);
+  if (normExt.length < 8) {
+    return false;
+  }
+  if (normOrig === normExt) {
+    return false;
+  }
+  const shorter = normOrig.length <= normExt.length ? normOrig : normExt;
+  const longer = normOrig.length <= normExt.length ? normExt : normOrig;
+  if (longer.includes(shorter) && shorter.length / longer.length > 0.82) {
+    return false;
+  }
+  return true;
+}
+
+function normalizeSearchCompare(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\b20\d{2}\b/g, ' ')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export function extractWebSearchQuery(text: string, now: Date = new Date()): string {

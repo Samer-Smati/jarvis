@@ -21,7 +21,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery } from './fast-chat.util';
+import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery, isWebSearchMetaQuestion } from './fast-chat.util';
 import {
   buildWebSearchUnavailableMessage,
   isFailedWebSearchOutput,
@@ -131,6 +131,18 @@ export class OrchestratorService {
           emitter,
           trigger,
           clientPlatform,
+        );
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isWebSearchMetaQuestion(userText) && !images?.length) {
+        const handled = await this.runWebSearchMetaAnswer(
+          conversationId,
+          userText,
+          emitter,
+          trigger,
         );
         if (handled) {
           return;
@@ -929,6 +941,45 @@ export class OrchestratorService {
     await this.memory.appendMessage(conversationId, 'assistant', finalText);
     this.persistTurnLearning(userText, finalText);
     void this.memory.logEvent(trigger, `Weather: ${location}`);
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runWebSearchMetaAnswer(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+  ): Promise<boolean> {
+    const last = await this.feedback.getLastForConversation(conversationId);
+    const recentAudits = await this.guardrails.recentAudit(30);
+    const lastSearchAudit = recentAudits.find((row) => row.action === 'web_search');
+    const tools = last?.toolsUsed?.split(',').map((s) => s.trim()).filter(Boolean) ?? [];
+    const usedWebSearch = tools.includes('web_search');
+
+    let finalText: string;
+    if (usedWebSearch) {
+      const outcome = lastSearchAudit?.outcome;
+      const outcomeNote =
+        outcome === 'success'
+          ? 'The search succeeded.'
+          : outcome
+            ? `Search outcome was: ${outcome}.`
+            : '';
+      finalText = `Yes, sir — that answer used a live web_search call, not training data alone. ${outcomeNote}`.trim();
+    } else if (last) {
+      const toolNote = last.toolsUsed?.trim()
+        ? `Tools logged for that turn: ${last.toolsUsed}.`
+        : 'No tools were logged for that turn.';
+      finalText = `No, sir — that answer did not use web_search. It was generated without a live search. ${toolNote}`;
+    } else {
+      finalText =
+        "I don't have a logged prior turn for this conversation, sir — I can't confirm whether the last answer used live web search.";
+    }
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    void this.memory.logEvent(trigger, 'Web search meta question answered from interaction log');
     emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
     emitter.onDone(finalText);
     return true;
