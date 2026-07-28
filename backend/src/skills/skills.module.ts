@@ -1,6 +1,8 @@
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CalendarEventEntity } from './entities/calendar-event.entity';
+import { PortfolioEntity } from './entities/portfolio.entity';
+import { PriceHistoryEntity } from './entities/price-history.entity';
 import { ReminderEntity } from './entities/reminder.entity';
 import { CalendarSkill } from './impl/calendar.skill';
 import { CodingSkill } from './impl/coding.skill';
@@ -15,6 +17,7 @@ import { SandboxSkill } from './impl/sandbox.skill';
 import { SmartHomeSkill } from './impl/smart-home.skill';
 import { MediaSkill } from './impl/stub.skills';
 import { BrainSkill } from './impl/brain.skill';
+import { CryptoMonitorSkill } from './impl/crypto-monitor.skill';
 import { SelfImproveSkill } from './impl/self-improve.skill';
 import { WeatherSkill } from './impl/weather.skill';
 import { WebSearchSkill } from './impl/web-search.skill';
@@ -23,7 +26,7 @@ import { SkillRegistry } from './skill.registry';
 
 @Global()
 @Module({
-  imports: [TypeOrmModule.forFeature([ReminderEntity, CalendarEventEntity])],
+  imports: [TypeOrmModule.forFeature([ReminderEntity, CalendarEventEntity, PortfolioEntity, PriceHistoryEntity])],
   providers: [
     DatetimeSkill,
     WebSearchSkill,
@@ -37,6 +40,7 @@ import { SkillRegistry } from './skill.registry';
     SmartHomeSkill,
     MediaSkill,
     BrainSkill,
+    CryptoMonitorSkill,
     SelfImproveSkill,
     SandboxSkill,
     PersonaSkill,
@@ -56,6 +60,7 @@ import { SkillRegistry } from './skill.registry';
         SmartHomeSkill,
         MediaSkill,
         BrainSkill,
+        CryptoMonitorSkill,
         SelfImproveSkill,
         SandboxSkill,
         PersonaSkill,
@@ -65,6 +70,6 @@ import { SkillRegistry } from './skill.registry';
     },
     SkillRegistry,
   ],
-  exports: [SkillRegistry, TypeOrmModule],
+  exports: [SkillRegistry, TypeOrmModule, CryptoMonitorSkill],
 })
 export class SkillsModule {}

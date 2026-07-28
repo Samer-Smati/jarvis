@@ -8,6 +8,7 @@ import { MemoryService } from '../memory/memory.service';
 import { LessonsService } from '../lessons/lessons.service';
 import { CalendarEventEntity } from '../skills/entities/calendar-event.entity';
 import { ReminderEntity } from '../skills/entities/reminder.entity';
+import { CryptoMonitorSkill } from '../skills/impl/crypto-monitor.skill';
 
 @Injectable()
 export class SchedulerService {
@@ -22,6 +23,7 @@ export class SchedulerService {
     private readonly memory: MemoryService,
     private readonly lessons: LessonsService,
     private readonly googleCalendar: GoogleCalendarService,
+    private readonly cryptoMonitor: CryptoMonitorSkill,
   ) {}
 
   @Cron(CronExpression.EVERY_MINUTE)
@@ -79,6 +81,15 @@ export class SchedulerService {
     this.gateway.notifyMorningBriefing(text);
     await this.memory.logEvent('briefing', text);
     this.logger.log(`Morning briefing: ${text}`);
+  }
+
+  @Cron(CronExpression.EVERY_DAY_AT_7AM)
+  async runCryptoPortfolioCheck(): Promise<void> {
+    try {
+      await this.cryptoMonitor.runDailyCheck();
+    } catch (error) {
+      this.logger.warn(`Crypto portfolio check failed: ${(error as Error).message}`);
+    }
   }
 
   @Cron(CronExpression.EVERY_WEEK)
