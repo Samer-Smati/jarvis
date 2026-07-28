@@ -18,6 +18,7 @@ export const SKILL_PERMISSIONS: SkillPermission[] = [
   { name: 'read_files', tier: 'read' },
   { name: 'device_control', tier: 'write' },
   { name: 'send_email', tier: 'network', requiresEnv: ['SMTP_HOST'] },
+  { name: 'crypto_monitor', tier: 'network' },
   { name: 'coding_assistant', tier: 'sandbox', desktopOnly: true },
   { name: 'sandbox_exec', tier: 'sandbox', desktopOnly: true },
   { name: 'smart_home', tier: 'network', requiresEnv: ['HOME_ASSISTANT_URL'] },
