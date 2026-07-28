@@ -12,6 +12,11 @@ import { XaiProvider } from './xai.provider';
 import { LmStudioProvider } from './lmstudio.provider';
 import { OllamaProvider } from './ollama.provider';
 import { LlmChatOptions, LlmChatResult, LlmProvider, ChatMessage } from './llm.types';
+import {
+  providerCanAcceptMessages,
+  providerInputCharCap,
+  trimMessagesForLlm,
+} from './message-trim.util';
 
 const CLOUD_FALLBACK_ORDER = ['gemini', 'openrouter', 'groq', 'claude', 'xai'] as const;
 
@@ -68,15 +73,20 @@ export class LlmService implements LlmProvider {
   async chat(options: LlmChatOptions): Promise<LlmChatResult> {
     await this.ensureLocalRuntime();
     const previous = this.active;
+    const providerName = options.route?.provider ?? this.active.name;
+    const charCap = providerInputCharCap(providerName);
+    const trimmedMessages = trimMessagesForLlm(options.messages, charCap);
+    const trimmedOptions: LlmChatOptions = { ...options, messages: trimmedMessages };
+
     if (options.route?.provider) {
       this.setProvider(options.route.provider);
     }
     try {
       let result: LlmChatResult;
       if (!isServerlessLlmProvider(this.active.name)) {
-        result = await this.active.chat(options);
+        result = await this.active.chat(trimmedOptions);
       } else {
-        result = await this.chatWithCloudFallback(options);
+        result = await this.chatWithCloudFallback(trimmedOptions);
       }
       if (options.tools?.length) {
         const originalContent = result.content;
@@ -117,6 +127,12 @@ export class LlmService implements LlmProvider {
     for (const name of order) {
       const provider = this.providers.get(name);
       if (!provider) {
+        continue;
+      }
+      if (!providerCanAcceptMessages(name, options.messages)) {
+        this.logger.warn(
+          `Cloud fallback skip: ${name} — payload too large (${options.messages.length} messages)`,
+        );
         continue;
       }
       const probe = provider as LlmProvider & {

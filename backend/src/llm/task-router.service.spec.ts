@@ -14,12 +14,12 @@ describe('TaskRouterService budget and context caps', () => {
     router = new TaskRouterService();
   });
 
-  it('downgrades to quick_qa when daily budget exceeded with user notice', () => {
+  it('downgrades to reasoning on serverless when daily budget exceeded with user notice', () => {
     router.setBudgetState(600_000);
     const route = router.resolve('refactor orchestrator.service.ts', undefined, 500);
 
     expect(route.requestedTask).toBe('coding');
-    expect(route.task).toBe('quick_qa');
+    expect(route.task).toBe('reasoning');
     expect(route.budgetDowngraded).toBe(true);
     expect(route.userNotice).toMatch(/budget/i);
     expect(route.reason).toMatch(/budget cap fallback/i);

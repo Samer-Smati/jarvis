@@ -124,17 +124,24 @@ export class TaskRouterService {
 
     if (this.isOverBudget()) {
       budgetDowngraded = true;
-      task = 'quick_qa';
+      task = isServerlessRuntime() ? 'reasoning' : 'quick_qa';
       const status = this.getBudgetStatus();
       const reason = `daily budget cap reached (${status.dailyTokens}/${status.capTokens} tokens)`;
-      this.logger.warn(`Route downgrade: ${requestedTask} → quick_qa — ${reason}`);
-      notices.push(`Daily LLM budget reached, sir — I switched to a lighter model for this reply.`);
+      this.logger.warn(`Route downgrade: ${requestedTask} → ${task} — ${reason}`);
+      notices.push(
+        isServerlessRuntime()
+          ? `Daily LLM budget reached, sir — I switched to a lighter Gemini route for this reply.`
+          : `Daily LLM budget reached, sir — I switched to a lighter model for this reply.`,
+      );
     }
 
     let routeEntry = this.config.routes[task]?.[runtime] ?? this.config.default;
     const maxInput = routeEntry.maxInputChars ?? DEFAULT_MAX_INPUT[task] ?? 30_000;
 
-    if (contextChars > maxInput && task === 'quick_qa') {
+    if (
+      contextChars > maxInput &&
+      (task === 'quick_qa' || routeEntry.provider === 'groq')
+    ) {
       contextDowngraded = true;
       task = CONTEXT_OVERFLOW_FALLBACK;
       routeEntry = this.config.routes[task]?.[runtime] ?? this.config.default;
