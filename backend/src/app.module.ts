@@ -6,6 +6,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ChatModule } from './chat/chat.module';
+import { FeedbackModule } from './feedback/feedback.module';
 import { GuardrailsModule } from './guardrails/guardrails.module';
 import { LlmModule } from './llm/llm.module';
 import { MemoryModule } from './memory/memory.module';
@@ -106,6 +107,7 @@ function resolveSqlJsWasmBinary(): Buffer {
     SkillsModule,
     IntegrationsModule,
     OrchestratorModule,
+    FeedbackModule,
     ChatModule,
     ...voiceModules,
     HealthModule,

@@ -757,3 +757,16 @@
     font-size: 0.48rem;
   }
 }
+
+.memory-actions {
+  margin-top: 0.25rem;
+
+  .mem-btn {
+    background: transparent;
+    border: 1px solid rgba(0, 212, 255, 0.2);
+    color: #8ecae6;
+    border-radius: 4px;
+    padding: 0.1rem 0.35rem;
+    cursor: pointer;
+  }
+}

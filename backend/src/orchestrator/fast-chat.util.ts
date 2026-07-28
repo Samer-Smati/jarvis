@@ -123,6 +123,44 @@ export function isBrainCleanupRequest(text: string): boolean {
     /\b(brain|graph|wiki)\b.*\b(clean\s?up|clear|prune|fix)\b/i.test(t);
 }
 
+/** User asks for weather — call get_weather directly (no permission needed). */
+export function isWeatherRequest(text: string): boolean {
+  const t = text.trim();
+  return /\b(weather|forecast|temperature|rain|météo|meteo|température|ta9es|t9es|t9os|jaw|الطقس|الجو|chnawa)\b/i.test(t);
+}
+
+export function extractWeatherLocation(text: string): string | null {
+  const t = text.trim();
+  const patterns = [
+    /\b(?:weather|forecast|temperature|météo|meteo|ta9es|t9es|jaw)\s+(?:in|for|at|à|a|fi|f|en)\s+([^?.!,\n]+)/i,
+    /\b(?:in|for|at|à|a|fi|f|en)\s+([^?.!,\n]+?)\s+(?:weather|forecast|météo|meteo|ta9es|jaw)\b/i,
+    /\bwhat(?:'s| is|s)\s+(?:the\s+)?weather\s+(?:in|for|at|à|fi)\s+([^?.!,\n]+)/i,
+    /\bhow(?:'s| is)\s+(?:the\s+)?weather\s+(?:in|for|at|à|fi)\s+([^?.!,\n]+)/i,
+    /\bchnawa\s+(?:el\s+)?(?:ta9es|jaw|t9es)\s+(?:fi|f)\s+([^?.!,\n]+)/i,
+    /\b(?:ta9es|jaw|t9es)\s+(?:fi|f)\s+([^?.!,\n]+)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = t.match(pattern);
+    if (match?.[1]) {
+      return cleanWeatherPlace(match[1]);
+    }
+  }
+  const cityMatch = t.match(
+    /\b(Tunis|Tunisia|Sfax|Sousse|Paris|London|Berlin|New York|Dubai|Cairo|Algiers|Marseille|Lyon)\b/i,
+  );
+  if (cityMatch?.[1] && isWeatherRequest(t)) {
+    return cityMatch[1];
+  }
+  return null;
+}
+
+function cleanWeatherPlace(raw: string): string {
+  return raw
+    .trim()
+    .replace(/\s*(today|now|tawa|lyoum|please|sir|monsieur|siidi|\?|!)+$/i, '')
+    .trim();
+}
+
 /** Skip filing raw upgrade/tool turns into the brain wiki. */
 export function shouldSkipBrainLearning(userText: string, assistantText: string): boolean {
   const user = userText.trim();

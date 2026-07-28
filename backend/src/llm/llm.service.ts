@@ -5,11 +5,12 @@ import { EnsureLlmService } from './ensure-llm.service';
 import { GeminiProvider } from './gemini.provider';
 import { GroqProvider } from './groq.provider';
 import { isServerlessLlmProvider } from './llm-provider.util';
+import { normalizeToolCalls } from '../skills/tool-schema.normalizer';
 import { OpenRouterProvider } from './openrouter.provider';
 import { XaiProvider } from './xai.provider';
-import { LlmChatOptions, LlmChatResult, LlmProvider } from './llm.types';
 import { LmStudioProvider } from './lmstudio.provider';
 import { OllamaProvider } from './ollama.provider';
+import { LlmChatOptions, LlmChatResult, LlmProvider, ChatMessage } from './llm.types';
 
 const CLOUD_FALLBACK_ORDER = ['gemini', 'openrouter', 'groq', 'claude', 'xai'] as const;
 
@@ -65,10 +66,36 @@ export class LlmService implements LlmProvider {
 
   async chat(options: LlmChatOptions): Promise<LlmChatResult> {
     await this.ensureLocalRuntime();
-    if (!isServerlessLlmProvider(this.active.name)) {
-      return this.active.chat(options);
+    const previous = this.active;
+    if (options.route?.provider) {
+      this.setProvider(options.route.provider);
     }
-    return this.chatWithCloudFallback(options);
+    try {
+      let result: LlmChatResult;
+      if (!isServerlessLlmProvider(this.active.name)) {
+        result = await this.active.chat(options);
+      } else {
+        result = await this.chatWithCloudFallback(options);
+      }
+      if (options.tools?.length) {
+        result = {
+          ...result,
+          toolCalls: normalizeToolCalls(result.toolCalls, result.content, options.tools),
+        };
+      }
+      return result;
+    } finally {
+      if (options.route?.provider && previous.name !== this.active.name) {
+        this.active = previous;
+      }
+    }
+  }
+
+  chatWithRoute(userText: string, options: LlmChatOptions): Promise<LlmChatResult> {
+    return this.chat(options).then((result) => {
+      const tokens = estimateTokens(options.messages, result.content);
+      return result;
+    });
   }
 
   private async chatWithCloudFallback(options: LlmChatOptions): Promise<LlmChatResult> {
@@ -151,4 +178,9 @@ export class LlmService implements LlmProvider {
 
     this.setProvider(ensured.provider);
   }
+}
+
+function estimateTokens(messages: ChatMessage[], response: string): number {
+  const inputChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
+  return Math.ceil((inputChars + response.length) / 4);
 }

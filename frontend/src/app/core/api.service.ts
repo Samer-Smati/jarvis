@@ -66,6 +66,42 @@ export class ApiService {
     return this.http.get<MemoryFact[]>(`${this.base}/memory/facts`);
   }
 
+  pinFact(id: string, pinned: boolean): Observable<MemoryFact> {
+    return this.http.patch<MemoryFact>(`${this.base}/memory/facts/${id}/pin`, { pinned });
+  }
+
+  forgetFact(id: string): Observable<{ ok: boolean }> {
+    return this.http.delete<{ ok: boolean }>(`${this.base}/memory/facts/${id}`);
+  }
+
+  createFact(text: string, memoryType: 'fact' | 'preference' | 'project' = 'fact'): Observable<MemoryFact> {
+    return this.http.post<MemoryFact>(`${this.base}/memory/facts`, { text, memoryType, source: 'chat-pin' });
+  }
+
+  rateFeedback(id: string, rating: number, correction?: string): Observable<unknown> {
+    return this.http.patch(`${this.base}/feedback/${id}`, { rating, correction });
+  }
+
+  personaCompare(): Observable<{ active: string; draft: string; changed: boolean }> {
+    return this.http.get<{ active: string; draft: string; changed: boolean }>(`${this.base}/persona/compare`);
+  }
+
+  voiceConfig(): Observable<{
+    wakeWordEnabled: boolean;
+    wakeWordEngine: string;
+    sttPrimary: string;
+    ttsPrimary: string;
+    cloudSttFallback: boolean;
+  }> {
+    return this.http.get<{
+      wakeWordEnabled: boolean;
+      wakeWordEngine: string;
+      sttPrimary: string;
+      ttsPrimary: string;
+      cloudSttFallback: boolean;
+    }>(`${this.base}/voice/config`);
+  }
+
   brainGraph(): Observable<BrainGraph> {
     return this.http.get<BrainGraph>(`${this.base}/brain/graph`);
   }

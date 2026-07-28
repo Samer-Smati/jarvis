@@ -96,7 +96,7 @@ export class ChatSseController {
       onToolEnd: (toolName, output, success) => send('tool_end', { toolName, output, success }),
       onConfirmationRequest: (request) => send('confirmation_request', { request }),
       onPermissionRequest: (request) => send('permission_request', { request }),
-      onDone: (finalText) => finish('done', { finalText }),
+      onDone: (finalText, meta) => finish('done', { finalText, ...meta }),
       onError: (message) => finish('agent_error', { message }),
     };
 

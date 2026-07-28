@@ -1,0 +1,11 @@
+{
+  "activeVersion": "base",
+  "versions": {
+    "base": {
+      "file": "personality/base.md",
+      "approvedAt": "2026-07-28",
+      "approvedBy": "Samer SMATI"
+    }
+  },
+  "draftPath": "Persona/Draft"
+}

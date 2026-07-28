@@ -31,8 +31,15 @@ export interface LlmChatOptions {
   tools?: ToolDefinition[];
   signal?: AbortSignal;
   onToken?: (token: string) => void;
-  /** Stream model reasoning / chain-of-thought when the provider exposes it. */
   onThinking?: (token: string) => void;
+  route?: { provider?: string; model?: string; maxTokens?: number; timeoutMs?: number };
+}
+
+export interface LlmRouteContext {
+  task?: string;
+  reason?: string;
+  provider?: string;
+  model?: string;
 }
 
 export interface LlmChatResult {

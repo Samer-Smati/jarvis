@@ -10,6 +10,7 @@ import { LlmService } from './llm.service';
 import { LLM_PROVIDER } from './llm.types';
 import { LmStudioProvider } from './lmstudio.provider';
 import { OllamaProvider } from './ollama.provider';
+import { TaskRouterService } from './task-router.service';
 
 @Global()
 @Module({
@@ -23,9 +24,10 @@ import { OllamaProvider } from './ollama.provider';
     LmStudioProvider,
     EmbeddingService,
     EnsureLlmService,
+    TaskRouterService,
     LlmService,
     { provide: LLM_PROVIDER, useExisting: LlmService },
   ],
-  exports: [LLM_PROVIDER, LlmService, EmbeddingService, EnsureLlmService],
+  exports: [LLM_PROVIDER, LlmService, EmbeddingService, EnsureLlmService, TaskRouterService],
 })
 export class LlmModule {}

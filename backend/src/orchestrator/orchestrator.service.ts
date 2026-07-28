@@ -3,19 +3,23 @@ import { BrainService } from '../brain/brain.service';
 import { GuardrailService } from '../guardrails/guardrail.service';
 import type { ChatMessage, LlmProvider, ToolCall, ToolDefinition, ChatImagePart } from '../llm/llm.types';
 import { LLM_PROVIDER } from '../llm/llm.types';
+import { LlmService } from '../llm/llm.service';
+import { TaskRouterService } from '../llm/task-router.service';
 import { MemoryService } from '../memory/memory.service';
+import { FeedbackService } from '../feedback/feedback.service';
 import { scopeForDeviceTarget } from '../permissions/permission.types';
 import { PermissionsService } from '../permissions/permissions.service';
 import { SkillRegistry } from '../skills/skill.registry';
+import { isSkillAllowedOnRuntime, missingEnvForSkill, runtimeProfile, permissionForSkill, maxSkillTier, isTierGranted, tierDenialMessage, runtimeDenialMessage } from '../skills/permissions';
 import { OrchestratorEmitter } from './orchestrator.events';
-import { JARVIS_SYSTEM_PROMPT } from './personality';
+import { PersonalityService } from './personality.service';
 import {
   buildLanguageHint,
   buildToolResultLanguageReminder,
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning } from './fast-chat.util';
+import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation } from './fast-chat.util';
 
 const MAX_TOOL_ITERATIONS = 8;
 const SERVERLESS_MAX_TOOL_ITERATIONS = 6;
@@ -40,11 +44,15 @@ export class OrchestratorService {
 
   constructor(
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
+    private readonly llmService: LlmService,
+    private readonly taskRouter: TaskRouterService,
     private readonly skills: SkillRegistry,
     private readonly memory: MemoryService,
     private readonly brain: BrainService,
     private readonly guardrails: GuardrailService,
     private readonly permissions: PermissionsService,
+    private readonly personality: PersonalityService,
+    private readonly feedback: FeedbackService,
   ) {}
 
   get providerName(): string {
@@ -77,6 +85,8 @@ export class OrchestratorService {
   ): Promise<void> {
     const abort = new AbortController();
     this.activeRuns.set(conversationId, abort);
+    const turnStarted = Date.now();
+    const toolsUsed: string[] = [];
 
     try {
       const storedText =
@@ -96,6 +106,19 @@ export class OrchestratorService {
 
       if (isResponsiveUpgradeRequest(userText) && !images?.length) {
         const handled = await this.runResponsivePresetUpgrade(
+          conversationId,
+          userText,
+          emitter,
+          trigger,
+          clientPlatform,
+        );
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isWeatherRequest(userText) && !images?.length) {
+        const handled = await this.runWeatherLookup(
           conversationId,
           userText,
           emitter,
@@ -187,7 +210,8 @@ export class OrchestratorService {
         }
       }
 
-      const facts = await this.memory.recallFacts(userText);
+      const memoryContext = await this.memory.buildContext(userText);
+      const facts = memoryContext.facts;
       const brainContext = await this.brain.getContextBlock(userText);
       const now = new Date().toLocaleString('en-GB', {
         dateStyle: 'full',
@@ -199,10 +223,19 @@ export class OrchestratorService {
         .map((m) => String(m.content ?? '').replace(/^\[[^\]]+\]\s*/, ''));
       const languageMode = resolveLanguageMode(userText, recentUserTexts);
 
-      let systemPrompt = `${JARVIS_SYSTEM_PROMPT}\n\nCurrent date and time: ${now}. Use this when interpreting relative dates like "tomorrow" or "next week".`;
+      let systemPrompt = `${this.personality.getActivePrompt()}\n\nCurrent date and time: ${now}. Use this when interpreting relative dates like "tomorrow" or "next week".`;
       systemPrompt += buildLanguageHint(userText, recentUserTexts);
       if (facts.length) {
         systemPrompt += `\n\nKnown facts about the user:\n${facts.map((f) => `- ${f}`).join('\n')}`;
+      }
+      if (memoryContext.preferences.length) {
+        systemPrompt += `\n\nUser preferences:\n${memoryContext.preferences.map((p) => `- ${p}`).join('\n')}`;
+      }
+      if (memoryContext.projects.length) {
+        systemPrompt += `\n\nActive projects:\n${memoryContext.projects.map((p) => `- ${p}`).join('\n')}`;
+      }
+      if (memoryContext.conversationHits.length) {
+        systemPrompt += `\n\nRelevant past conversations:\n${memoryContext.conversationHits.map((h) => `- ${h}`).join('\n')}`;
       }
       if (brainContext.trim()) {
         systemPrompt += `\n\nJARVIS Brain (persistent wiki — hot cache + linked pages, claude-obsidian pattern):\n${brainContext}`;
@@ -243,6 +276,13 @@ export class OrchestratorService {
       }
       if (images?.length) {
         systemPrompt += `\n\nThe user attached ${images.length} image(s) this turn. Describe what you see in the image(s) and answer their question.`;
+      }
+
+      const contextChars = history.reduce((sum, m) => sum + String(m.content ?? '').length, 0) + userText.length;
+      const taskRoute = this.taskRouter.resolve(userText, images, contextChars);
+      systemPrompt += `\n\nLLM route: ${taskRoute.task} (${taskRoute.reason}).`;
+      if (taskRoute.userNotice) {
+        systemPrompt += `\n\nBriefly mention to the user (one short sentence): ${taskRoute.userNotice}`;
       }
 
       const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }, ...history];
@@ -291,16 +331,20 @@ export class OrchestratorService {
           });
         }
         let streamedContent = '';
-        const result = await this.llm.chat({
+        const result = await this.llmService.chatWithRoute(userText, {
           messages,
           tools,
           signal: abort.signal,
+          route: taskRoute.route,
           onToken: (token) => {
             streamedContent += token;
             emitter.onToken(token);
           },
           onThinking: (token) => emitter.onThinking?.(token),
         });
+        this.taskRouter.recordUsage(
+          estimateTurnTokens(messages, result.content),
+        );
 
         if (!result.toolCalls.length) {
           finalText = (result.content || streamedContent).trim();
@@ -314,6 +358,7 @@ export class OrchestratorService {
         });
 
         for (const call of result.toolCalls) {
+          toolsUsed.push(call.name);
           const output = await this.executeToolCall(conversationId, call, emitter, trigger, clientPlatform);
           lastToolOutput = output;
           messages.push({
@@ -346,12 +391,20 @@ export class OrchestratorService {
         finalText = sanitizeSelfImproveDenial(finalText, userText);
         finalText = sanitizeLinkDenial(finalText, userText);
         finalText = sanitizeBrainDenial(finalText, userText);
+        finalText = sanitizeWeatherDenial(finalText, userText);
+        if (taskRoute.userNotice && !finalText.includes(taskRoute.userNotice.slice(0, 24))) {
+          finalText = `${taskRoute.userNotice} ${finalText}`;
+        }
         await this.memory.appendMessage(conversationId, 'assistant', finalText);
         this.persistTurnLearning(userText, finalText);
       }
       void this.memory.logEvent(trigger, `Handled: ${userText.slice(0, 120)}`);
       emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
-      emitter.onDone(finalText);
+      await this.finishTurn(conversationId, userText, finalText, emitter, {
+        taskRoute: taskRoute.task,
+        toolsUsed,
+        latencyMs: Date.now() - turnStarted,
+      });
     } catch (error) {
       const message = abort.signal.aborted
         ? 'Action halted by kill switch.'
@@ -397,6 +450,30 @@ export class OrchestratorService {
     if (!skill) {
       emitter.onToolEnd(call.name, 'Unknown skill.', false);
       return `Error: unknown skill "${call.name}".`;
+    }
+
+    const profile = runtimeProfile();
+    if (!isSkillAllowedOnRuntime(skill.name, profile)) {
+      const msg = runtimeDenialMessage(skill.name, profile);
+      emitter.onToolEnd(call.name, msg, false);
+      await this.guardrails.audit(call.name, trigger, msg, 'permission_denied');
+      return msg;
+    }
+
+    const perm = permissionForSkill(skill.name);
+    const grantedTier = maxSkillTier();
+    if (perm && !isTierGranted(perm.tier, grantedTier)) {
+      const msg = tierDenialMessage(skill.name, perm.tier, grantedTier);
+      emitter.onToolEnd(call.name, msg, false);
+      await this.guardrails.audit(call.name, trigger, msg, 'permission_denied');
+      return msg;
+    }
+
+    const missingEnv = missingEnvForSkill(skill.name);
+    if (missingEnv.length) {
+      const msg = `Skill "${skill.name}" is not configured. Missing env: ${missingEnv.join(', ')}.`;
+      emitter.onToolEnd(call.name, msg, false);
+      return msg;
     }
 
     if (skill.name === 'device_control') {
@@ -454,11 +531,35 @@ export class OrchestratorService {
     return result.output;
   }
 
+  private async finishTurn(
+    conversationId: string,
+    userText: string,
+    finalText: string,
+    emitter: OrchestratorEmitter,
+    meta?: { taskRoute?: string; toolsUsed?: string[]; latencyMs?: number },
+  ): Promise<void> {
+    if (!finalText?.trim()) {
+      emitter.onDone(finalText);
+      return;
+    }
+    const logged = await this.feedback.logInteraction({
+      conversationId,
+      prompt: userText,
+      response: finalText,
+      taskRoute: meta?.taskRoute,
+      provider: this.llm.name,
+      toolsUsed: meta?.toolsUsed,
+      latencyMs: meta?.latencyMs,
+    });
+    emitter.onDone(finalText, { interactionId: logged.id, taskRoute: meta?.taskRoute });
+  }
+
   private persistTurnLearning(userText: string, assistantText: string): void {
     if (shouldSkipBrainLearning(userText, assistantText)) {
       return;
     }
     void this.brain.learnFromTurn(userText, assistantText);
+    void this.memory.indexConversationTurn(userText, assistantText);
   }
 
   private skillNeedsConfirmation(
@@ -663,6 +764,69 @@ export class OrchestratorService {
     await this.memory.appendMessage(conversationId, 'assistant', finalText);
     this.persistTurnLearning(userText, finalText);
     void this.memory.logEvent(trigger, `URL ingest: ${url.slice(0, 120)}`);
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runWeatherLookup(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+    clientPlatform: 'desktop' | 'web',
+  ): Promise<boolean> {
+    const skill = this.skills.get('get_weather');
+    if (!skill) {
+      return false;
+    }
+
+    let location = extractWeatherLocation(userText);
+    if (!location) {
+      const facts = await this.memory.recallFacts('home city location tunis where user lives');
+      const fromFacts = facts
+        .join(' ')
+        .match(/\b(Tunis|Sfax|Sousse|Paris|London|Berlin|Cairo|Algiers|Marseille)\b/i);
+      location = fromFacts?.[1] ?? null;
+    }
+
+    if (!location) {
+      const finalText =
+        'Which city should I check the weather for, sir? Name the place and I will pull live conditions from Open-Meteo.';
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    emitter.onProgress?.({
+      stage: 'weather',
+      message: `Checking weather for ${location}…`,
+      percent: 40,
+      toolName: 'get_weather',
+    });
+
+    const output = await this.executeToolCall(
+      conversationId,
+      {
+        id: 'weather-lookup',
+        name: 'get_weather',
+        arguments: { location, days: 3 },
+      },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    const finalText = output.startsWith('Error:') || output.includes("couldn't find")
+      ? `I couldn't fetch weather for ${location}, sir. ${output.split('\n')[0]}`
+      : output.includes('Now in')
+        ? output.split('\n').slice(0, 4).join(' ')
+        : output;
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    this.persistTurnLearning(userText, finalText);
+    void this.memory.logEvent(trigger, `Weather: ${location}`);
     emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
     emitter.onDone(finalText);
     return true;
@@ -956,6 +1120,20 @@ function sanitizeBrainDenial(text: string, userText: string): string {
   return text;
 }
 
+function sanitizeWeatherDenial(text: string, userText: string): string {
+  if (!isWeatherRequest(userText)) {
+    return text;
+  }
+  if (
+    /\b(don't have permission|do not have permission|can't access weather|cannot access weather|no permission|unable to access weather|don't have access to weather|cannot provide weather|can't provide weather)\b/i.test(
+      text,
+    )
+  ) {
+    return 'Sir, I do have live weather access via get_weather — tell me the city and I will fetch current conditions and the forecast now.';
+  }
+  return text;
+}
+
 function sanitizeSelfImproveDenial(text: string, userText: string): string {
   if (!/\bself[-_]?improve\b/i.test(userText)) {
     return text;
@@ -1011,4 +1189,9 @@ function selfImproveProgressLabel(action: string, args: Record<string, unknown>)
     default:
       return 'Self-upgrade in progress';
   }
+}
+
+function estimateTurnTokens(messages: ChatMessage[], response: string): number {
+  const inputChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
+  return Math.ceil((inputChars + response.length) / 4);
 }

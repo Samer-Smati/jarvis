@@ -40,6 +40,8 @@ export interface ToolEndEvent {
 export interface DoneEvent {
   conversationId: string;
   finalText: string;
+  interactionId?: string;
+  taskRoute?: string;
 }
 
 export interface AgentErrorEvent {

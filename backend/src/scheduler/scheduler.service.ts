@@ -78,4 +78,12 @@ export class SchedulerService {
     await this.memory.logEvent('briefing', text);
     this.logger.log(`Morning briefing: ${text}`);
   }
+
+  @Cron(CronExpression.EVERY_WEEK)
+  async pruneStaleMemory(): Promise<void> {
+    const pruned = await this.memory.pruneStaleMemories(90);
+    if (pruned > 0) {
+      await this.memory.logEvent('memory_prune', `Pruned ${pruned} stale facts (pinned untouched).`);
+    }
+  }
 }

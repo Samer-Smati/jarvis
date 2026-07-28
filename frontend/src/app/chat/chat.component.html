@@ -108,8 +108,20 @@
           <span *ngIf="!message.content?.trim() && message.streaming" class="thinking">{{ message.statusHint || latestProgress(message)?.message || 'Working, sir…' }}</span>
           {{ message.content }}<span class="cursor" *ngIf="message.streaming && message.content?.trim()">▌</span>
         </div>
+        <app-feedback-actions
+          *ngIf="message.role === 'assistant'"
+          [interactionId]="message.interactionId"
+          [streaming]="!!message.streaming">
+        </app-feedback-actions>
+        <div class="memory-actions" *ngIf="message.role === 'assistant' && !message.streaming && message.content?.trim()">
+          <button type="button" class="mem-btn" (click)="pinLastFact(message)" title="Pin as fact">
+            <i class="pi pi-bookmark"></i>
+          </button>
+        </div>
       </div>
     </div>
+
+    <app-persona-review></app-persona-review>
 
     <div *ngFor="let request of permissionRequests" class="confirmation permission hud-panel">
       <i class="pi pi-desktop"></i>

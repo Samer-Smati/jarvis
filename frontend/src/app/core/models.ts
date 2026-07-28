@@ -28,6 +28,10 @@ export interface ChatMessage {
   progressPercent?: number;
   tools?: ToolActivity[];
   images?: ChatImageAttachment[];
+  interactionId?: string;
+  feedback?: 'up' | 'down' | null;
+  showCorrection?: boolean;
+  correctionText?: string;
 }
 
 export interface ChatImageAttachment {
@@ -99,6 +103,8 @@ export interface EpisodicEvent {
 export interface MemoryFact {
   id: string;
   text: string;
+  memoryType?: 'fact' | 'preference' | 'project';
+  pinned?: boolean;
   createdAt: string;
 }
 

@@ -8,7 +8,10 @@ import { DatetimeSkill } from './impl/datetime.skill';
 import { DeviceControlSkill } from './impl/device-control.skill';
 import { EmailSkill } from './impl/email.skill';
 import { FilesystemSkill } from './impl/filesystem.skill';
+import { ModelFreshnessSkill } from './impl/model-freshness.skill';
+import { PersonaSkill } from './impl/persona.skill';
 import { RemindersSkill } from './impl/reminders.skill';
+import { SandboxSkill } from './impl/sandbox.skill';
 import { SmartHomeSkill } from './impl/smart-home.skill';
 import { MediaSkill } from './impl/stub.skills';
 import { BrainSkill } from './impl/brain.skill';
@@ -35,6 +38,9 @@ import { SkillRegistry } from './skill.registry';
     MediaSkill,
     BrainSkill,
     SelfImproveSkill,
+    SandboxSkill,
+    PersonaSkill,
+    ModelFreshnessSkill,
     {
       provide: SKILLS,
       inject: [
@@ -51,6 +57,9 @@ import { SkillRegistry } from './skill.registry';
         MediaSkill,
         BrainSkill,
         SelfImproveSkill,
+        SandboxSkill,
+        PersonaSkill,
+        ModelFreshnessSkill,
       ],
       useFactory: (...skills: Skill[]) => skills,
     },

@@ -142,11 +142,6 @@ export class ChatController {
     return this.memory.recentEvents();
   }
 
-  @Get('memory/facts')
-  facts() {
-    return this.memory.listFacts();
-  }
-
   @Get('brain/status')
   async brainStatus() {
     const status = await this.brain.status();

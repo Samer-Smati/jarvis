@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ToolDefinition } from '../llm/llm.types';
+import { normalizeToolDefinitions } from './tool-schema.normalizer';
 import { Skill, SKILLS } from './skill.interface';
 
 @Injectable()
@@ -35,12 +36,13 @@ export class SkillRegistry {
   }
 
   toolDefinitions(): ToolDefinition[] {
-    return [...this.skills.values()]
+    const defs = [...this.skills.values()]
       .filter((skill) => !this.disabled.has(skill.name))
       .map((skill) => ({
         name: skill.name,
         description: skill.description,
         parameters: skill.parameters,
       }));
+    return normalizeToolDefinitions(defs);
   }
 }

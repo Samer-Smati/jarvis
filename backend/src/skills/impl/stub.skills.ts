@@ -39,8 +39,7 @@ export class MediaSkill implements Skill {
       success: false,
 
       output:
-
-        'Media control is not wired up yet. Spotify/Apple Music integration is planned for a later phase.',
+        'Media control is not configured yet. Set up Spotify/Apple Music integration in settings, or disable this skill.',
 
     };
 

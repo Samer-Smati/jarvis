@@ -39,7 +39,8 @@
     "test:human": "node scripts/test-human-e2e.js",
     "android:sync": "npm run build:mobile --prefix frontend && npx cap sync android --cwd frontend",
     "android:open": "npx cap open android --cwd frontend",
-    "android:apk": "node scripts/build-android-apk.js"
+    "android:apk": "node scripts/build-android-apk.js",
+    "export-feedback": "npx ts-node scripts/export-feedback.ts"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.2",

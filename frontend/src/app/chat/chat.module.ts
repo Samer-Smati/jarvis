@@ -9,9 +9,11 @@ import { TextareaModule } from 'primeng/textarea';
 import { TooltipModule } from 'primeng/tooltip';
 import { BrainModule } from '../brain/brain.module';
 import { ChatComponent } from './chat.component';
+import { FeedbackActionsComponent } from './feedback.component';
+import { PersonaReviewComponent } from './persona-review.component';
 
 @NgModule({
-  declarations: [ChatComponent],
+  declarations: [ChatComponent, FeedbackActionsComponent, PersonaReviewComponent],
   imports: [
     CommonModule,
     FormsModule,

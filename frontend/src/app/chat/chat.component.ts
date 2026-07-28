@@ -249,6 +249,7 @@ export class ChatComponent implements OnInit, OnDestroy {
         current.content = event.finalText || current.content;
         current.streaming = false;
         current.statusHint = undefined;
+        current.interactionId = event.interactionId;
         current.tools = this.compactToolBadges(current.tools);
         this.busy = false;
         if (event.finalText?.includes('BRAIN_GRAPH:') || /\bOpening your brain graph\b/i.test(event.finalText ?? '')) {
@@ -525,6 +526,21 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   openBrainGraph(): void {
     this.brainGraph.open();
+  }
+
+  pinLastFact(message: ChatMessage): void {
+    const text = message.content?.trim();
+    if (!text) {
+      return;
+    }
+    this.api.createFact(text.slice(0, 500), 'fact').subscribe({
+      next: () => {
+        this.toast.add({ severity: 'success', summary: 'Memory', detail: 'Fact pinned, sir.' });
+      },
+      error: () => {
+        this.toast.add({ severity: 'warn', summary: 'Memory', detail: 'Could not pin fact.' });
+      },
+    });
   }
 
   toggleMic(): void {

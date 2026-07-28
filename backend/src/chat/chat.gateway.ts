@@ -102,7 +102,7 @@ export class ChatGateway {
       onToolEnd: (toolName, output, success) => emit('tool_end', { toolName, output, success }),
       onConfirmationRequest: (request) => emit('confirmation_request', { request }),
       onPermissionRequest: (request) => emit('permission_request', { request }),
-      onDone: (finalText) => emit('done', { finalText }),
+      onDone: (finalText, meta) => emit('done', { finalText, ...meta }),
       onError: (message) => emit('agent_error', { message }),
     };
   }
