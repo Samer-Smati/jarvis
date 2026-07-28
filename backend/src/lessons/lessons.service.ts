@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -9,6 +9,7 @@ import { EmbeddingService } from '../llm/embedding.service';
 import { LlmService } from '../llm/llm.service';
 import type { TaskType } from '../llm/task-router.service';
 import { LessonEntity } from './entities/lesson.entity';
+import { BOOTSTRAP_LESSONS } from './default-lessons';
 import { LessonsRepository } from './lessons.repository';
 import type {
   CreateDirectLessonInput,
@@ -39,7 +40,7 @@ Respond ONLY as JSON:
 }`;
 
 @Injectable()
-export class LessonsService {
+export class LessonsService implements OnModuleInit {
   private readonly logger = new Logger(LessonsService.name);
   private readonly topN: number;
   private readonly minConfidence: number;
@@ -59,6 +60,34 @@ export class LessonsService {
     this.minConfidence = Number(config.get<string>('JARVIS_LESSONS_MIN_CONFIDENCE') ?? 0.55);
     this.mergeThreshold = Number(config.get<string>('JARVIS_LESSONS_MERGE_THRESHOLD') ?? 0.85);
     this.staleDays = Number(config.get<string>('JARVIS_LESSONS_STALE_DAYS') ?? 30);
+  }
+
+  async onModuleInit(): Promise<void> {
+    await this.ensureBootstrapLessons();
+  }
+
+  async ensureBootstrapLessons(): Promise<void> {
+    for (const def of BOOTSTRAP_LESSONS) {
+      const existing = await this.repository.findByBootstrapKey(def.key);
+      if (existing) {
+        continue;
+      }
+      const vector = await this.embeddings.tryEmbed(def.lessonText);
+      const row = await this.repository.create(
+        {
+          taskType: def.taskType,
+          triggerContext: `bootstrap:${def.key}`,
+          lessonText: def.lessonText,
+          confidenceScore: 1,
+          status: 'active',
+        },
+        vector ? JSON.stringify(vector) : undefined,
+      );
+      row.pinned = true;
+      row.reinforcementCount = 5;
+      await this.repository.saveEntity(row);
+      this.logger.log(`Bootstrap lesson [${def.taskType}]: ${def.key}`);
+    }
   }
 
   async extractFromInteraction(interactionId: string): Promise<void> {
@@ -169,7 +198,9 @@ export class LessonsService {
         .filter((l) => l.embedding)
         .map((l) => ({
           lesson: l,
-          score: cosineSimilarity(queryVector, JSON.parse(l.embedding as string) as number[]),
+          score:
+            cosineSimilarity(queryVector, JSON.parse(l.embedding as string) as number[]) +
+            (l.pinned ? 0.12 : 0),
         }))
         .sort((a, b) => b.score - a.score);
     }

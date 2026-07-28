@@ -21,6 +21,8 @@ describe('LessonsService', () => {
       | 'setStatus'
       | 'findArchiveCandidates'
       | 'archiveIds'
+      | 'findByBootstrapKey'
+      | 'saveEntity'
     >
   >;
   let embeddings: { tryEmbed: jest.Mock };
@@ -39,6 +41,8 @@ describe('LessonsService', () => {
       setStatus: jest.fn(),
       findArchiveCandidates: jest.fn().mockResolvedValue([]),
       archiveIds: jest.fn().mockResolvedValue(0),
+      findByBootstrapKey: jest.fn().mockResolvedValue(null),
+      saveEntity: jest.fn().mockImplementation(async (row: LessonEntity) => row),
     };
     embeddings = {
       tryEmbed: jest.fn().mockResolvedValue([1, 0, 0]),
@@ -163,5 +167,18 @@ describe('LessonsService', () => {
 
     expect(result.texts).toContain('Active lesson');
     expect(result.ids).toContain('a1');
+  });
+
+  it('ensureBootstrapLessons creates pinned audit lessons once', async () => {
+    repository.findByBootstrapKey.mockResolvedValue(null);
+    repository.create.mockImplementation(async (draft) => ({ ...draft, id: 'boot-1' } as LessonEntity));
+
+    await service.ensureBootstrapLessons();
+
+    expect(repository.findByBootstrapKey).toHaveBeenCalled();
+    expect(repository.create).toHaveBeenCalled();
+    expect(repository.saveEntity).toHaveBeenCalledWith(
+      expect.objectContaining({ pinned: true, reinforcementCount: 5 }),
+    );
   });
 });

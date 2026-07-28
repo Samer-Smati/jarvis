@@ -21,7 +21,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery, isWebSearchMetaQuestion } from './fast-chat.util';
+import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery, isWebSearchMetaQuestion, isCodeArchitectureQuestion, isPlanOnlyRequest } from './fast-chat.util';
 import {
   buildWebSearchUnavailableMessage,
   isFailedWebSearchOutput,
@@ -305,7 +305,10 @@ export class OrchestratorService {
         systemPrompt += `\n\nThe user is asking what you CAN upgrade — call self_improve with action=status ONCE, then answer in plain language from that output. Do NOT call inspect, write, commit, or pull_request in this turn. Offer 2–3 concrete upgrade ideas (UI, skills, voice, speed) and wait for their pick.`;
       }
       if (isConcreteSelfImproveRequest(userText) && !isResponsiveUpgradeRequest(userText)) {
-        systemPrompt += `\n\nThe user wants a REAL code upgrade on cloud. Use at most: one inspect with paths for needed files → one write (prefer small targeted edits, not rewriting entire large files) → pull_request. Skip redundant inspects and status calls. After pull_request succeeds, stop — do not call more tools. Never say sandbox is unmounted.`;
+        const planOnly = isPlanOnlyRequest(userText) || isCodeArchitectureQuestion(userText);
+        systemPrompt += planOnly
+          ? `\n\nThe user wants architecture/plan honesty from inspected files — call self_improve inspect on cited paths. Do NOT write or open a pull_request until they explicitly say to proceed.`
+          : `\n\nThe user wants a REAL code upgrade on cloud. Use at most: one inspect with paths for needed files → one write (prefer small targeted edits, not rewriting entire large files) → pull_request. Skip redundant inspects and status calls. After pull_request succeeds, stop — do not call more tools. Never merge unless the user explicitly asks. Never say sandbox is unmounted.`;
       }
       if (isResponsiveUpgradeRequest(userText)) {
         systemPrompt += `\n\nThe user wants responsive/mobile UI. Prefer self_improve action=apply_preset preset=responsive_chat then pull_request on the same branch. Do NOT read entire SCSS files first.`;
@@ -318,6 +321,17 @@ export class OrchestratorService {
       }
       if (isSelfImproveSkillSourceRequest(userText)) {
         systemPrompt += `\n\nThe user wants to upgrade the self_improve SKILL SOURCE FILE. It IS in the repo at backend/src/skills/impl/self-improve.skill.ts — NOT a hidden runtime tool. Workflow: self_improve inspect path=backend/src/skills/impl/self-improve.skill.ts mode=read → write that path → pull_request. Do NOT inspect "." or scripts/ instead. NEVER say the skill is built-in or unmodifiable.`;
+      }
+      if (isCodeArchitectureQuestion(userText)) {
+        systemPrompt +=
+          `\n\nThis turn asks how repo code, skills, schedulers, or PR deploys work. ` +
+          `You MUST call self_improve inspect on every file path you cite BEFORE describing contents. ` +
+          `Paste verbatim lines from inspect when quoting code — never fabricate module definitions or imports. ` +
+          `Vercel/serverless: scheduleModules is empty in app.module.ts — @Cron does not run on production. ` +
+          `New skills need skills.module.ts; entities under skills/entities/. No skill.yaml or backend/src/shared/.`;
+        if (isPlanOnlyRequest(userText)) {
+          systemPrompt += ` The user asked for plan/answers only — do NOT call self_improve write or pull_request this turn.`;
+        }
       }
       if (requiresWebSearch(userText)) {
         systemPrompt += `\n\nThis turn REQUIRES live web data. You MUST call web_search with a focused query before answering. Do not answer from training data or memory alone — search first, then synthesize from results with source links.`;

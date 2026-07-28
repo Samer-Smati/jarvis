@@ -153,6 +153,50 @@ export function isBrainCleanupRequest(text: string): boolean {
     /\b(brain|graph|wiki)\b.*\b(clean\s?up|clear|prune|fix)\b/i.test(t);
 }
 
+/** User asks how repo code/skills/schedulers work — must inspect before describing. */
+export function isCodeArchitectureQuestion(text: string): boolean {
+  const t = text.trim();
+  if (isWebSearchMetaQuestion(t)) {
+    return false;
+  }
+  if (
+    /\b(that description is false|not in the code|do not describe capabilities|capabilities that aren't|you regressed|inspect failed)\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(before i merge|walk me through|how does .{3,60} (work|trigger|run|schedule|wire)|quote the (exact )?lines?|paste .{0,20}verbatim|self_improve inspect|inspected directly)\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(scheduler|schedulemodule|cron|skill\.yaml|skills\.module|vercel cron|daily on vercel|file list|where will .{3,40} live)\b/i.test(
+      t,
+    ) &&
+    /\?|explain|describe|confirm|inspect|read |show me|what happens|can this run/i.test(t)
+  ) {
+    return true;
+  }
+  if (/\b(answer only from inspected|revise (the )?(plan|answer|file list)|still no (write|code|pr))\b/i.test(t)) {
+    return true;
+  }
+  return false;
+}
+
+/** User wants a plan or architecture answer only — no write/PR this turn. */
+export function isPlanOnlyRequest(text: string): boolean {
+  const t = text.trim();
+  return (
+    /\b(no code|no write|no pr|don't write|do not write|plan only|still no write|before any code|until i say proceed|until i approve)\b/i.test(
+      t,
+    ) || /\brevise the (plan|file list|answers?) only\b/i.test(t)
+  );
+}
+
 /** User asks whether a prior answer used web search / tools — not a request to search the web. */
 export function isWebSearchMetaQuestion(text: string): boolean {
   const t = text.trim();

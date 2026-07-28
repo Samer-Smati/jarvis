@@ -5,6 +5,8 @@ import {
   isExplicitWebSearchRequest,
   isCurrentStateQuestion,
   isWebSearchMetaQuestion,
+  isCodeArchitectureQuestion,
+  isPlanOnlyRequest,
   requiresWebSearch,
   extractWebSearchQuery,
   hasMeaningfulSearchQueryExtract,
@@ -58,6 +60,30 @@ describe('web search intent', () => {
     const q = extractWebSearchQuery('What are the best LLM rankings right now?', now);
     expect(q).toContain('2026');
     expect(q).not.toMatch(/\b2024\b|\b2025\b/);
+  });
+});
+
+describe('code architecture questions', () => {
+  it('detects pre-merge scheduler and inspect challenges', () => {
+    expect(
+      isCodeArchitectureQuestion(
+        'Before I merge PR #3: walk me through exactly how the daily schedule triggers this skill.',
+      ),
+    ).toBe(true);
+    expect(
+      isCodeArchitectureQuestion(
+        'That description is false. I have the actual code — do not describe capabilities not in the code.',
+      ),
+    ).toBe(true);
+  });
+
+  it('detects plan-only audit prompts', () => {
+    expect(isPlanOnlyRequest('Revise the file list only. Still no write, no PR.')).toBe(true);
+    expect(isPlanOnlyRequest('Proceed with inspect → write → pull_request')).toBe(false);
+  });
+
+  it('does not treat web-search meta questions as code architecture', () => {
+    expect(isCodeArchitectureQuestion(META_SENTENCE)).toBe(false);
   });
 });
 

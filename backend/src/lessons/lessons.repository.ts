@@ -33,6 +33,10 @@ export class LessonsRepository {
     return this.lessons.findOne({ where: { sourceInteractionId } });
   }
 
+  async findByBootstrapKey(key: string): Promise<LessonEntity | null> {
+    return this.lessons.findOne({ where: { triggerContext: `bootstrap:${key}` } });
+  }
+
   async listForReview(): Promise<LessonEntity[]> {
     return this.lessons.find({
       where: { status: In(['active', 'needs_review']) },
