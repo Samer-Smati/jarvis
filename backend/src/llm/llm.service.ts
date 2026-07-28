@@ -6,6 +6,7 @@ import { GeminiProvider } from './gemini.provider';
 import { GroqProvider } from './groq.provider';
 import { isServerlessLlmProvider } from './llm-provider.util';
 import { normalizeToolCalls } from '../skills/tool-schema.normalizer';
+import { parseTextToolCallsFromContent, sanitizeUserFacingAssistantText } from './text-tool-call.util';
 import { OpenRouterProvider } from './openrouter.provider';
 import { XaiProvider } from './xai.provider';
 import { LmStudioProvider } from './lmstudio.provider';
@@ -78,9 +79,17 @@ export class LlmService implements LlmProvider {
         result = await this.chatWithCloudFallback(options);
       }
       if (options.tools?.length) {
+        const originalContent = result.content;
+        const parsed = parseTextToolCallsFromContent(originalContent);
         result = {
           ...result,
-          toolCalls: normalizeToolCalls(result.toolCalls, result.content, options.tools),
+          content: sanitizeUserFacingAssistantText(parsed.content),
+          toolCalls: normalizeToolCalls(result.toolCalls, originalContent, options.tools),
+        };
+      } else {
+        result = {
+          ...result,
+          content: sanitizeUserFacingAssistantText(result.content),
         };
       }
       return result;

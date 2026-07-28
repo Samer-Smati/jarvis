@@ -5,6 +5,7 @@ import type { ChatMessage, LlmProvider, ToolCall, ToolDefinition, ChatImagePart 
 import { LLM_PROVIDER } from '../llm/llm.types';
 import { LlmService } from '../llm/llm.service';
 import { TaskRouterService } from '../llm/task-router.service';
+import { sanitizeUserFacingAssistantText, ToolMarkupStreamFilter } from '../llm/text-tool-call.util';
 import { MemoryService } from '../memory/memory.service';
 import { FeedbackService } from '../feedback/feedback.service';
 import { LessonsService } from '../lessons/lessons.service';
@@ -364,14 +365,19 @@ export class OrchestratorService {
           });
         }
         let streamedContent = '';
+        const tokenFilter = new ToolMarkupStreamFilter();
         const result = await this.llmService.chatWithRoute(userText, {
           messages,
           tools,
           signal: abort.signal,
           route: taskRoute.route,
           onToken: (token) => {
-            streamedContent += token;
-            emitter.onToken(token);
+            tokenFilter.feed(token, (safe) => {
+              streamedContent += safe;
+              if (safe) {
+                emitter.onToken(safe);
+              }
+            });
           },
           onThinking: (token) => emitter.onThinking?.(token),
         });
@@ -416,7 +422,7 @@ export class OrchestratorService {
             lastToolOutput = searchOutput;
             continue;
           }
-          finalText = (result.content || streamedContent).trim();
+          finalText = sanitizeUserFacingAssistantText((result.content || streamedContent).trim());
           break;
         }
 
@@ -457,6 +463,7 @@ export class OrchestratorService {
       }
 
       if (finalText) {
+        finalText = sanitizeUserFacingAssistantText(finalText);
         finalText = sanitizeSelfImproveDenial(finalText, userText);
         finalText = sanitizeLinkDenial(finalText, userText);
         finalText = sanitizeBrainDenial(finalText, userText);
@@ -957,6 +964,7 @@ export class OrchestratorService {
       `Web search results:\n${searchOutput}`;
 
     let streamed = '';
+    const synthesisFilter = new ToolMarkupStreamFilter();
     const result = await this.llmService.chatWithRoute(userText, {
       messages: [
         { role: 'system', content: synthesisPrompt },
@@ -965,13 +973,17 @@ export class OrchestratorService {
       tools: [],
       route: taskRoute.route,
       onToken: (token) => {
-        streamed += token;
-        emitter.onToken(token);
+        synthesisFilter.feed(token, (safe) => {
+          streamed += safe;
+          if (safe) {
+            emitter.onToken(safe);
+          }
+        });
       },
     });
     this.taskRouter.recordUsage(estimateTurnTokens([{ role: 'user', content: userText }], result.content));
 
-    let finalText = (result.content || streamed).trim();
+    let finalText = sanitizeUserFacingAssistantText((result.content || streamed).trim());
     if (!finalText || finalText.length < 20) {
       finalText = searchOutput.startsWith('Error:') || searchOutput.includes('Permission denied')
         ? `I couldn't complete the web search, sir. ${searchOutput.split('\n')[0]}`

@@ -208,7 +208,7 @@ export function requiresWebSearch(text: string): boolean {
   return isExplicitWebSearchRequest(text) || isCurrentStateQuestion(text);
 }
 
-export function extractWebSearchQuery(text: string): string {
+export function extractWebSearchQuery(text: string, now: Date = new Date()): string {
   const t = text.trim();
   let q = t
     .replace(/^(please |can you |could you |jarvis,? )/i, '')
@@ -219,8 +219,27 @@ export function extractWebSearchQuery(text: string): string {
     .replace(/\s+/g, ' ')
     .trim();
   if (q.length < 8) {
-    return t.slice(0, 200);
+    q = t.slice(0, 200);
   }
+  return injectSearchRecencyYear(t, q, now);
+}
+
+function injectSearchRecencyYear(sourceText: string, query: string, now: Date): string {
+  const year = String(now.getFullYear());
+  let q = query.replace(/\bthis year\b/gi, year).replace(/\s+/g, ' ').trim();
+
+  if (/\b20\d{2}\b/.test(q)) {
+    return q.slice(0, 200);
+  }
+
+  const needsYear =
+    isCurrentStateQuestion(sourceText) ||
+    /\b(right now|currently|current|latest|today|as of today|as of now)\b/i.test(sourceText);
+
+  if (needsYear) {
+    q = `${q} ${year}`.replace(/\s+/g, ' ').trim();
+  }
+
   return q.slice(0, 200);
 }
 

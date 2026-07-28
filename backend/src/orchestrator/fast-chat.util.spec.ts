@@ -30,6 +30,13 @@ describe('web search intent', () => {
     const q = extractWebSearchQuery('search the web to verify: best coding models in 2026');
     expect(q.toLowerCase()).toContain('best coding models');
   });
+
+  it('uses the actual system clock year for recency queries without an explicit year', () => {
+    const now = new Date('2026-07-28T12:00:00Z');
+    const q = extractWebSearchQuery('What are the best LLM rankings right now?', now);
+    expect(q).toContain('2026');
+    expect(q).not.toMatch(/\b2024\b|\b2025\b/);
+  });
 });
 
 describe('fast-chat explicit lessons', () => {

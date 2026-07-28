@@ -1,4 +1,5 @@
 import { ChatMessage, LlmChatOptions, LlmChatResult, ToolCall } from './llm.types';
+import { parseTextToolCallsFromContent, ToolMarkupStreamFilter } from './text-tool-call.util';
 
 export interface OpenAiStreamConfig {
   apiKey: string;
@@ -79,8 +80,7 @@ export async function streamOpenAiChat(
   let content = '';
   const toolCalls: ToolCall[] = [];
   const toolDrafts = new Map<number, { id: string; name: string; args: string }>();
-  let suppressToolText = false;
-  let toolTextBuffer = '';
+  const markupFilter = new ToolMarkupStreamFilter();
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -111,26 +111,7 @@ export async function streamOpenAiChat(
       }
       if (delta.content) {
         content += delta.content;
-        if (suppressToolText) {
-          toolTextBuffer += delta.content;
-          if (toolTextBuffer.includes('</function>')) {
-            suppressToolText = false;
-            toolTextBuffer = '';
-          }
-        } else if (delta.content.includes('<function')) {
-          const before = delta.content.split('<function')[0];
-          if (before) {
-            options.onToken?.(before);
-          }
-          suppressToolText = true;
-          toolTextBuffer = delta.content.slice(delta.content.indexOf('<function'));
-          if (toolTextBuffer.includes('</function>')) {
-            suppressToolText = false;
-            toolTextBuffer = '';
-          }
-        } else {
-          options.onToken?.(delta.content);
-        }
+        markupFilter.feed(delta.content, (safe) => options.onToken?.(safe));
       }
       for (const tc of delta.tool_calls ?? []) {
         const draft = toolDrafts.get(tc.index) ?? { id: '', name: '', args: '' };
@@ -162,7 +143,7 @@ export async function streamOpenAiChat(
     });
   }
 
-  const parsed = parseTextToolCalls(content);
+  const parsed = parseTextToolCallsFromContent(content);
   content = parsed.content;
   for (const call of parsed.toolCalls) {
     if (!toolCalls.some((t) => t.name === call.name)) {
@@ -295,24 +276,3 @@ function buildOpenAiContent(
   return parts;
 }
 
-function parseTextToolCalls(content: string): { content: string; toolCalls: ToolCall[] } {
-  const toolCalls: ToolCall[] = [];
-  const cleaned = content
-    .replace(/<function=([^>]+)>([\s\S]*?)<\/function>/gi, (_, name: string, argsRaw: string) => {
-      let args: Record<string, unknown> = {};
-      try {
-        args = argsRaw?.trim() ? (JSON.parse(argsRaw.trim()) as Record<string, unknown>) : {};
-      } catch {
-        args = {};
-      }
-      toolCalls.push({
-        id: `text_call_${toolCalls.length}_${Date.now()}`,
-        name: name.trim(),
-        arguments: args,
-      });
-      return '';
-    })
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-  return { content: cleaned, toolCalls };
-}

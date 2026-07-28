@@ -141,6 +141,24 @@ describe('OrchestratorService', () => {
     expect(memory.appendMessage).toHaveBeenCalledWith('c1', 'assistant', 'Hello');
   });
 
+  it('never exposes raw tool-call markup in the final assistant message', async () => {
+    const markup =
+      '<tool_call>web_search <arg_key>query</arg_key> <arg_value>best models</arg_value> </tool_call>';
+    llmService.chatWithRoute.mockImplementation(async (_text, options): Promise<LlmChatResult> => {
+      options.onToken?.(markup);
+      return { content: markup, toolCalls: [] };
+    });
+
+    const emitter = emitterMock();
+    await buildService().handleUserMessage('c1', 'What are the best models right now?', emitter);
+
+    const streamed = (emitter.onToken.mock.calls.map((c) => c[0]) as string[]).join('');
+    expect(streamed).not.toMatch(/<tool_call>|arg_key|arg_value/i);
+
+    const doneText = emitter.onDone.mock.calls[0]?.[0] as string;
+    expect(doneText).not.toMatch(/<tool_call>|arg_key|arg_value/i);
+  });
+
   it('executes tool calls and feeds results back to the LLM', async () => {
     llmService.chatWithRoute
       .mockResolvedValueOnce({

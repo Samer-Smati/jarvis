@@ -1,3 +1,4 @@
+import { parseTextToolCallsFromContent } from '../llm/text-tool-call.util';
 import { ToolCall, ToolDefinition } from '../llm/llm.types';
 
 export function normalizeToolCalls(
@@ -6,7 +7,7 @@ export function normalizeToolCalls(
   definitions: ToolDefinition[],
 ): ToolCall[] {
   const known = new Set(definitions.map((d) => d.name));
-  const parsed = parseTextToolCalls(content);
+  const parsed = parseTextToolCallsFromContent(content).toolCalls;
   const merged = [...streamed, ...parsed];
   const byName = new Map<string, ToolCall>();
 
@@ -62,22 +63,3 @@ function sanitizeArgs(args: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
-function parseTextToolCalls(content: string): ToolCall[] {
-  const pattern = /<function=([^>]+)>([\s\S]*?)<\/function>/gi;
-  const calls: ToolCall[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(content)) !== null) {
-    const name = match[1]?.trim();
-    if (!name) {
-      continue;
-    }
-    let args: Record<string, unknown> = {};
-    try {
-      args = JSON.parse(match[2]?.trim() || '{}') as Record<string, unknown>;
-    } catch {
-      args = {};
-    }
-    calls.push({ id: `text_${calls.length}`, name, arguments: args });
-  }
-  return calls;
-}
