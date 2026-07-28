@@ -206,6 +206,17 @@ export function isRateLimitError(message: string): boolean {
   return message.includes('429') || message.includes('rate_limit');
 }
 
+/** Account-wide daily caps (OpenRouter free tier, etc.) — retries and model fallbacks won't help. */
+export function isDailyQuotaExhaustedError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('free-models-per-day') ||
+    lower.includes('free model requests per day') ||
+    lower.includes('daily quota') ||
+    (lower.includes('429') && lower.includes('per-day'))
+  );
+}
+
 export function isModelNotFoundError(message: string): boolean {
   return (
     message.includes('404') ||

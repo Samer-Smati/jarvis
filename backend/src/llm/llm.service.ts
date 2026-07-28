@@ -13,12 +13,18 @@ import { LmStudioProvider } from './lmstudio.provider';
 import { OllamaProvider } from './ollama.provider';
 import { LlmChatOptions, LlmChatResult, LlmProvider, ChatMessage } from './llm.types';
 import {
+  buildFreeProviderTryOrder,
+  clearProviderCooldown,
+  isProviderInCooldown,
+  isSwitchableProviderError,
+  listConfiguredFreeProviders,
+  markProviderCooldown,
+} from './free-provider-pool.util';
+import {
   providerCanAcceptMessages,
   providerInputCharCap,
   trimMessagesForLlm,
 } from './message-trim.util';
-
-const CLOUD_FALLBACK_ORDER = ['gemini', 'openrouter', 'groq', 'claude', 'xai'] as const;
 
 /** Facade over the configured providers; the active one can be switched at runtime. */
 @Injectable()
@@ -74,9 +80,6 @@ export class LlmService implements LlmProvider {
     await this.ensureLocalRuntime();
     const previous = this.active;
     const providerName = options.route?.provider ?? this.active.name;
-    const charCap = providerInputCharCap(providerName);
-    const trimmedMessages = trimMessagesForLlm(options.messages, charCap);
-    const trimmedOptions: LlmChatOptions = { ...options, messages: trimmedMessages };
 
     if (options.route?.provider) {
       this.setProvider(options.route.provider);
@@ -84,9 +87,11 @@ export class LlmService implements LlmProvider {
     try {
       let result: LlmChatResult;
       if (!isServerlessLlmProvider(this.active.name)) {
-        result = await this.active.chat(trimmedOptions);
+        const charCap = providerInputCharCap(providerName);
+        const trimmedMessages = trimMessagesForLlm(options.messages, charCap);
+        result = await this.active.chat({ ...options, messages: trimmedMessages });
       } else {
-        result = await this.chatWithCloudFallback(trimmedOptions);
+        result = await this.chatWithCloudFallback(options);
       }
       if (options.tools?.length) {
         const originalContent = result.content;
@@ -118,23 +123,33 @@ export class LlmService implements LlmProvider {
   }
 
   private async chatWithCloudFallback(options: LlmChatOptions): Promise<LlmChatResult> {
-    const order = [
-      this.active.name,
-      ...CLOUD_FALLBACK_ORDER.filter((name) => name !== this.active.name),
-    ];
+    const preferred = this.active.name;
+    const order = buildFreeProviderTryOrder(preferred);
+    if (!order.length) {
+      throw new Error(
+        'No free cloud LLM configured. Set GEMINI_API_KEY, GROQ_API_KEY, and/or OPENROUTER_API_KEY.',
+      );
+    }
+
     let lastError = 'Cloud LLM request failed';
 
     for (const name of order) {
+      if (isProviderInCooldown(name)) {
+        this.logger.warn(`Free LLM skip: ${name} — cooling down after a recent limit`);
+        continue;
+      }
+
       const provider = this.providers.get(name);
       if (!provider) {
         continue;
       }
-      if (!providerCanAcceptMessages(name, options.messages)) {
-        this.logger.warn(
-          `Cloud fallback skip: ${name} — payload too large (${options.messages.length} messages)`,
-        );
+
+      const trimmedMessages = trimMessagesForLlm(options.messages, providerInputCharCap(name));
+      if (!providerCanAcceptMessages(name, trimmedMessages)) {
+        this.logger.warn(`Free LLM skip: ${name} — payload too large (${trimmedMessages.length} messages)`);
         continue;
       }
+
       const probe = provider as LlmProvider & {
         isReady?: () => Promise<{ ok: boolean; model?: string; error?: string }>;
       };
@@ -144,24 +159,66 @@ export class LlmService implements LlmProvider {
           continue;
         }
       }
+
       try {
-        if (name !== this.active.name) {
-          this.logger.warn(`Cloud fallback: trying ${name}`);
+        if (name !== preferred) {
+          this.logger.warn(`Free LLM failover: trying ${name}`);
         }
-        return await provider.chat(options);
+        const result = await provider.chat({ ...options, messages: trimmedMessages });
+        if (name !== preferred) {
+          clearProviderCooldown(name);
+        }
+        return result;
       } catch (error) {
         lastError = (error as Error).message;
+        if (isSwitchableProviderError(lastError)) {
+          markProviderCooldown(name, lastError);
+          this.logger.warn(`${name} unavailable — rotating to next free provider`);
+          continue;
+        }
         this.logger.warn(`${name} failed: ${lastError.slice(0, 200)}`);
       }
     }
 
-    throw new Error(lastError);
+    throw new Error(
+      order.length > 1
+        ? `All free LLM providers are unavailable. Last error: ${lastError}`
+        : lastError,
+    );
   }
 
   async isReady(): Promise<{ ok: boolean; model?: string; error?: string }> {
     if (this.readyCache && Date.now() - this.readyCache.at < this.readyTtlMs) {
       return this.readyCache.value;
     }
+
+    const serverless = Boolean(process.env.VERCEL || process.env.JARVIS_SERVERLESS === '1');
+    if (serverless || isServerlessLlmProvider(this.active.name)) {
+      for (const name of listConfiguredFreeProviders()) {
+        if (isProviderInCooldown(name)) {
+          continue;
+        }
+        const provider = this.providers.get(name) as LlmProvider & {
+          isReady?: () => Promise<{ ok: boolean; model?: string; error?: string }>;
+        };
+        if (!provider?.isReady) {
+          continue;
+        }
+        const ready = await provider.isReady();
+        if (ready.ok) {
+          this.readyCache = { at: Date.now(), value: ready };
+          return ready;
+        }
+      }
+      const value = {
+        ok: false,
+        error:
+          'No free cloud LLM available. Set GEMINI_API_KEY, GROQ_API_KEY, and/or OPENROUTER_API_KEY.',
+      };
+      this.readyCache = { at: Date.now(), value };
+      return value;
+    }
+
     const probe = this.active as LlmProvider & {
       isReady?: () => Promise<{ ok: boolean; model?: string; error?: string }>;
     };
@@ -177,7 +234,7 @@ export class LlmService implements LlmProvider {
         return;
       }
       throw new Error(
-        'Serverless JARVIS needs a cloud LLM. Set GEMINI_API_KEY, OPENROUTER_API_KEY, GROQ_API_KEY, ANTHROPIC_API_KEY, or XAI_API_KEY on Vercel.',
+        'Serverless JARVIS needs a free cloud LLM. Set GEMINI_API_KEY, GROQ_API_KEY, and/or OPENROUTER_API_KEY on Vercel.',
       );
     }
     if (isServerlessLlmProvider(this.active.name)) {

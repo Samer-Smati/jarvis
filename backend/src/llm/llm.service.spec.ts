@@ -106,4 +106,36 @@ describe('LlmService ensureLocalRuntime', () => {
       /No local LLM/,
     );
   });
+
+  it('falls back from groq to gemini on rate limit', async () => {
+    process.env.VERCEL = '1';
+    process.env.JARVIS_SERVERLESS = '1';
+    process.env.GEMINI_API_KEY = 'g';
+    process.env.GROQ_API_KEY = 'q';
+    service.setProvider('groq');
+    groq.chat.mockRejectedValue(
+      new Error('Groq request failed (429): tokens per minute (TPM): Limit 8000'),
+    );
+
+    await service.chat({ messages: [{ role: 'user', content: 'hi' }] });
+
+    expect(gemini.chat).toHaveBeenCalled();
+  });
+
+  it('falls back from openrouter to gemini when daily free quota is exhausted', async () => {
+    process.env.VERCEL = '1';
+    process.env.JARVIS_SERVERLESS = '1';
+    process.env.GEMINI_API_KEY = 'g';
+    process.env.OPENROUTER_API_KEY = 'o';
+    service.setProvider('openrouter');
+    openrouter.chat.mockRejectedValue(
+      new Error(
+        'OpenRouter request failed (429): {"error":{"message":"Rate limit exceeded: free-models-per-day"}}',
+      ),
+    );
+
+    await service.chat({ messages: [{ role: 'user', content: 'hi' }] });
+
+    expect(gemini.chat).toHaveBeenCalled();
+  });
 });
