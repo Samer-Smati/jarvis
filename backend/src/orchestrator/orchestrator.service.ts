@@ -22,6 +22,10 @@ import {
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
 import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery } from './fast-chat.util';
+import {
+  buildWebSearchUnavailableMessage,
+  isFailedWebSearchOutput,
+} from '../skills/impl/web-search.util';
 
 const MAX_TOOL_ITERATIONS = 8;
 const SERVERLESS_MAX_TOOL_ITERATIONS = 6;
@@ -402,6 +406,10 @@ export class OrchestratorService {
               trigger,
               clientPlatform,
             );
+            if (isFailedWebSearchOutput(searchOutput)) {
+              finalText = buildWebSearchUnavailableMessage(searchOutput);
+              break;
+            }
             messages.push({
               role: 'assistant',
               content: result.content || 'Searching the web for current information…',
@@ -421,6 +429,14 @@ export class OrchestratorService {
             });
             lastToolOutput = searchOutput;
             continue;
+          }
+          if (
+            requiresWebSearch(userText) &&
+            toolsUsed.includes('web_search') &&
+            isFailedWebSearchOutput(lastToolOutput)
+          ) {
+            finalText = buildWebSearchUnavailableMessage(lastToolOutput);
+            break;
           }
           finalText = sanitizeUserFacingAssistantText((result.content || streamedContent).trim());
           break;
@@ -965,11 +981,20 @@ export class OrchestratorService {
       clientPlatform,
     );
 
+    if (isFailedWebSearchOutput(searchOutput)) {
+      const finalText = buildWebSearchUnavailableMessage(searchOutput);
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      void this.memory.logEvent(trigger, `Web search failed: ${query.slice(0, 80)}`);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
     const taskRoute = this.taskRouter.resolve(userText, undefined, userText.length);
     const synthesisPrompt =
       `${this.personality.getActivePrompt()}\n\n` +
       `The user asked a question that requires current web information. ` +
-      `Answer using the web search results below. Cite source links. ` +
+      `Answer using ONLY the web search results below — do not rely on training data for factual claims. Cite source links. ` +
       `If results are thin or inconclusive, say so plainly.\n\n` +
       `Web search results:\n${searchOutput}`;
 
