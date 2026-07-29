@@ -17,6 +17,11 @@ import { isSkillAllowedOnRuntime, missingEnvForSkill, runtimeProfile, permission
 import { emitTurnStatus, OrchestratorEmitter } from './orchestrator.events';
 import { toolStatusLabel } from './tool-status-label.util';
 import { buildToolFailureReply, isToolFailureOutput } from './tool-failure.util';
+import {
+  applyPrClaimGuard,
+  buildPrGuardRetrySystemPrompt,
+  ToolTurnRecord,
+} from './pr-claim-guard.util';
 import { normalizeSelfImproveArgs } from '../skills/self-improve-args.util';
 import { PersonalityService } from './personality.service';
 import {
@@ -105,6 +110,8 @@ export class OrchestratorService {
     this.activeRuns.set(conversationId, { controller: abort, requestId: runRequestId });
     const turnStarted = Date.now();
     const toolsUsed: string[] = [];
+    const toolRecords: ToolTurnRecord[] = [];
+    let prGuardRetried = false;
 
     try {
       emitTurnStatus(emitter, { stage: 'accepted', message: 'Request received, sir…' });
@@ -531,7 +538,20 @@ export class OrchestratorService {
             finalText = buildWebSearchUnavailableMessage(lastToolOutput);
             break;
           }
-          finalText = sanitizeUserFacingAssistantText((result.content || streamedContent).trim());
+          const proseCandidate = sanitizeUserFacingAssistantText((result.content || streamedContent).trim());
+          const guarded = this.resolveFinalTextWithPrGuard(
+            userText,
+            proseCandidate,
+            toolRecords,
+            messages,
+            tools,
+            prGuardRetried,
+          );
+          if (guarded.retry) {
+            prGuardRetried = true;
+            continue;
+          }
+          finalText = guarded.finalText;
           break;
         }
 
@@ -545,6 +565,11 @@ export class OrchestratorService {
           toolsUsed.push(call.name);
           const output = await this.executeToolCall(conversationId, call, emitter, trigger, clientPlatform);
           lastToolOutput = output;
+          toolRecords.push({
+            toolName: call.name,
+            action: String(call.arguments?.action ?? ''),
+            output,
+          });
           if (isToolFailureOutput(output)) {
             toolFailures.push({ toolName: call.name, output });
           }
@@ -582,6 +607,14 @@ export class OrchestratorService {
       }
 
       if (finalText) {
+        const postGuard = applyPrClaimGuard({
+          userText,
+          candidate: finalText,
+          toolRecords,
+        });
+        if (postGuard.blocked) {
+          finalText = postGuard.text;
+        }
         finalText = sanitizeUserFacingAssistantText(finalText);
         finalText = sanitizeSelfImproveDenial(finalText, userText);
         finalText = sanitizeLinkDenial(finalText, userText);
@@ -624,6 +657,28 @@ export class OrchestratorService {
         this.activeRuns.delete(conversationId);
       }
     }
+  }
+
+  private resolveFinalTextWithPrGuard(
+    userText: string,
+    candidate: string,
+    toolRecords: ToolTurnRecord[],
+    messages: ChatMessage[],
+    tools: ToolDefinition[],
+    prGuardRetried: boolean,
+  ): { finalText: string; retry: boolean } {
+    const guard = applyPrClaimGuard({ userText, candidate, toolRecords });
+    if (!guard.blocked) {
+      return { finalText: guard.text, retry: false };
+    }
+    if (guard.shouldRetryWithTools && !prGuardRetried && tools.length > 0) {
+      messages.push({
+        role: 'system',
+        content: buildPrGuardRetrySystemPrompt(),
+      });
+      return { finalText: '', retry: true };
+    }
+    return { finalText: guard.text, retry: false };
   }
 
   private isSuperseded(conversationId: string, runRequestId: string, abort: AbortController): boolean {
