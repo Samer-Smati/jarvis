@@ -1,4 +1,10 @@
-import { isMetaFactPageTitle } from './brain-ops.util';
+import {
+  isBrainOpsDenyOrComplaint,
+  isBrainOpsMetaQuestion,
+  isBrainOpsPauseRequest,
+  isBrainUiDenyRequest,
+  isMetaFactPageTitle,
+} from './brain-ops.util';
 
 describe('isMetaFactPageTitle', () => {
   it('matches meta-complaint titles filed under any category label', () => {
@@ -10,6 +16,37 @@ describe('isMetaFactPageTitle', () => {
   it('does not match legitimate user identity facts', () => {
     expect(isMetaFactPageTitle('User: Samer SMATI')).toBe(false);
     expect(isMetaFactPageTitle('User is owner')).toBe(false);
+  });
+});
+
+describe('brain ops meta vs pause detection', () => {
+  const complaintMessage =
+    'You did not answer my question about the 11 deleted pages. Do not show me the graph or change the subject.';
+
+  it('treats reflective complaints as meta questions, not pause commands', () => {
+    expect(isBrainOpsMetaQuestion(complaintMessage)).toBe(true);
+    expect(isBrainOpsPauseRequest(complaintMessage)).toBe(false);
+    expect(isBrainUiDenyRequest(complaintMessage)).toBe(true);
+    expect(isBrainOpsDenyOrComplaint(complaintMessage)).toBe(false);
+  });
+
+  it('detects unanswered deletion questions as meta', () => {
+    expect(isBrainOpsMetaQuestion('You did not answer my question about the 11 deleted pages')).toBe(true);
+    expect(isBrainOpsPauseRequest('You did not answer my question about the 11 deleted pages')).toBe(false);
+  });
+
+  it('detects explicit deletion-log questions as meta', () => {
+    expect(isBrainOpsMetaQuestion('does a deletion log exist for removed pages')).toBe(true);
+  });
+
+  it('still detects real brain ops halt commands as pause requests', () => {
+    expect(isBrainOpsPauseRequest('stop running cleanup on the brain until I review')).toBe(true);
+    expect(isBrainOpsMetaQuestion('stop running cleanup on the brain until I review')).toBe(false);
+  });
+
+  it('does not treat UI graph denials alone as mutation halt', () => {
+    expect(isBrainUiDenyRequest('Do not show me the graph or change the subject')).toBe(true);
+    expect(isBrainOpsPauseRequest('Do not show me the graph or change the subject')).toBe(false);
   });
 });
 

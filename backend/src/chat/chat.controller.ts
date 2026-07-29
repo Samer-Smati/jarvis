@@ -161,6 +161,11 @@ export class ChatController {
     };
   }
 
+  @Get('brain/cleanup-history')
+  brainCleanupHistory() {
+    return this.brain.getCleanupHistory();
+  }
+
   @Get('brain/ops-status')
   brainOpsStatus() {
     return this.brainOpsPause.status();

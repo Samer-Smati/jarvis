@@ -46,6 +46,12 @@ export interface BrainVaultStats {
   source: 'vault' | 'pg' | 'seed';
 }
 
+export interface BrainCleanupHistoryEntry {
+  at: string;
+  count: number;
+  removed: string[];
+}
+
 export const BRAIN_PRUNE_META_CONFIRM_PHRASE = 'PRUNE_META_FACTS';
 
 @Injectable()
@@ -894,7 +900,13 @@ ${content}`;
 
     if (removed.length) {
       this.rebuildIndex(vault);
-      this.appendLog(vault, `cleanup: removed ${removed.length} low-quality page(s)`);
+      const removedSummary = removed.slice(0, 40).join('; ');
+      this.appendLog(
+        vault,
+        removed.length > 0
+          ? `cleanup: removed ${removed.length}: ${removedSummary}${removed.length > 40 ? '…' : ''}`
+          : `cleanup: removed 0 low-quality page(s)`,
+      );
       vault.updatedAt = new Date().toISOString();
       this.repairVault(vault);
       await this.persist(vault);
@@ -902,6 +914,44 @@ ${content}`;
     }
 
     return { removed, kept: Object.keys(vault.pages).length };
+  }
+
+  async getCleanupHistory(): Promise<{ entries: BrainCleanupHistoryEntry[] }> {
+    const vault = await this.ensureLoaded();
+    const entries: BrainCleanupHistoryEntry[] = [];
+    const detailRe = /^- \[(.+?)\] cleanup: removed (\d+): (.+)$/;
+    const countOnlyRe = /^- \[(.+?)\] cleanup: removed (\d+) low-quality page\(s\)$/;
+
+    for (const line of vault.log.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed.includes('cleanup: removed')) {
+        continue;
+      }
+      const detailMatch = trimmed.match(detailRe);
+      if (detailMatch) {
+        const removedRaw = detailMatch[3].replace(/…$/, '');
+        const removed = removedRaw
+          .split(';')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        entries.push({
+          at: detailMatch[1],
+          count: Number(detailMatch[2]),
+          removed,
+        });
+        continue;
+      }
+      const countMatch = trimmed.match(countOnlyRe);
+      if (countMatch) {
+        entries.push({
+          at: countMatch[1],
+          count: Number(countMatch[2]),
+          removed: [],
+        });
+      }
+    }
+
+    return { entries: entries.reverse() };
   }
 
   private buildGraphFromVault(vault: BrainVault): BrainGraph {

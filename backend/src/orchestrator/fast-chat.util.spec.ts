@@ -11,8 +11,12 @@ import {
   isBrainCleanupRequest,
   isBrainConsolidateRequest,
   isBrainOpsDenyOrComplaint,
+  isBrainOpsMetaQuestion,
   isBrainOpsPauseRequest,
   isBrainOpsResumeRequest,
+  isBrainGraphRequest,
+  isBrainUiDenyRequest,
+  isMetaComplaintForFiling,
   requiresWebSearch,
   extractWebSearchQuery,
   hasMeaningfulSearchQueryExtract,
@@ -115,7 +119,18 @@ describe('code architecture questions', () => {
     expect(isBrainConsolidateRequest("why aren't brain pages linked")).toBe(false);
     expect(isBrainConsolidateRequest("nodes aren't linked in the graph")).toBe(false);
     expect(isBrainConsolidateRequest('consolidate brain links now')).toBe(true);
-    expect(isBrainOpsDenyOrComplaint('I am concerned about node counts not matching')).toBe(true);
+    expect(isMetaComplaintForFiling('I am concerned about node counts not matching')).toBe(true);
+    expect(isBrainOpsDenyOrComplaint('I am concerned about node counts not matching')).toBe(false);
+  });
+
+  it('blocks graph fast path when user denies graph UI', () => {
+    expect(isBrainGraphRequest('Do not show me the graph or change the subject')).toBe(false);
+    expect(isBrainUiDenyRequest('Do not show me the graph or change the subject')).toBe(true);
+  });
+
+  it('routes deletion-log questions to meta path not pause', () => {
+    expect(isBrainOpsMetaQuestion('does a deletion log exist for removed pages')).toBe(true);
+    expect(isBrainOpsPauseRequest('does a deletion log exist for removed pages')).toBe(false);
   });
 
   it('detects pause and resume brain ops commands', () => {

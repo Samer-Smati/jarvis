@@ -2,8 +2,10 @@ import {
   BRAIN_OPS_BLOCKED_MESSAGE,
   isBrainMutatingAction,
   isBrainOpsDenyOrComplaint,
+  isBrainOpsMetaQuestion,
   isBrainOpsPauseRequest,
   isBrainOpsResumeRequest,
+  isBrainUiDenyRequest,
   isMetaComplaintForFiling,
 } from '../brain/brain-ops.util';
 
@@ -12,8 +14,10 @@ export {
   BRAIN_OPS_BLOCKED_MESSAGE,
   isBrainMutatingAction,
   isBrainOpsDenyOrComplaint,
+  isBrainOpsMetaQuestion,
   isBrainOpsPauseRequest,
   isBrainOpsResumeRequest,
+  isBrainUiDenyRequest,
   isMetaComplaintForFiling,
 } from '../brain/brain-ops.util';
 
@@ -51,7 +55,7 @@ export function isSelfImproveInfoQuery(text: string): boolean {
 
 export function isBrainGraphRequest(text: string): boolean {
   const t = text.trim();
-  if (isBrainConsolidateRequest(t)) {
+  if (isBrainConsolidateRequest(t) || isBrainUiDenyRequest(t)) {
     return false;
   }
   return /\b(graph|knowledge graph|mind map|link map|what(?:'s| is) linked|show.*(?:graph|links|brain)|visuali[sz]e.*(?:brain|graph)|brain map|my brain)\b/i.test(

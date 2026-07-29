@@ -22,7 +22,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isBrainPlanOnlyRequest, isBrainOpsPauseRequest, isBrainOpsResumeRequest, isBrainMutatingAction, BRAIN_OPS_BLOCKED_MESSAGE, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery, isWebSearchMetaQuestion, isCodeArchitectureQuestion, isPlanOnlyRequest } from './fast-chat.util';
+import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isBrainPlanOnlyRequest, isBrainOpsMetaQuestion, isBrainOpsPauseRequest, isBrainOpsResumeRequest, isBrainMutatingAction, BRAIN_OPS_BLOCKED_MESSAGE, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery, isWebSearchMetaQuestion, isCodeArchitectureQuestion, isPlanOnlyRequest } from './fast-chat.util';
 import {
   buildWebSearchUnavailableMessage,
   isFailedWebSearchOutput,
@@ -165,6 +165,13 @@ export class OrchestratorService {
           trigger,
           clientPlatform,
         );
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isBrainOpsMetaQuestion(userText) && !images?.length) {
+        const handled = await this.runBrainOpsMetaAnswer(conversationId, userText, emitter, trigger);
         if (handled) {
           return;
         }
@@ -713,15 +720,22 @@ export class OrchestratorService {
           toolName: skill.name,
         }),
     });
+    const brainCleanup =
+      skill.name === 'brain' && String(call.arguments?.action ?? '') === 'cleanup' && result.success;
     await this.guardrails.audit(
       skill.name,
       trigger,
-      result.success
-        ? JSON.stringify(call.arguments)
-        : JSON.stringify({
+      brainCleanup
+        ? JSON.stringify({
             ...call.arguments,
-            error: result.output.slice(0, 800),
-          }),
+            outputSnippet: result.output.slice(0, 800),
+          })
+        : result.success
+          ? JSON.stringify(call.arguments)
+          : JSON.stringify({
+              ...call.arguments,
+              error: result.output.slice(0, 800),
+            }),
       result.success ? 'success' : 'failure',
     );
     if (!result.success) {
@@ -1172,6 +1186,69 @@ export class OrchestratorService {
     return true;
   }
 
+  private async runBrainOpsMetaAnswer(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+  ): Promise<boolean> {
+    const recentAudits = await this.guardrails.recentAudit(50);
+    const cleanupAudits = recentAudits.filter(
+      (row) => row.action === 'brain' && row.detail?.includes('"cleanup"'),
+    );
+    const history = await this.brain.getCleanupHistory();
+    const lastVaultCleanup = history.entries[0];
+    const episodic = await this.memory.recentEvents(30);
+    const lastEpisodicCleanup = episodic.find((e) => e.kind === 'brain_cleanup');
+
+    const asksDeletionLog =
+      /\b(deletion log|audit trail|log exist|what pages were removed|which pages|what was deleted|11 deleted|deleted pages)\b/i.test(
+        userText,
+      );
+
+    let finalText: string;
+    if (asksDeletionLog) {
+      const parts: string[] = [
+        'No, sir — there is no dedicated per-page deletion table in Postgres. Cleanup runs are logged in audit_log as action=brain with {"action":"cleanup"} only (timestamp, no page list).',
+      ];
+      if (cleanupAudits.length) {
+        const latest = cleanupAudits[0];
+        parts.push(
+          `Yes, cleanup did run — most recently at ${latest.createdAt.toISOString()} (${cleanupAudits.length} recorded cleanup invocation(s) in audit).`,
+        );
+      } else {
+        parts.push('I do not see a successful brain cleanup in the recent audit log.');
+      }
+      if (lastVaultCleanup?.removed.length) {
+        parts.push(
+          `The vault log lists ${lastVaultCleanup.count} page(s) from the last logged cleanup (${lastVaultCleanup.at}): ${lastVaultCleanup.removed.slice(0, 12).join('; ')}${lastVaultCleanup.removed.length > 12 ? '…' : ''}.`,
+        );
+      } else if (lastVaultCleanup?.count) {
+        parts.push(
+          `The vault log records ${lastVaultCleanup.count} page(s) removed at ${lastVaultCleanup.at}, but individual titles were not logged for that run (older format).`,
+        );
+      } else if (lastEpisodicCleanup?.detail?.trim()) {
+        parts.push(`Episodic log detail:\n${lastEpisodicCleanup.detail.slice(0, 1200)}`);
+      } else {
+        parts.push('No per-page removal list is stored for the last cleanup — only counts until the next cleanup runs with the updated logger.');
+      }
+      finalText = parts.join('\n\n');
+    } else {
+      finalText =
+        'Understood, sir — you are asking about prior brain behavior, not requesting a new cleanup/consolidate/pause. ' +
+        (cleanupAudits.length
+          ? `Recent audit shows ${cleanupAudits.length} brain cleanup invocation(s); latest at ${cleanupAudits[0].createdAt.toISOString()}. `
+          : 'No recent brain cleanup appears in audit. ') +
+        'I will answer your question directly without opening the graph or changing brain ops state.';
+    }
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    void this.memory.logEvent(trigger, 'Brain ops meta question answered');
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
   private async runBrainOpsPause(
     conversationId: string,
     userText: string,
@@ -1250,7 +1327,17 @@ export class OrchestratorService {
       : `Brain vault is tidy, sir. ${stats.pageCount} notes, ${stats.edgeCount} links.`;
 
     await this.memory.appendMessage(conversationId, 'assistant', finalText);
-    void this.memory.logEvent(trigger, 'Brain cleanup');
+    const history = await this.brain.getCleanupHistory();
+    const lastCleanup = history.entries[0];
+    if (lastCleanup?.count) {
+      void this.memory.logEvent(
+        'brain_cleanup',
+        `Removed ${lastCleanup.count} page(s)`,
+        lastCleanup.removed.length ? lastCleanup.removed.join('\n') : undefined,
+      );
+    } else {
+      void this.memory.logEvent(trigger, 'Brain cleanup');
+    }
     emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
     emitter.onDone(finalText);
     return true;
