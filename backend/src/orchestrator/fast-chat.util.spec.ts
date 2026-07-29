@@ -7,6 +7,9 @@ import {
   isWebSearchMetaQuestion,
   isCodeArchitectureQuestion,
   isPlanOnlyRequest,
+  isBrainPlanOnlyRequest,
+  isBrainCleanupRequest,
+  isBrainConsolidateRequest,
   requiresWebSearch,
   extractWebSearchQuery,
   hasMeaningfulSearchQueryExtract,
@@ -80,6 +83,14 @@ describe('code architecture questions', () => {
   it('detects plan-only audit prompts', () => {
     expect(isPlanOnlyRequest('Revise the file list only. Still no write, no PR.')).toBe(true);
     expect(isPlanOnlyRequest('Proceed with inspect → write → pull_request')).toBe(false);
+  });
+
+  it('detects brain cleanup plan without executing fast paths', () => {
+    expect(isBrainPlanOnlyRequest('Give me a brain-cleanup plan')).toBe(true);
+    expect(isBrainCleanupRequest('Give me a brain-cleanup plan')).toBe(true);
+    expect(isBrainPlanOnlyRequest('Run brain cleanup now')).toBe(false);
+    expect(isBrainConsolidateRequest('link all brain pages')).toBe(true);
+    expect(isBrainPlanOnlyRequest('Plan for linking brain pages before you run consolidate')).toBe(true);
   });
 
   it('does not treat web-search meta questions as code architecture', () => {

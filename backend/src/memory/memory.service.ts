@@ -13,6 +13,7 @@ import { UserProjectEntity } from './entities/user-project.entity';
 import { MemoryRepository } from './memory.repository';
 import { CreateProjectInput, MemoryContextBlock, RememberTypedInput } from './memory.types';
 import { LessonsService } from '../lessons/lessons.service';
+import { filterStaleMemoryHits } from './memory-hit-filter.util';
 
 const MAX_LLM_HISTORY =
   process.env.VERCEL || process.env.JARVIS_SERVERLESS === '1' ? 30 : 200;
@@ -165,8 +166,10 @@ export class MemoryService {
 
     const pinnedFacts = await this.repository.findPinnedFacts(4);
     const pinnedPrefs = prefs.filter((p) => p.pinned);
-    const dedupedHits = filterForgotten(
-      dedupeStrings([...factsRaw, ...pgHits.map((h) => h.text.slice(0, 320))]),
+    const dedupedHits = filterStaleMemoryHits(
+      filterForgotten(
+        dedupeStrings([...factsRaw, ...pgHits.map((h) => h.text.slice(0, 320))]),
+      ),
     ).slice(0, MAX_CONTEXT_CHUNKS);
 
     return {
@@ -205,7 +208,7 @@ export class MemoryService {
 
     const pgHits = await this.brainPg.searchSimilar(query, limit);
     if (pgHits.length) {
-      return filterForgotten(pgHits.map((h) => h.text.slice(0, 320)));
+      return filterForgotten(filterStaleMemoryHits(pgHits.map((h) => h.text.slice(0, 320))));
     }
 
     const all = await this.semantic.find({ where: { forgottenAt: IsNull() } });

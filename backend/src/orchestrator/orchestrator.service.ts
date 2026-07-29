@@ -21,7 +21,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery, isWebSearchMetaQuestion, isCodeArchitectureQuestion, isPlanOnlyRequest } from './fast-chat.util';
+import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isBrainPlanOnlyRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery, isWebSearchMetaQuestion, isCodeArchitectureQuestion, isPlanOnlyRequest } from './fast-chat.util';
 import {
   buildWebSearchUnavailableMessage,
   isFailedWebSearchOutput,
@@ -168,7 +168,7 @@ export class OrchestratorService {
         }
       }
 
-      if (isBrainCleanupRequest(userText)) {
+      if (!isBrainPlanOnlyRequest(userText) && isBrainCleanupRequest(userText)) {
         const handled = await this.runBrainCleanup(
           conversationId,
           userText,
@@ -181,7 +181,7 @@ export class OrchestratorService {
         }
       }
 
-      if (isBrainConsolidateRequest(userText)) {
+      if (!isBrainPlanOnlyRequest(userText) && isBrainConsolidateRequest(userText)) {
         const handled = await this.runBrainConsolidate(
           conversationId,
           userText,
@@ -319,10 +319,16 @@ export class OrchestratorService {
       if (isResponsiveUpgradeRequest(userText)) {
         systemPrompt += `\n\nThe user wants responsive/mobile UI. Prefer self_improve action=apply_preset preset=responsive_chat then pull_request on the same branch. Do NOT read entire SCSS files first.`;
       }
-      if (isBrainGraphRequest(userText)) {
+      if (isBrainPlanOnlyRequest(userText)) {
+        systemPrompt +=
+          `\n\nThe user wants a PLAN or recommendations about the brain/wiki — do NOT call brain cleanup, consolidate, or graph this turn. ` +
+          `Do NOT repeat prior fast-path confirmation messages verbatim (e.g. "Relational mapping complete…"). ` +
+          `Call brain action=status or action=query if you need live page/link counts, then propose steps only.`;
+      }
+      if (isBrainGraphRequest(userText) && !isBrainPlanOnlyRequest(userText)) {
         systemPrompt += `\n\nThe user wants to SEE the brain link graph. Call brain with action=graph ONCE — that opens the live graph UI. Briefly describe node/link counts from the tool output. Do not only describe links in prose.`;
       }
-      if (isBrainConsolidateRequest(userText)) {
+      if (isBrainConsolidateRequest(userText) && !isBrainPlanOnlyRequest(userText)) {
         systemPrompt += `\n\nThe user wants brain pages LINKED for real. Call brain action=consolidate ONCE (writes [[wiki]] edges), then briefly report how many new links were created from the tool output. Do not only describe linking in prose.`;
       }
       if (isSelfImproveSkillSourceRequest(userText)) {
@@ -1144,6 +1150,8 @@ export class OrchestratorService {
 
     emitter.onProgress?.({ stage: 'brain', message: 'Cleaning up brain vault…', percent: 30, toolName: 'brain' });
 
+    await this.brain.reloadFromStore();
+
     const output = await this.executeToolCall(
       conversationId,
       { id: 'brain-cleanup', name: 'brain', arguments: { action: 'cleanup' } },
@@ -1190,6 +1198,8 @@ export class OrchestratorService {
       toolName: 'brain',
     });
 
+    await this.brain.reloadFromStore();
+
     const output = await this.executeToolCall(
       conversationId,
       { id: 'brain-consolidate', name: 'brain', arguments: { action: 'consolidate' } },
@@ -1207,11 +1217,15 @@ export class OrchestratorService {
     );
 
     const graph = await this.brain.getGraph();
+    const graphMatch = output.match(/BRAIN_GRAPH:[^\n]*?(\d+)\s+nodes,\s*(\d+)\s+links/i);
     const linkedMatch = output.match(/(\d+)\s+new pairs/i);
     const linked = linkedMatch?.[1] ?? '0';
+    const nodeCount = graphMatch?.[1] ?? String(graph.nodes.length);
+    const edgeCount = graphMatch?.[2] ?? String(graph.edges.length);
+    const stampedAt = new Date().toISOString().slice(0, 16).replace('T', ' ');
     const finalText =
       `Relational mapping complete, sir — wrote ${linked} new link pair(s). ` +
-      `Graph now has ${graph.nodes.length} notes and ${graph.edges.length} links. ` +
+      `Graph now has ${nodeCount} notes and ${edgeCount} links (verified ${stampedAt} UTC). ` +
       `Refresh the graph panel if it was already open.`;
 
     await this.memory.appendMessage(conversationId, 'assistant', finalText);

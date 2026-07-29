@@ -153,6 +153,33 @@ export function isBrainCleanupRequest(text: string): boolean {
     /\b(brain|graph|wiki)\b.*\b(clean\s?up|clear|prune|fix)\b/i.test(t);
 }
 
+export function isBrainExecuteRequest(text: string): boolean {
+  const t = text.trim();
+  return /\b(run it|go ahead|do it now|just do|perform|execute|start now|link (everything|all|them|those|nodes|pages|notes)|consolidate now|clean up now|cleanup now)\b/i.test(
+    t,
+  );
+}
+
+/** User wants a brain cleanup/linking plan or advice — not an immediate vault mutation. */
+export function isBrainPlanOnlyRequest(text: string): boolean {
+  const t = text.trim();
+  if (isBrainExecuteRequest(t)) {
+    return false;
+  }
+  if (isPlanOnlyRequest(t)) {
+    return /\b(brain|graph|wiki|vault|notes?|pages?|links?|orphan|cleanup|clean\s?up|consolidat)/i.test(t);
+  }
+  const brainCtx = /\b(brain|graph|wiki|vault|notes?|pages?|links?|orphan|cleanup|clean\s?up|consolidat)/i.test(
+    t,
+  );
+  if (!brainCtx) {
+    return false;
+  }
+  return /\b(plan|planning|strategy|roadmap|proposal|recommend(?:ations?)?|how should|what steps|walk me through|before (you|we) (run|execute|do)|give me a plan)\b/i.test(
+    t,
+  );
+}
+
 /** User asks how repo code/skills/schedulers work — must inspect before describing. */
 export function isCodeArchitectureQuestion(text: string): boolean {
   const t = text.trim();
@@ -416,6 +443,13 @@ export function shouldSkipBrainLearning(userText: string, assistantText: string)
     return true;
   }
   if (/cloud time limit|pull request|self-improve|upgrade preset|test-dummy|writing test-/i.test(assistant)) {
+    return true;
+  }
+  if (
+    /Relational mapping complete, sir|Brain cleaned up, sir|Brain vault is tidy, sir|Opening your brain graph, sir/i.test(
+      assistant,
+    )
+  ) {
     return true;
   }
   return false;

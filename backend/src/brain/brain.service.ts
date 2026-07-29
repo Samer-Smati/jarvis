@@ -6,6 +6,7 @@ import { BrainBlobStore } from './brain-blob.store';
 import { BrainPgStore } from './brain-pg.store';
 import { createSeedVault } from './brain.seed';
 import { BrainCategory, BrainGraph, BrainGraphEdge, BrainPage, BrainQueryHit, BrainVault } from './brain.types';
+import { filterStaleMemoryHits } from '../memory/memory-hit-filter.util';
 
 const HOT_MAX_CHARS = 2400;
 const LOG_MAX_LINES = 200;
@@ -27,6 +28,7 @@ export class BrainService implements OnModuleInit {
   private readonly vaultPath: string;
   private vault: BrainVault | null = null;
   private vaultRepaired = false;
+  private vaultIsEphemeralSeed = false;
 
   constructor(
     config: ConfigService,
@@ -79,11 +81,9 @@ export class BrainService implements OnModuleInit {
     }
 
     const vectorHits = await this.pgStore.searchSimilar(query, 3);
-    if (vectorHits.length) {
-      parts.push(
-        '## Semantically similar past conversations\n' +
-          vectorHits.map((h) => h.text.slice(0, 360)).join('\n\n'),
-      );
+    const filteredHits = filterStaleMemoryHits(vectorHits.map((h) => h.text.slice(0, 360)));
+    if (filteredHits.length) {
+      parts.push('## Semantically similar past conversations\n' + filteredHits.join('\n\n'));
     }
 
     if (hits.length) {
@@ -313,6 +313,12 @@ ${content}`;
    * (shared title/content tokens, known topic hubs). Persists and syncs PG.
    */
   async consolidateLinks(): Promise<{ linked: number; pairs: string[]; edgeCount: number; nodeCount: number }> {
+    await this.reloadFromStore();
+    if (this.vaultIsEphemeralSeed) {
+      throw new Error(
+        'Brain vault is unavailable on this instance (durable storage load failed). Try again in a moment.',
+      );
+    }
     const vault = await this.ensureLoaded();
     const pages = Object.values(vault.pages);
     const stop = CONSOLIDATE_STOPWORDS;
@@ -670,6 +676,13 @@ ${content}`;
     }
   }
 
+  async reloadFromStore(): Promise<BrainVault> {
+    this.vault = null;
+    this.vaultRepaired = false;
+    this.vaultIsEphemeralSeed = false;
+    return this.ensureLoaded();
+  }
+
   async listPages(): Promise<BrainPage[]> {
     const vault = await this.ensureLoaded();
     return Object.values(vault.pages).sort(
@@ -693,6 +706,12 @@ ${content}`;
   }
 
   async cleanupVault(): Promise<{ removed: string[]; kept: number }> {
+    await this.reloadFromStore();
+    if (this.vaultIsEphemeralSeed) {
+      throw new Error(
+        'Brain vault is unavailable on this instance (durable storage load failed). Try again in a moment.',
+      );
+    }
     const vault = await this.ensureLoaded();
     const removed: string[] = [];
 
@@ -793,11 +812,15 @@ ${content}`;
     }
 
     if (this.blob.enabled()) {
-      const remote = await this.blob.load();
+      const remote = await this.loadBlobWithRetry();
       if (remote) {
         this.vault = remote;
+        this.vaultIsEphemeralSeed = false;
         return this.afterLoad(remote);
       }
+      this.logger.error(
+        'Brain blob load failed — using in-memory seed only. Will NOT overwrite cloud vault.',
+      );
     }
 
     if (!this.isServerless && existsSync(this.vaultPath)) {
@@ -806,6 +829,7 @@ ${content}`;
         const parsed = JSON.parse(raw) as BrainVault;
         if (parsed.version === 1) {
           this.vault = parsed;
+          this.vaultIsEphemeralSeed = false;
           return this.afterLoad(parsed);
         }
       } catch {
@@ -815,9 +839,27 @@ ${content}`;
 
     const seeded = createSeedVault();
     this.vault = seeded;
-    await this.persist(seeded);
+    this.vaultIsEphemeralSeed = this.blob.enabled() || this.isServerless;
+    if (!this.vaultIsEphemeralSeed) {
+      await this.persist(seeded);
+    } else {
+      this.logger.warn('JARVIS brain using ephemeral seed vault — durable storage unavailable.');
+    }
     this.logger.log('JARVIS brain initialized with seed vault.');
     return this.afterLoad(seeded);
+  }
+
+  private async loadBlobWithRetry(attempts = 3): Promise<BrainVault | null> {
+    for (let i = 0; i < attempts; i++) {
+      const remote = await this.blob.load();
+      if (remote) {
+        return remote;
+      }
+      if (i < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 120 * (i + 1)));
+      }
+    }
+    return null;
   }
 
   private async afterLoad(vault: BrainVault): Promise<BrainVault> {
@@ -835,7 +877,7 @@ ${content}`;
     vault.updatedAt = new Date().toISOString();
     this.vault = vault;
 
-    if (this.blob.enabled()) {
+    if (this.blob.enabled() && !this.vaultIsEphemeralSeed) {
       await this.blob.save(vault);
     }
 
@@ -844,7 +886,9 @@ ${content}`;
       writeFileSync(this.vaultPath, JSON.stringify(vault, null, 2), 'utf8');
     }
 
-    void this.pgStore.syncVault(vault);
+    if (!this.vaultIsEphemeralSeed) {
+      void this.pgStore.syncVault(vault);
+    }
   }
 
   private searchPages(vault: BrainVault, query: string, limit: number): BrainQueryHit[] {
