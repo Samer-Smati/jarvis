@@ -46,7 +46,7 @@ const REMEMBER_FACT_TOOL: ToolDefinition = {
 @Injectable()
 export class OrchestratorService {
   private readonly logger = new Logger(OrchestratorService.name);
-  private readonly activeRuns = new Map<string, AbortController>();
+  private readonly activeRuns = new Map<string, { controller: AbortController; requestId: string }>();
 
   constructor(
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
@@ -70,8 +70,8 @@ export class OrchestratorService {
     const targets = conversationId
       ? [this.activeRuns.get(conversationId)].filter(Boolean)
       : [...this.activeRuns.values()];
-    for (const controller of targets) {
-      controller?.abort();
+    for (const entry of targets) {
+      entry?.controller.abort();
     }
     this.logger.warn(`Kill switch triggered (${targets.length} run(s) aborted).`);
     return targets.length;
@@ -89,9 +89,15 @@ export class OrchestratorService {
     clientPlatform: 'desktop' | 'web' = 'desktop',
     clientHistory?: ClientHistoryMessage[],
     images?: ChatImagePart[],
+    requestId?: string,
   ): Promise<void> {
+    const runRequestId = requestId?.trim() || conversationId;
+    const previous = this.activeRuns.get(conversationId);
+    if (previous) {
+      previous.controller.abort();
+    }
     const abort = new AbortController();
-    this.activeRuns.set(conversationId, abort);
+    this.activeRuns.set(conversationId, { controller: abort, requestId: runRequestId });
     const turnStarted = Date.now();
     const toolsUsed: string[] = [];
 
@@ -371,6 +377,10 @@ export class OrchestratorService {
       const maxIterations = isServerlessRuntime() ? SERVERLESS_MAX_TOOL_ITERATIONS : MAX_TOOL_ITERATIONS;
 
       for (let iteration = 0; iteration < maxIterations; iteration++) {
+        if (this.isSuperseded(conversationId, runRequestId, abort)) {
+          emitter.onDone('', { superseded: true });
+          return;
+        }
         const prDone = lastToolOutput.includes('Pull request #');
         if (prDone) {
           finalText = finalText || `Done, sir. ${lastToolOutput.split('\n')[0]}`;
@@ -504,6 +514,11 @@ export class OrchestratorService {
           : '';
       }
 
+      if (this.isSuperseded(conversationId, runRequestId, abort)) {
+        emitter.onDone('', { superseded: true });
+        return;
+      }
+
       if (finalText) {
         finalText = sanitizeUserFacingAssistantText(finalText);
         finalText = sanitizeSelfImproveDenial(finalText, userText);
@@ -524,6 +539,12 @@ export class OrchestratorService {
         latencyMs: Date.now() - turnStarted,
       });
     } catch (error) {
+      const stillActive = this.activeRuns.get(conversationId);
+      if (abort.signal.aborted && stillActive?.requestId !== runRequestId) {
+        this.logger.log(`Run superseded for ${conversationId} (${runRequestId})`);
+        emitter.onDone('', { superseded: true });
+        return;
+      }
       const message = abort.signal.aborted
         ? 'Action halted by kill switch.'
         : (error as Error).message;
@@ -531,8 +552,19 @@ export class OrchestratorService {
       await this.guardrails.audit('run_error', trigger, message, 'error');
       emitter.onError(message);
     } finally {
-      this.activeRuns.delete(conversationId);
+      const stillActive = this.activeRuns.get(conversationId);
+      if (stillActive?.controller === abort) {
+        this.activeRuns.delete(conversationId);
+      }
     }
+  }
+
+  private isSuperseded(conversationId: string, runRequestId: string, abort: AbortController): boolean {
+    if (!abort.signal.aborted) {
+      return false;
+    }
+    const stillActive = this.activeRuns.get(conversationId);
+    return stillActive?.requestId !== runRequestId;
   }
 
   private async executeToolCall(

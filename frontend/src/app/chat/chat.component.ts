@@ -5,13 +5,18 @@ import { pairwise } from 'rxjs/operators';
 import { ApiService } from '../core/api.service';
 import { ChatService } from '../core/chat.service';
 import { ConversationHistoryService } from '../core/conversation-history.service';
+import { ConversationSessionService } from '../core/conversation-session.service';
+import {
+  createChatRequestId,
+  findAssistantIndex,
+  findUserIndex,
+  OutboundChatRequest,
+} from '../core/chat-request.util';
 import { ChatMessage, ChatImageAttachment, ChatImagePayload, ConfirmationRequest, PermissionRequest, ProgressStep, ToolActivity } from '../core/models';
 import { BrainGraphService, isBrainGraphRequest } from '../brain/brain-graph.service';
 import { VoiceService } from '../core/voice.service';
 import { compressImageForChat } from '../core/image-compress.util';
 
-const CONVERSATION_ID = 'default';
-const RECAP_SESSION_KEY = 'jarvis.recapDone';
 const MAX_IMAGES = 4;
 const MAX_IMAGE_BYTES = 900_000;
 
@@ -35,6 +40,11 @@ export class ChatComponent implements OnInit, OnDestroy {
   permissionRequests: PermissionRequest[] = [];
   input = '';
   busy = false;
+  queuedCount = 0;
+  conversationId = '';
+
+  private activeRequestId: string | null = null;
+  private outboundQueue: OutboundChatRequest[] = [];
 
   listening$: Observable<boolean>;
   speaking$: Observable<boolean>;
@@ -62,6 +72,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     private chat: ChatService,
     private api: ApiService,
     private historyStore: ConversationHistoryService,
+    private conversationSession: ConversationSessionService,
     private toast: MessageService,
     private voice: VoiceService,
     private brainGraph: BrainGraphService,
@@ -74,6 +85,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.voiceEnabled$ = voice.enabled$;
     this.handsFree$ = voice.handsFree$;
     this.sttSupported = voice.sttSupported;
+    this.conversationId = this.conversationSession.resolveActiveConversationId();
   }
 
   ngOnInit(): void {
@@ -92,8 +104,14 @@ export class ChatComponent implements OnInit, OnDestroy {
 
     this.subscriptions.add(
       this.chat.token$.subscribe((event) => {
+        if (!this.acceptStreamEvent(event.requestId)) {
+          return;
+        }
         this.zone.run(() => {
-          const current = this.currentAssistantMessage();
+          const current = this.assistantForRequest(event.requestId);
+          if (!current) {
+            return;
+          }
           current.content += event.token;
           current.statusHint = undefined;
           this.voice.speakStreamAppend(event.token);
@@ -105,8 +123,14 @@ export class ChatComponent implements OnInit, OnDestroy {
 
     this.subscriptions.add(
       this.chat.thinking$.subscribe((event) => {
+        if (!this.acceptStreamEvent(event.requestId)) {
+          return;
+        }
         this.zone.run(() => {
-          const current = this.currentAssistantMessage();
+          const current = this.assistantForRequest(event.requestId);
+          if (!current) {
+            return;
+          }
           current.thinking = (current.thinking ?? '') + event.token;
           if (current.thinkingExpanded === undefined) {
             current.thinkingExpanded = true;
@@ -120,7 +144,13 @@ export class ChatComponent implements OnInit, OnDestroy {
 
     this.subscriptions.add(
       this.chat.progress$.subscribe((event) => {
-        const current = this.currentAssistantMessage();
+        if (!this.acceptStreamEvent(event.requestId)) {
+          return;
+        }
+        const current = this.assistantForRequest(event.requestId);
+        if (!current) {
+          return;
+        }
         current.progress = current.progress ?? [];
         const last = current.progress[current.progress.length - 1];
         if (last && last.stage === event.stage && last.message === event.message) {
@@ -153,16 +183,28 @@ export class ChatComponent implements OnInit, OnDestroy {
     );
 
     this.subscriptions.add(
-      this.chat.started$.subscribe(() => {
-        const current = this.currentAssistantMessage();
+      this.chat.started$.subscribe((event) => {
+        if (!this.acceptStreamEvent(event.requestId)) {
+          return;
+        }
+        const current = this.assistantForRequest(event.requestId);
+        if (!current) {
+          return;
+        }
         current.statusHint = 'Connected, sir…';
         this.cdr.markForCheck();
       }),
     );
 
     this.subscriptions.add(
-      this.chat.heartbeat$.subscribe(() => {
-        const current = this.currentAssistantMessage();
+      this.chat.heartbeat$.subscribe((event) => {
+        if (!this.acceptStreamEvent(event.requestId)) {
+          return;
+        }
+        const current = this.assistantForRequest(event.requestId);
+        if (!current) {
+          return;
+        }
         if (!current.content?.trim() && current.streaming && !current.statusHint) {
           current.statusHint = current.tools?.some((t) => t.running)
             ? 'Running a check, sir…'
@@ -174,7 +216,13 @@ export class ChatComponent implements OnInit, OnDestroy {
 
     this.subscriptions.add(
       this.chat.toolStart$.subscribe((event) => {
-        const current = this.currentAssistantMessage();
+        if (!this.acceptStreamEvent(event.requestId)) {
+          return;
+        }
+        const current = this.assistantForRequest(event.requestId);
+        if (!current) {
+          return;
+        }
         current.tools = current.tools ?? [];
         const label = this.toolLabel(event.toolName, event.args);
         const key = this.toolKey(event.toolName, event.args);
@@ -198,7 +246,13 @@ export class ChatComponent implements OnInit, OnDestroy {
 
     this.subscriptions.add(
       this.chat.toolEnd$.subscribe((event) => {
-        const current = this.currentAssistantMessage();
+        if (!this.acceptStreamEvent(event.requestId)) {
+          return;
+        }
+        const current = this.assistantForRequest(event.requestId);
+        if (!current) {
+          return;
+        }
         const tool = current.tools?.find((t) => t.running);
         if (tool) {
           tool.running = false;
@@ -245,18 +299,24 @@ export class ChatComponent implements OnInit, OnDestroy {
 
     this.subscriptions.add(
       this.chat.done$.subscribe((event) => {
-        const current = this.currentAssistantMessage();
+        if (event.superseded || !event.requestId) {
+          return;
+        }
+        const current = this.assistantForRequest(event.requestId, true);
+        if (!current) {
+          return;
+        }
         current.content = event.finalText || current.content;
         current.streaming = false;
         current.statusHint = undefined;
         current.interactionId = event.interactionId;
         current.tools = this.compactToolBadges(current.tools);
-        this.busy = false;
+        this.completeActiveRequest(event.requestId);
         if (event.finalText?.includes('BRAIN_GRAPH:') || /\bOpening your brain graph\b/i.test(event.finalText ?? '')) {
           this.brainGraph.open();
         }
         if (!current.content?.trim()) {
-          this.messages.pop();
+          this.messages.splice(findAssistantIndex(this.messages, event.requestId), 1);
         } else {
           this.voice.speakStreamFinish(event.finalText || current.content);
         }
@@ -269,10 +329,16 @@ export class ChatComponent implements OnInit, OnDestroy {
 
     this.subscriptions.add(
       this.chat.error$.subscribe((event) => {
-        const current = this.currentAssistantMessage();
+        if (!event.requestId) {
+          return;
+        }
+        const current = this.assistantForRequest(event.requestId, true);
+        if (!current) {
+          return;
+        }
         current.content = event.message || 'Something went wrong, sir.';
         current.streaming = false;
-        this.busy = false;
+        this.completeActiveRequest(event.requestId);
         this.persistConversation();
         this.scrollToBottom();
         this.cdr.markForCheck();
@@ -357,7 +423,7 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   send(): void {
     const text = this.input.trim();
-    if ((!text && !this.pendingImages.length) || this.busy) {
+    if (!text && !this.pendingImages.length) {
       return;
     }
     if (isBrainGraphRequest(text)) {
@@ -367,31 +433,30 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.voice.stopListening();
     this.voice.speakStreamReset();
     const images = [...this.pendingImages];
+    const requestId = createChatRequestId();
     this.messages.push({
       role: 'user',
       content: text,
-      images: images.length ? images : undefined,
+      requestId,
+      pending: this.busy,
       createdAt: new Date().toISOString(),
+      images: images.length ? images : undefined,
     });
-    this.messages.push({ role: 'assistant', content: '', streaming: true, tools: [] });
-    this.persistConversation();
-    this.busy = true;
     this.input = '';
     this.pendingImages = [];
     this.pendingImageFiles.clear();
+    this.persistConversation();
     this.cdr.markForCheck();
     this.scrollToBottom();
-    const history = this.historyStore.toPersisted(
-      this.messages.slice(0, -2).filter((m) => !m.streaming && (m.content?.trim() || m.images?.length)),
-    );
-    void this.sendWithImages(text, history, images);
+    void this.prepareOutbound(requestId, text, images);
   }
 
-  private async sendWithImages(
+  private async prepareOutbound(
+    requestId: string,
     text: string,
-    history: Array<{ role: string; content: string; createdAt?: string }>,
     images: ChatImageAttachment[],
   ): Promise<void> {
+    const history = this.buildHistoryBeforeRequest(requestId);
     const payloads: ChatImagePayload[] = [];
     for (const image of images.slice(0, MAX_IMAGES)) {
       const payload = await this.imageAttachmentToPayload(image);
@@ -399,7 +464,105 @@ export class ChatComponent implements OnInit, OnDestroy {
         payloads.push(payload);
       }
     }
-    this.chat.sendMessage(CONVERSATION_ID, text, history, payloads.length ? payloads : undefined);
+    const outbound: OutboundChatRequest = {
+      requestId,
+      text,
+      history,
+      images: payloads,
+    };
+    if (this.busy) {
+      this.outboundQueue.push(outbound);
+      this.queuedCount = this.outboundQueue.length;
+      this.cdr.markForCheck();
+      return;
+    }
+    this.dispatchOutbound(outbound);
+  }
+
+  private dispatchOutbound(outbound: OutboundChatRequest): void {
+    const userIdx = findUserIndex(this.messages, outbound.requestId);
+    if (userIdx >= 0) {
+      this.messages[userIdx].pending = false;
+    }
+    this.messages.push({
+      role: 'assistant',
+      content: '',
+      streaming: true,
+      requestId: outbound.requestId,
+      tools: [],
+      createdAt: new Date().toISOString(),
+    });
+    this.activeRequestId = outbound.requestId;
+    this.busy = true;
+    this.queuedCount = this.outboundQueue.length;
+    this.persistConversation();
+    this.cdr.markForCheck();
+    this.scrollToBottom();
+    this.chat.sendMessage(
+      this.conversationId,
+      outbound.requestId,
+      outbound.text,
+      outbound.history,
+      outbound.images.length ? outbound.images : undefined,
+    );
+  }
+
+  private flushOutboundQueue(): void {
+    if (this.busy || !this.outboundQueue.length) {
+      this.queuedCount = this.outboundQueue.length;
+      return;
+    }
+    const next = this.outboundQueue.shift();
+    if (!next) {
+      return;
+    }
+    this.queuedCount = this.outboundQueue.length;
+    this.dispatchOutbound(next);
+  }
+
+  private completeActiveRequest(requestId: string): void {
+    const userIdx = findUserIndex(this.messages, requestId);
+    if (userIdx >= 0) {
+      this.messages[userIdx].pending = false;
+    }
+    if (this.activeRequestId === requestId) {
+      this.activeRequestId = null;
+    }
+    this.busy = false;
+    this.flushOutboundQueue();
+  }
+
+  private buildHistoryBeforeRequest(requestId: string): Array<{ role: string; content: string; createdAt?: string }> {
+    const userIdx = findUserIndex(this.messages, requestId);
+    const prior =
+      userIdx > 0
+        ? this.messages.slice(0, userIdx)
+        : this.messages.filter((m) => m.requestId !== requestId);
+    return this.historyStore.toPersisted(
+      prior.filter((m) => !m.streaming && !m.pending && (m.content?.trim() || m.images?.length)),
+    );
+  }
+
+  private acceptStreamEvent(requestId?: string): boolean {
+    if (!requestId) {
+      return false;
+    }
+    return findAssistantIndex(this.messages, requestId) >= 0;
+  }
+
+  private assistantForRequest(requestId?: string, includeCompleted = false): ChatMessage | undefined {
+    if (!requestId) {
+      return undefined;
+    }
+    const idx = findAssistantIndex(this.messages, requestId);
+    if (idx < 0) {
+      return undefined;
+    }
+    const message = this.messages[idx];
+    if (!includeCompleted && !message.streaming) {
+      return undefined;
+    }
+    return message;
   }
 
   onFileSelected(event: Event): void {
@@ -667,19 +830,10 @@ export class ChatComponent implements OnInit, OnDestroy {
     return [...latest.values()].filter((t) => t.success || t.running);
   }
 
-  private currentAssistantMessage(): ChatMessage {
-    const last = this.messages[this.messages.length - 1];
-    if (last?.role === 'assistant' && last.streaming) {
-      return last;
-    }
-    const created: ChatMessage = { role: 'assistant', content: '', streaming: true, tools: [] };
-    this.messages.push(created);
-    return created;
-  }
-
   private loadHistory(): void {
-    const local = this.historyStore.load(CONVERSATION_ID);
-    this.api.conversationMessages(CONVERSATION_ID).subscribe({
+    this.conversationId = this.conversationSession.resolveActiveConversationId();
+    const local = this.historyStore.load(this.conversationId);
+    this.api.conversationMessages(this.conversationId).subscribe({
       next: (stored) => {
         const merged = this.historyStore.mergeApiAndLocal(stored, local);
         this.messages = merged.map((m) => ({
@@ -687,9 +841,9 @@ export class ChatComponent implements OnInit, OnDestroy {
           content: m.content,
           createdAt: m.createdAt,
         }));
-        this.historyStore.save(CONVERSATION_ID, merged);
+        this.historyStore.save(this.conversationId, merged);
         if (stored.length === 0 && local.length > 0) {
-          this.api.syncConversation(CONVERSATION_ID, local).subscribe({
+          this.api.syncConversation(this.conversationId, local).subscribe({
             error: () => undefined,
           });
         }
@@ -732,21 +886,22 @@ export class ChatComponent implements OnInit, OnDestroy {
     const persisted = this.historyStore.toPersisted(
       this.messages.filter((m) => !m.streaming && m.content?.trim()),
     );
-    this.historyStore.save(CONVERSATION_ID, persisted);
+    this.historyStore.save(this.conversationId, persisted);
   }
 
   private syncToBackend(): void {
-    const persisted = this.historyStore.load(CONVERSATION_ID);
+    const persisted = this.historyStore.load(this.conversationId);
     if (!persisted.length) {
       return;
     }
-    this.api.syncConversation(CONVERSATION_ID, persisted).subscribe({
+    this.api.syncConversation(this.conversationId, persisted).subscribe({
       error: () => undefined,
     });
   }
 
   private maybeRecap(): void {
-    if (this.recapStarted || !this.messages.length || sessionStorage.getItem(RECAP_SESSION_KEY)) {
+    const recapKey = this.conversationSession.recapSessionKey(this.conversationId);
+    if (this.recapStarted || !this.messages.length || sessionStorage.getItem(recapKey)) {
       return;
     }
     this.recapStarted = true;
@@ -760,17 +915,17 @@ export class ChatComponent implements OnInit, OnDestroy {
     }
 
     this.recapLoading = true;
-    this.api.conversationRecap(CONVERSATION_ID).subscribe({
+    this.api.conversationRecap(this.conversationId).subscribe({
       next: (res) => {
         const recap = res?.recap?.trim();
         if (recap && recap !== localRecap) {
           this.sessionRecap = recap;
           this.cdr.markForCheck();
         }
-        sessionStorage.setItem(RECAP_SESSION_KEY, '1');
+        sessionStorage.setItem(recapKey, '1');
       },
       error: () => {
-        sessionStorage.setItem(RECAP_SESSION_KEY, '1');
+        sessionStorage.setItem(recapKey, '1');
       },
       complete: () => {
         this.recapLoading = false;

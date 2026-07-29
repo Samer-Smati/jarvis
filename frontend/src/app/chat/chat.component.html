@@ -69,6 +69,7 @@
       </div>
       <div class="bubble hud-corners">
         <span class="msg-time" *ngIf="message.createdAt">{{ formatMessageDate(message.createdAt) }}</span>
+        <span class="queued-badge" *ngIf="message.pending">Queued…</span>
 
         <div class="upgrade-panel" *ngIf="message.progress?.length || message.thinking">
           <div class="progress-block" *ngIf="message.progress?.length">
@@ -202,7 +203,8 @@
       (keydown.enter)="$event.preventDefault(); send()"
       (paste)="onPaste($event)">
     </textarea>
-    <p-button icon="pi pi-send" [disabled]="busy || (!input.trim() && !pendingImages.length)" (onClick)="send()"></p-button>
+    <p-button icon="pi pi-send" [disabled]="!input.trim() && !pendingImages.length" (onClick)="send()"></p-button>
+    <span class="queue-hint" *ngIf="queuedCount > 0">{{ queuedCount }} queued</span>
     </div>
   </div>
 

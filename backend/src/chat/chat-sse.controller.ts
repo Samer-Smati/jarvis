@@ -5,9 +5,12 @@ import { OrchestratorEmitter } from '../orchestrator/orchestrator.events';
 import { OrchestratorService } from '../orchestrator/orchestrator.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import type { ChatImagePart } from '../llm/llm.types';
+import { resolveChatRequestId } from './chat-request.util';
+import { assertValidConversationId } from './conversation-id.util';
 
 interface ChatStreamBody {
   conversationId?: string;
+  requestId?: string;
   text?: string;
   platform?: 'desktop' | 'web';
   history?: Array<{ role: string; content: string; createdAt?: string }>;
@@ -56,7 +59,8 @@ export class ChatSseController {
 
   @Post('stream')
   async stream(@Body() body: ChatStreamBody, @Res() res: Response): Promise<void> {
-    const conversationId = body?.conversationId ?? 'default';
+    const conversationId = assertValidConversationId(body?.conversationId);
+    const requestId = resolveChatRequestId(body?.requestId);
     const text = body?.text?.trim() ?? '';
     const images = sanitizeImages(body?.images);
     if (!text && !images.length) {
@@ -71,7 +75,7 @@ export class ChatSseController {
     res.flushHeaders?.();
 
     const send = (event: string, data: Record<string, unknown>) => {
-      res.write(`event: ${event}\ndata: ${JSON.stringify({ conversationId, ...data })}\n\n`);
+      res.write(`event: ${event}\ndata: ${JSON.stringify({ conversationId, requestId, ...data })}\n\n`);
       if (typeof (res as Response & { flush?: () => void }).flush === 'function') {
         (res as Response & { flush?: () => void }).flush?.();
       }
@@ -109,6 +113,7 @@ export class ChatSseController {
       body?.platform === 'web' ? 'web' : 'desktop',
       body?.history,
       images.length ? images : undefined,
+      requestId,
     );
     const timeoutMs = process.env.VERCEL ? 295_000 : 120_000;
     try {

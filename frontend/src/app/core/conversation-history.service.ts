@@ -38,7 +38,7 @@ export class ConversationHistoryService {
         createdAt: m.createdAt,
       }));
 
-    // Union both sources so a new day / empty API sync never drops older local turns.
+    // Merge API + local for the same conversationId only (never across days).
     const seen = new Set<string>();
     const merged: PersistedMessage[] = [];
     for (const message of [...apiMapped, ...local]) {

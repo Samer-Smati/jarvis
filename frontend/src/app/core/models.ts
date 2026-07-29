@@ -19,6 +19,8 @@ export interface ProgressStep {
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  requestId?: string;
+  pending?: boolean;
   createdAt?: string;
   streaming?: boolean;
   statusHint?: string;

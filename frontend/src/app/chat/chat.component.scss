@@ -272,6 +272,17 @@
     margin-bottom: 0.45rem;
   }
 
+  .queued-badge {
+    display: inline-block;
+    margin-bottom: 0.45rem;
+    margin-left: 0.35rem;
+    font-family: "Orbitron", sans-serif;
+    font-size: 0.52rem;
+    letter-spacing: 0.12em;
+    color: rgba(255, 196, 86, 0.9);
+    text-transform: uppercase;
+  }
+
   .content {
     white-space: pre-wrap;
     word-break: break-word;
@@ -516,6 +527,14 @@
     color: var(--jarvis-text) !important;
     font-size: 1.05rem;
   }
+}
+
+.queue-hint {
+  font-family: "Orbitron", sans-serif;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  color: rgba(255, 196, 86, 0.9);
+  white-space: nowrap;
 }
 
 .pending-images {

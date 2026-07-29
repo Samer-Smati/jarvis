@@ -9,6 +9,7 @@ import { MemoryService } from '../memory/memory.service';
 import { OrchestratorService } from '../orchestrator/orchestrator.service';
 import { ReminderEntity } from '../skills/entities/reminder.entity';
 import { SkillRegistry } from '../skills/skill.registry';
+import { assertValidConversationId } from './conversation-id.util';
 
 const RECAP_PROMPT = `You are J.A.R.V.I.S. The user is reopening the assistant. Briefly recap the last exchange in 2-3 short speakable sentences as a status update. Mention when things were discussed if timestamps are provided. Address them as "sir". Warm Iron Man butler tone. No markdown or bullet points. Use the same language as the conversation.`;
 
@@ -70,7 +71,7 @@ export class ChatController {
 
   @Get('conversations/:id/messages')
   conversationMessages(@Param('id') id: string) {
-    return this.memory.listConversationMessages(id);
+    return this.memory.listConversationMessages(assertValidConversationId(id));
   }
 
   @Post('conversations/:id/sync')
@@ -78,13 +79,15 @@ export class ChatController {
     @Param('id') id: string,
     @Body() body: { messages?: Array<{ role: string; content: string; createdAt?: string }> },
   ) {
-    const count = await this.memory.replaceConversation(id, body?.messages ?? []);
+    const conversationId = assertValidConversationId(id);
+    const count = await this.memory.replaceConversation(conversationId, body?.messages ?? []);
     return { ok: true, count };
   }
 
   @Get('conversations/:id/recap')
   async conversationRecap(@Param('id') id: string) {
-    const all = await this.memory.listConversationMessages(id);
+    const conversationId = assertValidConversationId(id);
+    const all = await this.memory.listConversationMessages(conversationId);
     const last3 = all
       .filter((m) => m.role === 'user' || m.role === 'assistant')
       .slice(-3);
@@ -170,7 +173,11 @@ export class ChatController {
 
   @Post('kill-switch')
   killSwitch(@Body() body: { conversationId?: string }) {
-    const aborted = this.orchestrator.killSwitch(body?.conversationId);
+    const conversationId = body?.conversationId?.trim();
+    if (conversationId) {
+      assertValidConversationId(conversationId);
+    }
+    const aborted = this.orchestrator.killSwitch(conversationId);
     return { aborted };
   }
 }

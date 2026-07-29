@@ -74,7 +74,14 @@ export class BrainSkill implements Skill {
   ) {}
 
   async execute(args: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
-    const action = String(args?.action ?? '');
+    const action = String(args?.action ?? '').trim();
+    if (!action) {
+      return {
+        success: false,
+        output:
+          'Brain "action" is required. Use status, query, graph, ingest_url, remember, ingest, save_session, update_hot, get_page, link_user, link_pages, consolidate, or cleanup.',
+      };
+    }
     context.onProgress?.({
       stage: 'brain',
       message: `Brain: ${action}`,
@@ -135,6 +142,11 @@ export class BrainSkill implements Skill {
             '',
             `Fetched: ${page.url}`,
             `Title: ${result.title}`,
+            page.source === 'tavily'
+              ? '(Extracted via Tavily — page was JS-heavy or too thin from direct fetch.)'
+              : page.truncated
+                ? '(HTML was truncated at fetch limit; readable text still saved.)'
+                : '',
             '',
             'Excerpt:',
             result.excerpt + (page.text.length > 500 ? '…' : ''),

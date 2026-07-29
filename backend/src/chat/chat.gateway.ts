@@ -12,9 +12,12 @@ import { OrchestratorEmitter } from '../orchestrator/orchestrator.events';
 import { OrchestratorService } from '../orchestrator/orchestrator.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import type { ChatImagePart } from '../llm/llm.types';
+import { resolveChatRequestId } from './chat-request.util';
+import { assertValidConversationId } from './conversation-id.util';
 
 interface UserMessagePayload {
   conversationId: string;
+  requestId?: string;
   text: string;
   platform?: 'desktop' | 'web';
   history?: Array<{ role: string; content: string; createdAt?: string }>;
@@ -48,14 +51,26 @@ export class ChatGateway {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: UserMessagePayload,
   ): Promise<void> {
-    const conversationId = payload?.conversationId ?? 'default';
+    const conversationIdRaw = payload?.conversationId;
+    let conversationId: string;
+    try {
+      conversationId = assertValidConversationId(conversationIdRaw);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Invalid conversationId.';
+      client.emit('agent_error', {
+        conversationId: conversationIdRaw ?? '',
+        message,
+      });
+      return;
+    }
+    const requestId = resolveChatRequestId(payload?.requestId);
     const text = payload?.text?.trim() ?? '';
     const images = payload?.images?.slice(0, 4);
     if (!text && !images?.length) {
       return;
     }
     this.logger.log(`[${conversationId}] user: ${text.slice(0, 80)}${images?.length ? ` (+${images.length} img)` : ''}`);
-    const emitter = this.buildEmitter(conversationId, client);
+    const emitter = this.buildEmitter(conversationId, requestId, client);
     void this.orchestrator.handleUserMessage(
       conversationId,
       text,
@@ -64,6 +79,7 @@ export class ChatGateway {
       payload?.platform === 'web' ? 'web' : 'desktop',
       payload?.history,
       images?.length ? images : undefined,
+      requestId,
     );
   }
 
@@ -91,9 +107,9 @@ export class ChatGateway {
     this.server?.emit('morning_briefing', { text });
   }
 
-  private buildEmitter(conversationId: string, client: Socket): OrchestratorEmitter {
+  private buildEmitter(conversationId: string, requestId: string, client: Socket): OrchestratorEmitter {
     const emit = (event: string, data: Record<string, unknown>) =>
-      client.emit(event, { conversationId, ...data });
+      client.emit(event, { conversationId, requestId, ...data });
     return {
       onToken: (token) => emit('token', { token }),
       onThinking: (token) => emit('thinking', { token }),

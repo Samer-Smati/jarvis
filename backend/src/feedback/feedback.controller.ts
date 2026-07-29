@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { FeedbackService } from './feedback.service';
+import { assertValidConversationId } from '../chat/conversation-id.util';
 
 @Controller('api/feedback')
 export class FeedbackController {
@@ -16,7 +17,7 @@ export class FeedbackController {
     latencyMs?: number;
   }) {
     return this.feedback.logInteraction({
-      conversationId: body.conversationId ?? 'default',
+      conversationId: assertValidConversationId(body.conversationId),
       prompt: body.prompt,
       response: body.response,
       taskRoute: body.taskRoute,

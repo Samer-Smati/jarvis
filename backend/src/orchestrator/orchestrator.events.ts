@@ -17,6 +17,6 @@ export interface OrchestratorEmitter {
   onToolEnd(toolName: string, output: string, success: boolean): void;
   onConfirmationRequest(request: ConfirmationRequest): void;
   onPermissionRequest(request: PermissionRequest): void;
-  onDone(finalText: string, meta?: { interactionId?: string; taskRoute?: string }): void;
+  onDone(finalText: string, meta?: { interactionId?: string; taskRoute?: string; superseded?: boolean }): void;
   onError(message: string): void;
 }

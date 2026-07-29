@@ -25,6 +25,24 @@ function emitterMock(): jest.Mocked<OrchestratorEmitter> {
   };
 }
 
+function waitUntil(check: () => boolean, timeoutMs = 2000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const tick = (): void => {
+      if (check()) {
+        resolve();
+        return;
+      }
+      if (Date.now() - started > timeoutMs) {
+        reject(new Error('Timed out waiting for condition'));
+        return;
+      }
+      setTimeout(tick, 5);
+    };
+    tick();
+  });
+}
+
 describe('OrchestratorService', () => {
   let llm: jest.Mocked<LlmProvider>;
   let llmService: jest.Mocked<Pick<LlmService, 'chatWithRoute'>>;
@@ -254,5 +272,56 @@ describe('OrchestratorService', () => {
 
     expect(emitter.onError).toHaveBeenCalledWith('boom');
     expect(emitter.onDone).not.toHaveBeenCalled();
+  });
+
+  it('supersedes an in-flight run when a newer request id arrives', async () => {
+    let resolveFirst: ((value: LlmChatResult) => void) | undefined;
+    let firstCall = true;
+    llmService.chatWithRoute.mockImplementation(async () => {
+      if (firstCall) {
+        firstCall = false;
+        return new Promise((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      return { content: 'Second answer.', toolCalls: [] };
+    });
+
+    const service = buildService();
+    const firstEmitter = emitterMock();
+    const secondEmitter = emitterMock();
+
+    const firstRun = service.handleUserMessage(
+      'c1',
+      'Explain quantum entanglement in detail for me.',
+      firstEmitter,
+      'chat',
+      'desktop',
+      undefined,
+      undefined,
+      'req-1',
+    );
+    await waitUntil(() => llmService.chatWithRoute.mock.calls.length >= 1);
+    const secondRun = service.handleUserMessage(
+      'c1',
+      'Explain superconductivity in detail for me.',
+      secondEmitter,
+      'chat',
+      'desktop',
+      undefined,
+      undefined,
+      'req-2',
+    );
+    expect(typeof resolveFirst).toBe('function');
+    resolveFirst!({ content: 'First answer.', toolCalls: [] });
+    await Promise.allSettled([firstRun, secondRun]);
+
+    expect(firstEmitter.onDone).toHaveBeenCalledWith('', { superseded: true });
+    expect(secondEmitter.onDone).toHaveBeenCalledWith(
+      'Second answer.',
+      expect.objectContaining({ interactionId: 'log-1' }),
+    );
+    expect(memory.appendMessage).toHaveBeenCalledWith('c1', 'assistant', 'Second answer.');
+    expect(memory.appendMessage).not.toHaveBeenCalledWith('c1', 'assistant', 'First answer.');
   });
 });

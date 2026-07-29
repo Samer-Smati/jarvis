@@ -5,18 +5,20 @@ import { environment } from '../../environments/environment';
 import { ConfirmationRequest, PermissionRequest, Reminder } from './models';
 import { clientPlatform } from './platform.util';
 
-export interface TokenEvent {
+export interface ChatStreamEventBase {
   conversationId: string;
+  requestId?: string;
+}
+
+export interface TokenEvent extends ChatStreamEventBase {
   token: string;
 }
 
-export interface ThinkingEvent {
-  conversationId: string;
+export interface ThinkingEvent extends ChatStreamEventBase {
   token: string;
 }
 
-export interface ProgressEvent {
-  conversationId: string;
+export interface ProgressEvent extends ChatStreamEventBase {
   stage: string;
   message: string;
   percent?: number;
@@ -24,28 +26,25 @@ export interface ProgressEvent {
   toolName?: string;
 }
 
-export interface ToolStartEvent {
-  conversationId: string;
+export interface ToolStartEvent extends ChatStreamEventBase {
   toolName: string;
   args: Record<string, unknown>;
 }
 
-export interface ToolEndEvent {
-  conversationId: string;
+export interface ToolEndEvent extends ChatStreamEventBase {
   toolName: string;
   output: string;
   success: boolean;
 }
 
-export interface DoneEvent {
-  conversationId: string;
+export interface DoneEvent extends ChatStreamEventBase {
   finalText: string;
   interactionId?: string;
   taskRoute?: string;
+  superseded?: boolean;
 }
 
-export interface AgentErrorEvent {
-  conversationId: string;
+export interface AgentErrorEvent extends ChatStreamEventBase {
   message: string;
 }
 
@@ -58,6 +57,7 @@ export class ChatService {
   private socket?: Socket;
   private connected = false;
   private useSse = !!environment.useSse;
+  private sseAbort?: AbortController;
 
   private tokenSubject = new Subject<TokenEvent>();
   private thinkingSubject = new Subject<ThinkingEvent>();
@@ -68,8 +68,8 @@ export class ChatService {
   private permissionSubject = new Subject<PermissionRequest>();
   private doneSubject = new Subject<DoneEvent>();
   private errorSubject = new Subject<AgentErrorEvent>();
-  private startedSubject = new Subject<{ conversationId: string }>();
-  private heartbeatSubject = new Subject<{ conversationId: string }>();
+  private startedSubject = new Subject<ChatStreamEventBase>();
+  private heartbeatSubject = new Subject<ChatStreamEventBase>();
   private reminderSubject = new Subject<Reminder>();
   private briefingSubject = new Subject<BriefingEvent>();
 
@@ -82,8 +82,8 @@ export class ChatService {
   permission$: Observable<PermissionRequest> = this.permissionSubject.asObservable();
   done$: Observable<DoneEvent> = this.doneSubject.asObservable();
   error$: Observable<AgentErrorEvent> = this.errorSubject.asObservable();
-  started$: Observable<{ conversationId: string }> = this.startedSubject.asObservable();
-  heartbeat$: Observable<{ conversationId: string }> = this.heartbeatSubject.asObservable();
+  started$: Observable<ChatStreamEventBase> = this.startedSubject.asObservable();
+  heartbeat$: Observable<ChatStreamEventBase> = this.heartbeatSubject.asObservable();
   reminder$: Observable<Reminder> = this.reminderSubject.asObservable();
   briefing$: Observable<BriefingEvent> = this.briefingSubject.asObservable();
 
@@ -118,16 +118,24 @@ export class ChatService {
 
   sendMessage(
     conversationId: string,
+    requestId: string,
     text: string,
     history?: Array<{ role: string; content: string; createdAt?: string }>,
     images?: Array<{ mimeType: string; data: string }>,
   ): void {
     this.connect();
     if (this.useSse) {
-      void this.sendViaSse(conversationId, text, history, images);
+      void this.sendViaSse(conversationId, requestId, text, history, images);
       return;
     }
-    this.socket?.emit('user_message', { conversationId, text, platform: clientPlatform(), history, images });
+    this.socket?.emit('user_message', {
+      conversationId,
+      requestId,
+      text,
+      platform: clientPlatform(),
+      history,
+      images,
+    });
   }
 
   respondToConfirmation(id: string, approved: boolean): void {
@@ -163,28 +171,46 @@ export class ChatService {
 
   private async sendViaSse(
     conversationId: string,
+    requestId: string,
     text: string,
     history?: Array<{ role: string; content: string; createdAt?: string }>,
     images?: Array<{ mimeType: string; data: string }>,
   ): Promise<void> {
+    this.sseAbort?.abort();
+    const abort = new AbortController();
+    this.sseAbort = abort;
     const base = environment.apiUrl || '';
     let finished = false;
     const markFinished = () => {
       finished = true;
+      if (this.sseAbort === abort) {
+        this.sseAbort = undefined;
+      }
     };
     try {
       const res = await fetch(`${base}/api/chat/stream`, {
         method: 'POST',
+        signal: abort.signal,
         headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-        body: JSON.stringify({ conversationId, text, platform: clientPlatform(), history, images }),
+        body: JSON.stringify({
+          conversationId,
+          requestId,
+          text,
+          platform: clientPlatform(),
+          history,
+          images,
+        }),
       });
       if (!res.ok || !res.body) {
+        if (abort.signal.aborted) {
+          return;
+        }
         const detail =
           res.status === 413
             ? 'Image too large for cloud upload — try a smaller screenshot or one image at a time.'
             : `Chat failed (${res.status})`;
         this.zone.run(() =>
-          this.errorSubject.next({ conversationId, message: detail }),
+          this.errorSubject.next({ conversationId, requestId, message: detail }),
         );
         return;
       }
@@ -200,18 +226,22 @@ export class ChatService {
         buffer = this.consumeSseBuffer(buffer, markFinished);
       }
       buffer = this.consumeSseBuffer(`${buffer}\n\n`, markFinished);
-      if (!finished) {
+      if (!finished && !abort.signal.aborted) {
         this.zone.run(() =>
           this.doneSubject.next({
             conversationId,
+            requestId,
             finalText:
               'Connection ended early, sir. If upgrade steps ran, check GitHub for a new branch or say "open PR".',
           }),
         );
       }
     } catch (error) {
+      if (abort.signal.aborted) {
+        return;
+      }
       this.zone.run(() =>
-        this.errorSubject.next({ conversationId, message: (error as Error).message }),
+        this.errorSubject.next({ conversationId, requestId, message: (error as Error).message }),
       );
     }
   }
@@ -257,10 +287,10 @@ export class ChatService {
         this.progressSubject.next(payload as ProgressEvent);
         break;
       case 'started':
-        this.startedSubject.next(payload as { conversationId: string });
+        this.startedSubject.next(payload as ChatStreamEventBase);
         break;
       case 'heartbeat':
-        this.heartbeatSubject.next(payload as { conversationId: string });
+        this.heartbeatSubject.next(payload as ChatStreamEventBase);
         break;
       case 'tool_start':
         this.toolStartSubject.next(payload as ToolStartEvent);

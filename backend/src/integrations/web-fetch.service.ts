@@ -1,19 +1,68 @@
 import { Injectable } from '@nestjs/common';
+import {
+  extractTitle,
+  htmlToText,
+  MAX_TEXT_CHARS,
+  MIN_USEFUL_TEXT_CHARS,
+  readResponseBodyCapped,
+  resolveMaxRawBytes,
+} from './web-fetch.util';
 
-const MAX_BODY_BYTES = 512_000;
 const FETCH_TIMEOUT_MS = 20_000;
-const MAX_TEXT_CHARS = 48_000;
+const TAVILY_EXTRACT_URL = 'https://api.tavily.com/extract';
+const USER_AGENT = 'JARVIS/1.0 (+https://github.com/Samer-Smati/jarvis)';
 
 export interface FetchedPage {
   url: string;
   title: string;
   text: string;
+  truncated?: boolean;
+  source?: 'direct' | 'tavily';
+}
+
+interface TavilyExtractResult {
+  url?: string;
+  raw_content?: string;
+  content?: string;
+}
+
+interface TavilyExtractResponse {
+  results?: TavilyExtractResult[];
+  failed_results?: Array<{ url?: string; error?: string }>;
 }
 
 @Injectable()
 export class WebFetchService {
   async fetchReadable(rawUrl: string): Promise<FetchedPage> {
     const url = validatePublicHttpUrl(rawUrl);
+    const direct = await this.fetchDirect(url);
+    if (direct.text.length >= MIN_USEFUL_TEXT_CHARS) {
+      return direct;
+    }
+
+    const tavilyKey = process.env.TAVILY_API_KEY?.trim();
+    if (!tavilyKey) {
+      return direct;
+    }
+
+    try {
+      const extracted = await this.tavilyExtract(url.toString(), tavilyKey);
+      if (!extracted.text.trim()) {
+        return direct;
+      }
+      return {
+        url: url.toString(),
+        title: extracted.title || direct.title || url.hostname,
+        text: extracted.text.slice(0, MAX_TEXT_CHARS),
+        truncated: extracted.text.length > MAX_TEXT_CHARS,
+        source: 'tavily',
+      };
+    } catch {
+      return direct;
+    }
+  }
+
+  private async fetchDirect(url: URL): Promise<FetchedPage> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
@@ -24,7 +73,7 @@ export class WebFetchService {
         signal: controller.signal,
         headers: {
           Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8',
-          'User-Agent': 'JARVIS/1.0 (+https://github.com/Samer-Smati/jarvis)',
+          'User-Agent': USER_AGENT,
         },
       });
 
@@ -33,12 +82,9 @@ export class WebFetchService {
       }
 
       const contentType = response.headers.get('content-type') ?? '';
-      const buffer = await response.arrayBuffer();
-      if (buffer.byteLength > MAX_BODY_BYTES) {
-        throw new Error(`Page too large (${buffer.byteLength} bytes). Max ${MAX_BODY_BYTES}.`);
-      }
-
-      const raw = new TextDecoder('utf-8', { fatal: false }).decode(buffer);
+      const maxRawBytes = resolveMaxRawBytes();
+      const { bytes, truncated } = await readResponseBodyCapped(response, maxRawBytes);
+      const raw = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
       const text = contentType.includes('html') ? htmlToText(raw) : raw.trim();
       const title = contentType.includes('html') ? extractTitle(raw) : url.hostname;
 
@@ -46,7 +92,52 @@ export class WebFetchService {
         url: url.toString(),
         title: title || url.hostname,
         text: text.slice(0, MAX_TEXT_CHARS),
+        truncated: truncated || text.length > MAX_TEXT_CHARS,
+        source: 'direct',
       };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async tavilyExtract(
+    url: string,
+    apiKey: string,
+  ): Promise<{ title: string; text: string }> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const response = await fetch(TAVILY_EXTRACT_URL, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'User-Agent': USER_AGENT,
+        },
+        body: JSON.stringify({
+          api_key: apiKey,
+          urls: [url],
+          extract_depth: 'basic',
+          format: 'text',
+        }),
+      });
+
+      const body = await response.text();
+      if (!response.ok) {
+        throw new Error(`Tavily Extract HTTP ${response.status}`);
+      }
+
+      let parsed: TavilyExtractResponse;
+      try {
+        parsed = JSON.parse(body) as TavilyExtractResponse;
+      } catch {
+        throw new Error('Tavily Extract returned invalid JSON');
+      }
+
+      const row = parsed.results?.[0];
+      const text = String(row?.raw_content ?? row?.content ?? '').trim();
+      return { title: '', text };
     } finally {
       clearTimeout(timer);
     }
@@ -80,35 +171,4 @@ export function validatePublicHttpUrl(raw: string): URL {
   }
 
   return parsed;
-}
-
-function extractTitle(html: string): string {
-  const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  return match ? decodeEntities(match[1].replace(/\s+/g, ' ').trim()) : '';
-}
-
-function htmlToText(html: string): string {
-  let text = html
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n\n')
-    .replace(/<\/h[1-6]>/gi, '\n\n')
-    .replace(/<li[^>]*>/gi, '\n- ')
-    .replace(/<[^>]+>/g, ' ');
-  text = decodeEntities(text);
-  return text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/[ \t]{2,}/g, ' ').trim();
-}
-
-function decodeEntities(value: string): string {
-  return value
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&#x27;/gi, "'");
 }
