@@ -37,6 +37,15 @@
     </div>
   </header>
 
+  <div *ngIf="brainOpsPaused" class="brain-ops-banner hud-panel">
+    <i class="pi pi-pause-circle"></i>
+    <span>
+      Brain operations paused — cleanup, consolidate, and rehydrate are blocked.
+      <a routerLink="/settings">Resume in Settings</a>
+      or say "resume brain operations".
+    </span>
+  </div>
+
   <div class="messages" #scrollPane>
     <div *ngIf="recapLoading || sessionRecap" class="recap-panel hud-panel">
       <div class="avatar">

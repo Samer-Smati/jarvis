@@ -40,6 +40,11 @@ export class MemoryRepository {
     return this.preferences.save(this.preferences.create({ key, value, source }));
   }
 
+  async getPreferenceValue(key: string): Promise<string | null> {
+    const existing = await this.preferences.findOne({ where: { key, forgottenAt: IsNull() } });
+    return existing?.value ?? null;
+  }
+
   async createProject(input: CreateProjectInput): Promise<UserProjectEntity> {
     return this.projects.save(
       this.projects.create({

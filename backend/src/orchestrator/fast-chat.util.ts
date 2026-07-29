@@ -1,4 +1,22 @@
+import {
+  BRAIN_OPS_BLOCKED_MESSAGE,
+  isBrainMutatingAction,
+  isBrainOpsDenyOrComplaint,
+  isBrainOpsPauseRequest,
+  isBrainOpsResumeRequest,
+  isMetaComplaintForFiling,
+} from '../brain/brain-ops.util';
+
 /** Short greetings / acks — skip tool definitions on serverless for faster first token. */
+export {
+  BRAIN_OPS_BLOCKED_MESSAGE,
+  isBrainMutatingAction,
+  isBrainOpsDenyOrComplaint,
+  isBrainOpsPauseRequest,
+  isBrainOpsResumeRequest,
+  isMetaComplaintForFiling,
+} from '../brain/brain-ops.util';
+
 export function isFastChatTurn(text: string): boolean {
   const t = text.trim();
   if (!t || t.length > 36) {
@@ -44,23 +62,16 @@ export function isBrainGraphRequest(text: string): boolean {
 /** User wants real wiki edges written between brain pages — not just open the graph UI. */
 export function isBrainConsolidateRequest(text: string): boolean {
   const t = text.trim();
+  if (isBrainOpsDenyOrComplaint(t) || isBrainPlanOnlyRequest(t)) {
+    return false;
+  }
   if (
-    /\b(link (everything|all|them|those|nodes|pages|notes)|connect (everything|all|them|those|nodes|pages|notes)|wire|re-?wire|consolidate|mesh)\b/i.test(
-      t,
-    )
+    /\b(link (everything|all)|connect (everything|all)|consolidate|re-?wire|mesh)\b/i.test(t) &&
+    /\b(brain|graph|wiki|vault|pages?|notes?|nodes?)\b/i.test(t)
   ) {
     return true;
   }
-  if (/\b(scan|identify|find|analyze|analyse).{0,60}\b(connection|link|related|nodes?)\b/i.test(t)) {
-    return true;
-  }
-  if (/\b(why|how).{0,50}\b(not|aren'?t|isn'?t|no).{0,30}\blink/i.test(t)) {
-    return true;
-  }
-  if (/\b(nodes?|pages?|notes?).{0,40}\blink\b/i.test(t) && /\b(brain|graph|wiki|vault)\b/i.test(t)) {
-    return true;
-  }
-  if (/\bstill the same\b/i.test(t) && /\b(picture|image|graph|link|node)/i.test(t)) {
+  if (isBrainExecuteRequest(t) && /\b(brain|graph|wiki|link|consolidate|nodes?|pages?)\b/i.test(t)) {
     return true;
   }
   return false;
@@ -149,13 +160,24 @@ export function isResponsiveUpgradeRequest(text: string): boolean {
 
 export function isBrainCleanupRequest(text: string): boolean {
   const t = text.trim();
-  return /\b(clean\s?up|clear|prune|fix)\b.*\b(brain|graph|wiki|vault)\b/i.test(t) ||
-    /\b(brain|graph|wiki)\b.*\b(clean\s?up|clear|prune|fix)\b/i.test(t);
+  if (isBrainOpsDenyOrComplaint(t) || isBrainPlanOnlyRequest(t)) {
+    return false;
+  }
+  const mentionsCleanup =
+    /\b(clean\s?up|clear|prune)\b.*\b(brain|graph|wiki|vault)\b/i.test(t) ||
+    /\b(brain|graph|wiki)\b.*\b(clean\s?up|clear|prune)\b/i.test(t);
+  if (!mentionsCleanup) {
+    return false;
+  }
+  return (
+    isBrainExecuteRequest(t) ||
+    /\b(run brain cleanup|cleanup now|clean up now)\b/i.test(t)
+  );
 }
 
 export function isBrainExecuteRequest(text: string): boolean {
   const t = text.trim();
-  return /\b(run it|go ahead|do it now|just do|perform|execute|start now|link (everything|all|them|those|nodes|pages|notes)|consolidate now|clean up now|cleanup now)\b/i.test(
+  return /\b(run it|go ahead|do it now|just do|perform|execute|start now|run now|link (everything|all|them|those|nodes|pages|notes)|consolidate now|consolidate brain|clean up now|cleanup now|run brain cleanup|run brain consolidate)\b/i.test(
     t,
   );
 }

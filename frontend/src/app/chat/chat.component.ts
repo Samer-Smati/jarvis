@@ -58,6 +58,8 @@ export class ChatComponent implements OnInit, OnDestroy {
   sessionRecap: string | null = null;
   recapLoading = false;
   showBrainGraph = false;
+  brainOpsPaused = false;
+  brainOpsReason?: string;
 
   private subscriptions = new Subscription();
   private welcomeStarted = false;
@@ -100,6 +102,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.subscriptions.add(this.voiceEnabled$.subscribe((v) => { this.voiceEnabled = !!v; this.cdr.markForCheck(); }));
     this.subscriptions.add(this.listening$.subscribe((v) => { this.listening = !!v; this.cdr.markForCheck(); }));
     this.subscriptions.add(this.transcribing$.subscribe((v) => { this.transcribing = !!v; this.cdr.markForCheck(); }));
+    this.loadBrainOpsStatus();
     this.loadHistory();
 
     this.subscriptions.add(
@@ -828,6 +831,17 @@ export class ChatComponent implements OnInit, OnDestroy {
       latest.set(this.toolKey(tool.toolName, tool.args), tool);
     }
     return [...latest.values()].filter((t) => t.success || t.running);
+  }
+
+  private loadBrainOpsStatus(): void {
+    this.api.brainOpsStatus().subscribe({
+      next: (status) => {
+        this.brainOpsPaused = status?.paused !== false;
+        this.brainOpsReason = status?.reason;
+        this.cdr.markForCheck();
+      },
+      error: () => undefined,
+    });
   }
 
   private loadHistory(): void {

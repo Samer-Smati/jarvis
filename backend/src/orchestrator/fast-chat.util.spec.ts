@@ -10,6 +10,9 @@ import {
   isBrainPlanOnlyRequest,
   isBrainCleanupRequest,
   isBrainConsolidateRequest,
+  isBrainOpsDenyOrComplaint,
+  isBrainOpsPauseRequest,
+  isBrainOpsResumeRequest,
   requiresWebSearch,
   extractWebSearchQuery,
   hasMeaningfulSearchQueryExtract,
@@ -87,10 +90,38 @@ describe('code architecture questions', () => {
 
   it('detects brain cleanup plan without executing fast paths', () => {
     expect(isBrainPlanOnlyRequest('Give me a brain-cleanup plan')).toBe(true);
-    expect(isBrainCleanupRequest('Give me a brain-cleanup plan')).toBe(true);
+    expect(isBrainCleanupRequest('Give me a brain-cleanup plan')).toBe(false);
     expect(isBrainPlanOnlyRequest('Run brain cleanup now')).toBe(false);
-    expect(isBrainConsolidateRequest('link all brain pages')).toBe(true);
+    expect(isBrainConsolidateRequest('link all brain pages now')).toBe(true);
     expect(isBrainPlanOnlyRequest('Plan for linking brain pages before you run consolidate')).toBe(true);
+  });
+
+  it('does not treat halt or complaint messages as cleanup/consolidate requests', () => {
+    expect(
+      isBrainOpsDenyOrComplaint(
+        'do not run any more cleanup/consolidate on the brain until I review the graph',
+      ),
+    ).toBe(true);
+    expect(
+      isBrainCleanupRequest(
+        'do not run any more cleanup/consolidate on the brain until I review the graph',
+      ),
+    ).toBe(false);
+    expect(
+      isBrainConsolidateRequest(
+        'do not run any more cleanup/consolidate on the brain until I review the graph',
+      ),
+    ).toBe(false);
+    expect(isBrainConsolidateRequest("why aren't brain pages linked")).toBe(false);
+    expect(isBrainConsolidateRequest("nodes aren't linked in the graph")).toBe(false);
+    expect(isBrainConsolidateRequest('consolidate brain links now')).toBe(true);
+    expect(isBrainOpsDenyOrComplaint('I am concerned about node counts not matching')).toBe(true);
+  });
+
+  it('detects pause and resume brain ops commands', () => {
+    expect(isBrainOpsPauseRequest('stop running cleanup on the brain until I review')).toBe(true);
+    expect(isBrainOpsResumeRequest('resume brain operations')).toBe(true);
+    expect(isBrainOpsPauseRequest('resume brain operations')).toBe(false);
   });
 
   it('does not treat web-search meta questions as code architecture', () => {

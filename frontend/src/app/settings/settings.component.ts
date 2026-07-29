@@ -52,6 +52,9 @@ export class SettingsComponent implements OnInit {
   isDesktop = isDesktopClient();
   devicePermissions: PermissionGrant[] = [];
   performanceMode = isPerformanceMode();
+  brainOpsPaused = true;
+  brainOpsReason?: string;
+  brainOpsSince?: string;
   diagnostics?: {
     uptimeSec: number;
     memoryMb: { rss: number; heapUsed: number };
@@ -86,6 +89,7 @@ export class SettingsComponent implements OnInit {
       },
     });
     this.api.skills().subscribe({ next: (skills) => (this.skills = skills) });
+    this.loadBrainOpsStatus();
     this.loadPermissions();
     this.loadDiagnostics();
     void this.voice.refreshTtsStatus().then((status) => {
@@ -157,6 +161,44 @@ export class SettingsComponent implements OnInit {
           summary: 'Skills',
           detail: `${skill.name} ${skill.enabled ? 'enabled' : 'disabled'}.`,
         }),
+    });
+  }
+
+  loadBrainOpsStatus(): void {
+    this.api.brainOpsStatus().subscribe({
+      next: (status) => {
+        this.brainOpsPaused = status?.paused !== false;
+        this.brainOpsReason = status?.reason;
+        this.brainOpsSince = status?.since;
+      },
+    });
+  }
+
+  toggleBrainOps(): void {
+    const op = this.brainOpsPaused
+      ? this.api.brainOpsPause('Paused from settings')
+      : this.api.brainOpsResume();
+    op.subscribe({
+      next: (status) => {
+        this.brainOpsPaused = status?.paused !== false;
+        this.brainOpsReason = status?.reason;
+        this.brainOpsSince = status?.since;
+        this.toast.add({
+          severity: 'info',
+          summary: 'Brain operations',
+          detail: this.brainOpsPaused
+            ? 'Cleanup, consolidate, and rehydrate are paused.'
+            : 'Brain operations resumed.',
+        });
+      },
+      error: (err) => {
+        this.brainOpsPaused = !this.brainOpsPaused;
+        this.toast.add({
+          severity: 'error',
+          summary: 'Brain operations',
+          detail: err?.error?.message ?? 'Could not update brain ops status.',
+        });
+      },
     });
   }
 

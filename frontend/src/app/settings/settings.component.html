@@ -123,6 +123,22 @@
     </div>
   </p-card>
 
+  <p-card header="Brain operations">
+    <p class="hint">
+      Pause cleanup, consolidate, and rehydrate while you review the graph. Deploy defaults to paused until you resume.
+    </p>
+    <div class="wake-row">
+      <span class="hint">
+        <strong>Brain ops paused</strong>
+        <span *ngIf="brainOpsPaused && brainOpsReason" class="pause-reason"> — {{ brainOpsReason }}</span>
+      </span>
+      <p-toggleswitch [(ngModel)]="brainOpsPaused" (onChange)="toggleBrainOps()"></p-toggleswitch>
+    </div>
+    <p class="hint piper-status" *ngIf="brainOpsPaused">
+      Cleanup, consolidate, and rehydrate are blocked. Graph viewing and search still work.
+    </p>
+  </p-card>
+
   <p-card header="Emergency">
     <p class="hint">Immediately halt any in-progress autonomous action.</p>
     <p-button label="Kill switch" icon="pi pi-power-off" severity="danger" (onClick)="killSwitch()"></p-button>

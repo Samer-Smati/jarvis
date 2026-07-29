@@ -49,6 +49,14 @@ export class BrainPgStore {
         });
       }
 
+      const vaultPaths = new Set(Object.keys(vault.pages));
+      const existingPages = await this.pages.find();
+      for (const row of existingPages) {
+        if (!vaultPaths.has(row.path)) {
+          await this.pages.delete({ path: row.path });
+        }
+      }
+
       await this.edges.clear();
       const graph = this.buildGraphFromVault(vault);
       for (const edge of graph.edges) {

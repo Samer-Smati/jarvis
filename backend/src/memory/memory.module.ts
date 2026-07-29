@@ -22,6 +22,6 @@ import { MemoryService } from './memory.service';
   ],
   controllers: [MemoryController],
   providers: [MemoryRepository, MemoryService],
-  exports: [MemoryService],
+  exports: [MemoryService, MemoryRepository],
 })
 export class MemoryModule {}

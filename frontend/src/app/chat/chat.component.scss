@@ -17,6 +17,30 @@
   background: linear-gradient(90deg, var(--jarvis-cyan-faint), transparent 55%);
 }
 
+.brain-ops-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  margin: 0.65rem 1rem 0;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid rgba(255, 180, 60, 0.35);
+  background: rgba(255, 180, 60, 0.08);
+  color: var(--jarvis-text);
+  font-size: 0.88rem;
+  line-height: 1.45;
+
+  i {
+    color: #ffb43c;
+    margin-top: 0.1rem;
+  }
+
+  a {
+    color: var(--jarvis-cyan);
+    text-decoration: none;
+    margin-left: 0.25rem;
+  }
+}
+
 .header-actions {
   display: flex;
   align-items: center;

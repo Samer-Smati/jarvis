@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { BrainService } from '../../brain/brain.service';
+import { BrainOpsPauseService } from '../../brain/brain-ops-pause.service';
+import { isBrainMutatingAction } from '../../brain/brain-ops.util';
 import { WebFetchService } from '../../integrations/web-fetch.service';
 import { Skill, SkillContext, SkillResult } from '../skill.interface';
 
@@ -70,6 +72,7 @@ export class BrainSkill implements Skill {
 
   constructor(
     private readonly brain: BrainService,
+    private readonly brainOpsPause: BrainOpsPauseService,
     private readonly webFetch: WebFetchService,
   ) {}
 
@@ -87,6 +90,11 @@ export class BrainSkill implements Skill {
       message: `Brain: ${action}`,
       percent: 40,
     });
+
+    if (isBrainMutatingAction(action) && (await this.brainOpsPause.isPaused())) {
+      const msg = this.brainOpsPause.blockedMessage();
+      return { success: false, output: msg };
+    }
 
     switch (action) {
       case 'status':
@@ -239,39 +247,47 @@ export class BrainSkill implements Skill {
         };
       }
       case 'consolidate': {
-        const result = await this.brain.consolidateLinks();
-        const pairLines =
-          result.pairs.length > 0
-            ? result.pairs.slice(0, 40).map((p) => `- ${p}`).join('\n')
-            : 'No new pairs — pages may already be linked or lack overlapping topics.';
-        return {
-          success: true,
-          output: [
-            `BRAIN_GRAPH: Consolidated knowledge graph — ${result.nodeCount} nodes, ${result.edgeCount} links (${result.linked} new pairs).`,
-            '',
-            'New links:',
-            pairLines,
-            result.pairs.length > 40 ? `…and ${result.pairs.length - 40} more.` : '',
-          ]
-            .filter(Boolean)
-            .join('\n'),
-        };
+        try {
+          const result = await this.brain.consolidateLinks();
+          const pairLines =
+            result.pairs.length > 0
+              ? result.pairs.slice(0, 40).map((p) => `- ${p}`).join('\n')
+              : 'No new pairs — pages may already be linked or lack overlapping topics.';
+          return {
+            success: true,
+            output: [
+              `BRAIN_GRAPH: Consolidated knowledge graph — ${result.nodeCount} nodes, ${result.edgeCount} links (${result.linked} new pairs).`,
+              '',
+              'New links:',
+              pairLines,
+              result.pairs.length > 40 ? `…and ${result.pairs.length - 40} more.` : '',
+            ]
+              .filter(Boolean)
+              .join('\n'),
+          };
+        } catch (error) {
+          return { success: false, output: (error as Error).message };
+        }
       }
       case 'cleanup': {
-        const result = await this.brain.cleanupVault();
-        const graph = await this.brain.getGraph();
-        const removedList =
-          result.removed.length > 0
-            ? result.removed.map((r) => `- ${r}`).join('\n')
-            : 'No garbage pages found.';
-        return {
-          success: true,
-          output: [
-            `Brain cleanup complete — removed ${result.removed.length} page(s), ${result.kept} remain.`,
-            removedList,
-            `BRAIN_GRAPH: ${graph.nodes.length} nodes, ${graph.edges.length} links.`,
-          ].join('\n\n'),
-        };
+        try {
+          const result = await this.brain.cleanupVault();
+          const stats = await this.brain.getVaultStats();
+          const removedList =
+            result.removed.length > 0
+              ? result.removed.map((r) => `- ${r}`).join('\n')
+              : 'No garbage pages found.';
+          return {
+            success: true,
+            output: [
+              `Brain cleanup complete — removed ${result.removed.length} page(s), ${result.kept} remain.`,
+              removedList,
+              `BRAIN_GRAPH: ${stats.pageCount} nodes, ${stats.edgeCount} links.`,
+            ].join('\n\n'),
+          };
+        } catch (error) {
+          return { success: false, output: (error as Error).message };
+        }
       }
       default:
         return { success: false, output: `Unknown action "${action}".` };

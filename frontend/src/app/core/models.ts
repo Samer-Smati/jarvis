@@ -153,6 +153,13 @@ export interface BrainGraph {
   nodes: BrainGraphNode[];
   edges: BrainGraphEdge[];
   updatedAt: string;
+  source?: 'vault' | 'pg' | 'seed';
+}
+
+export interface BrainOpsStatus {
+  paused: boolean;
+  reason?: string;
+  since?: string;
 }
 
 export interface GraphLayoutNode {

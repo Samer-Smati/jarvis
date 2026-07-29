@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BrainBlobStore } from './brain-blob.store';
+import { BrainOpsPauseService } from './brain-ops-pause.service';
+import { isMetaComplaintForFiling } from './brain-ops.util';
 import { BrainPgStore } from './brain-pg.store';
 import { createSeedVault } from './brain.seed';
 import { BrainCategory, BrainGraph, BrainGraphEdge, BrainPage, BrainQueryHit, BrainVault } from './brain.types';
@@ -37,6 +39,15 @@ export interface BrainRehydrateResult {
   updatedAt: string;
 }
 
+export interface BrainVaultStats {
+  pageCount: number;
+  edgeCount: number;
+  updatedAt: string;
+  source: 'vault' | 'pg' | 'seed';
+}
+
+export const BRAIN_PRUNE_META_CONFIRM_PHRASE = 'PRUNE_META_FACTS';
+
 @Injectable()
 export class BrainService implements OnModuleInit {
   private readonly logger = new Logger(BrainService.name);
@@ -50,6 +61,7 @@ export class BrainService implements OnModuleInit {
   constructor(
     config: ConfigService,
     private readonly pgStore: BrainPgStore,
+    private readonly brainOpsPause: BrainOpsPauseService,
   ) {
     const dataRoot = config.get<string>('DATA_ROOT') ?? join(process.cwd(), 'data');
     this.vaultPath = join(dataRoot, 'brain', 'vault.json');
@@ -330,6 +342,7 @@ ${content}`;
    * (shared title/content tokens, known topic hubs). Persists and syncs PG.
    */
   async consolidateLinks(): Promise<{ linked: number; pairs: string[]; edgeCount: number; nodeCount: number }> {
+    await this.brainOpsPause.assertMutationAllowed('consolidate');
     await this.reloadFromStore();
     if (this.vaultIsEphemeralSeed) {
       throw new Error(
@@ -571,7 +584,11 @@ ${content}`;
       HOT_MAX_CHARS,
     );
 
-    if (!shouldAutoLearnTurn(user, assistant)) {
+    const paused = await this.brainOpsPause.isPaused();
+    const skipVaultLearning =
+      paused || !shouldAutoLearnTurn(user, assistant) || isMetaComplaintForFiling(user);
+
+    if (skipVaultLearning) {
       vault.updatedAt = now;
       await this.persist(vault);
       void this.pgStore.indexTurn(user, assistant);
@@ -720,6 +737,7 @@ ${content}`;
     confirm: string;
     expectedMinPages?: number;
   }): Promise<BrainRehydrateResult> {
+    await this.brainOpsPause.assertMutationAllowed('rehydrate_from_pg');
     if (input.confirm !== BRAIN_REHYDRATE_CONFIRM_PHRASE) {
       throw new Error(
         `Rehydration refused — confirm must be exactly "${BRAIN_REHYDRATE_CONFIRM_PHRASE}".`,
@@ -796,22 +814,56 @@ ${content}`;
     );
   }
 
+  async getVaultStats(): Promise<BrainVaultStats> {
+    const vault = await this.ensureLoaded();
+    const graph = this.buildGraphFromVault(vault);
+    return {
+      pageCount: graph.nodes.length,
+      edgeCount: graph.edges.length,
+      updatedAt: graph.updatedAt,
+      source: this.vaultIsEphemeralSeed ? 'seed' : 'vault',
+    };
+  }
+
   async getGraph(): Promise<BrainGraph> {
-    const pgGraph = await this.pgStore.loadGraph();
     const vault = await this.ensureLoaded();
     const vaultGraph = this.buildGraphFromVault(vault);
-    // Prefer PG only when it has at least as many edges — weak PG sync must not hide vault wiki links.
-    if (
-      pgGraph &&
-      pgGraph.nodes.length >= vaultGraph.nodes.length &&
-      pgGraph.edges.length >= vaultGraph.edges.length
-    ) {
-      return pgGraph;
+    if (!this.vaultIsEphemeralSeed && vaultGraph.nodes.length > 0) {
+      return { ...vaultGraph, source: 'vault' };
     }
-    return vaultGraph;
+    const pgGraph = await this.pgStore.loadGraph();
+    if (pgGraph?.nodes.length) {
+      return { ...pgGraph, source: 'pg' };
+    }
+    return { ...vaultGraph, source: this.vaultIsEphemeralSeed ? 'seed' : 'vault' };
+  }
+
+  async pruneMetaFactPages(confirm: string): Promise<{ removed: string[]; kept: number }> {
+    if (confirm !== BRAIN_PRUNE_META_CONFIRM_PHRASE) {
+      throw new Error(`Refused — confirm must be exactly "${BRAIN_PRUNE_META_CONFIRM_PHRASE}".`);
+    }
+    const vault = await this.ensureLoaded();
+    const removed: string[] = [];
+    for (const [path, page] of Object.entries(vault.pages)) {
+      if (page.category !== 'fact') {
+        continue;
+      }
+      if (isMetaFactPageTitle(page.title)) {
+        delete vault.pages[path];
+        removed.push(`${page.title} (${path})`);
+      }
+    }
+    if (removed.length) {
+      this.rebuildIndex(vault);
+      this.appendLog(vault, `prune_meta_facts: removed ${removed.length} page(s)`);
+      vault.updatedAt = new Date().toISOString();
+      await this.persist(vault);
+    }
+    return { removed, kept: Object.keys(vault.pages).length };
   }
 
   async cleanupVault(): Promise<{ removed: string[]; kept: number }> {
+    await this.brainOpsPause.assertMutationAllowed('cleanup');
     await this.reloadFromStore();
     if (this.vaultIsEphemeralSeed) {
       throw new Error(
@@ -1183,6 +1235,9 @@ function extractFactsFromUser(text: string): string[] {
 
 function isLowValueForFacts(text: string): boolean {
   const t = text.trim();
+  if (isMetaComplaintForFiling(t)) {
+    return true;
+  }
   if (t.length < 8) {
     return true;
   }
@@ -1206,9 +1261,16 @@ function isLowValueForFacts(text: string): boolean {
 }
 
 function summarizeFactTitle(fact: string): string {
+  if (/\b(?:I am|I'm)\s+(concerned|worried|frustrated|upset|annoyed)\b/i.test(fact)) {
+    return 'User note';
+  }
   const owner = fact.match(/\b(?:I am|I'm|my name is|call me)\s+([^,.!?]+)/i);
   if (owner?.[1]) {
-    return `User: ${owner[1].trim().slice(0, 40)}`;
+    const name = owner[1].trim();
+    if (/^(concerned|worried|frustrated|upset|annoyed)\b/i.test(name)) {
+      return 'User note';
+    }
+    return `User: ${name.slice(0, 40)}`;
   }
   const remember = fact.match(/\b(?:remember that|note that|keep in mind|don't forget)\s+(.+)/i);
   if (remember?.[1]) {
@@ -1258,8 +1320,15 @@ function isProtectedBrainPage(page: BrainPage): boolean {
   return false;
 }
 
+function isMetaFactPageTitle(title: string): boolean {
+  return /^User: (concerned|worried|upset|frustrated|complaining|annoyed)\b/i.test(title.trim());
+}
+
 function isGarbageBrainPage(page: BrainPage): boolean {
   const title = page.title.trim();
+  if (page.category === 'fact' && isMetaFactPageTitle(title)) {
+    return true;
+  }
   if (page.category === 'fact') {
     if (title.length > 55) {
       return true;

@@ -15,6 +15,7 @@ import {
   SystemStatus,
   TtsStatus,
   BrainGraph,
+  BrainOpsStatus,
 } from './models';
 import { clientPlatform } from './platform.util';
 
@@ -144,6 +145,18 @@ export class ApiService {
 
   brainGraph(): Observable<BrainGraph> {
     return this.http.get<BrainGraph>(`${this.base}/brain/graph`);
+  }
+
+  brainOpsStatus(): Observable<BrainOpsStatus> {
+    return this.http.get<BrainOpsStatus>(`${this.base}/brain/ops-status`);
+  }
+
+  brainOpsPause(reason?: string): Observable<BrainOpsStatus> {
+    return this.http.post<BrainOpsStatus>(`${this.base}/brain/ops-pause`, { reason });
+  }
+
+  brainOpsResume(): Observable<BrainOpsStatus> {
+    return this.http.post<BrainOpsStatus>(`${this.base}/brain/ops-resume`, {});
   }
 
   reminders(): Observable<Reminder[]> {

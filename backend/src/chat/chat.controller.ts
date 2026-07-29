@@ -4,7 +4,8 @@ import { Repository } from 'typeorm';
 import { GuardrailService } from '../guardrails/guardrail.service';
 import { LlmService } from '../llm/llm.service';
 import { ConversationMessageEntity } from '../memory/entities/conversation-message.entity';
-import { BrainService, BRAIN_REHYDRATE_CONFIRM_PHRASE } from '../brain/brain.service';
+import { BrainOpsPauseService } from '../brain/brain-ops-pause.service';
+import { BrainService, BRAIN_PRUNE_META_CONFIRM_PHRASE, BRAIN_REHYDRATE_CONFIRM_PHRASE } from '../brain/brain.service';
 import { MemoryService } from '../memory/memory.service';
 import { OrchestratorService } from '../orchestrator/orchestrator.service';
 import { ReminderEntity } from '../skills/entities/reminder.entity';
@@ -24,6 +25,7 @@ export class ChatController {
     private readonly skills: SkillRegistry,
     private readonly memory: MemoryService,
     private readonly brain: BrainService,
+    private readonly brainOpsPause: BrainOpsPauseService,
     private readonly guardrails: GuardrailService,
     private readonly llm: LlmService,
     @InjectRepository(ReminderEntity)
@@ -148,8 +150,46 @@ export class ChatController {
   @Get('brain/status')
   async brainStatus() {
     const status = await this.brain.status();
+    const stats = await this.brain.getVaultStats();
     const pages = await this.brain.listPages();
-    return { status, pageCount: pages.length, pages: pages.slice(0, 50) };
+    return {
+      status,
+      pageCount: stats.pageCount,
+      edgeCount: stats.edgeCount,
+      source: stats.source,
+      pages: pages.slice(0, 50),
+    };
+  }
+
+  @Get('brain/ops-status')
+  brainOpsStatus() {
+    return this.brainOpsPause.status();
+  }
+
+  @Post('brain/ops-pause')
+  async pauseBrainOps(@Body() body: { reason?: string }) {
+    return this.brainOpsPause.pause(body?.reason);
+  }
+
+  @Post('brain/ops-resume')
+  async brainOpsResume() {
+    return this.brainOpsPause.resume();
+  }
+
+  @Post('brain/prune-meta-facts')
+  async brainPruneMetaFacts(@Body() body: { confirm?: string }) {
+    const confirm = body?.confirm?.trim();
+    if (confirm !== BRAIN_PRUNE_META_CONFIRM_PHRASE) {
+      throw new BadRequestException(
+        `Refused — send { "confirm": "${BRAIN_PRUNE_META_CONFIRM_PHRASE}" } to remove meta-complaint fact pages.`,
+      );
+    }
+    try {
+      const result = await this.brain.pruneMetaFactPages(confirm);
+      return { ok: true, ...result };
+    } catch (error) {
+      throw new BadRequestException((error as Error).message);
+    }
   }
 
   @Get('brain/graph')

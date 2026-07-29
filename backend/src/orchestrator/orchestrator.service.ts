@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { BrainService } from '../brain/brain.service';
+import { BrainOpsPauseService } from '../brain/brain-ops-pause.service';
 import { GuardrailService } from '../guardrails/guardrail.service';
 import type { ChatMessage, LlmProvider, ToolCall, ToolDefinition, ChatImagePart } from '../llm/llm.types';
 import { LLM_PROVIDER } from '../llm/llm.types';
@@ -21,7 +22,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isBrainPlanOnlyRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery, isWebSearchMetaQuestion, isCodeArchitectureQuestion, isPlanOnlyRequest } from './fast-chat.util';
+import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isBrainPlanOnlyRequest, isBrainOpsPauseRequest, isBrainOpsResumeRequest, isBrainMutatingAction, BRAIN_OPS_BLOCKED_MESSAGE, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery, isWebSearchMetaQuestion, isCodeArchitectureQuestion, isPlanOnlyRequest } from './fast-chat.util';
 import {
   buildWebSearchUnavailableMessage,
   isFailedWebSearchOutput,
@@ -55,6 +56,7 @@ export class OrchestratorService {
     private readonly skills: SkillRegistry,
     private readonly memory: MemoryService,
     private readonly brain: BrainService,
+    private readonly brainOpsPause: BrainOpsPauseService,
     private readonly guardrails: GuardrailService,
     private readonly permissions: PermissionsService,
     private readonly personality: PersonalityService,
@@ -168,7 +170,23 @@ export class OrchestratorService {
         }
       }
 
-      if (!isBrainPlanOnlyRequest(userText) && isBrainCleanupRequest(userText)) {
+      if (isBrainOpsPauseRequest(userText) && !images?.length) {
+        const handled = await this.runBrainOpsPause(conversationId, userText, emitter, trigger);
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isBrainOpsResumeRequest(userText) && !images?.length) {
+        const handled = await this.runBrainOpsResume(conversationId, userText, emitter, trigger);
+        if (handled) {
+          return;
+        }
+      }
+
+      const brainOpsPaused = await this.brainOpsPause.isPaused();
+
+      if (!brainOpsPaused && !isBrainPlanOnlyRequest(userText) && isBrainCleanupRequest(userText)) {
         const handled = await this.runBrainCleanup(
           conversationId,
           userText,
@@ -181,7 +199,7 @@ export class OrchestratorService {
         }
       }
 
-      if (!isBrainPlanOnlyRequest(userText) && isBrainConsolidateRequest(userText)) {
+      if (!brainOpsPaused && !isBrainPlanOnlyRequest(userText) && isBrainConsolidateRequest(userText)) {
         const handled = await this.runBrainConsolidate(
           conversationId,
           userText,
@@ -324,6 +342,12 @@ export class OrchestratorService {
           `\n\nThe user wants a PLAN or recommendations about the brain/wiki — do NOT call brain cleanup, consolidate, or graph this turn. ` +
           `Do NOT repeat prior fast-path confirmation messages verbatim (e.g. "Relational mapping complete…"). ` +
           `Call brain action=status or action=query if you need live page/link counts, then propose steps only.`;
+      }
+      if (await this.brainOpsPause.isPaused()) {
+        systemPrompt +=
+          `\n\nBrain operations are PAUSED — do NOT call brain cleanup, consolidate, or rehydrate. ` +
+          `You may still use brain status, query, graph (read-only), remember, and ingest. ` +
+          `If the user asks to run mutating brain ops, explain they are paused and suggest resume via Settings or "resume brain operations".`;
       }
       if (isBrainGraphRequest(userText) && !isBrainPlanOnlyRequest(userText)) {
         systemPrompt += `\n\nThe user wants to SEE the brain link graph. Call brain with action=graph ONCE — that opens the live graph UI. Briefly describe node/link counts from the tool output. Do not only describe links in prose.`;
@@ -662,6 +686,18 @@ export class OrchestratorService {
         await this.guardrails.audit(skill.name, trigger, JSON.stringify(call.arguments), 'rejected');
         emitter.onToolEnd(call.name, 'Rejected by user.', false);
         return 'The user rejected this action. Do not retry it.';
+      }
+    }
+
+    if (skill.name === 'brain') {
+      const action = String(call.arguments?.action ?? '');
+      if (isBrainMutatingAction(action)) {
+        if (await this.brainOpsPause.isPaused()) {
+          const msg = BRAIN_OPS_BLOCKED_MESSAGE;
+          emitter.onToolEnd(call.name, msg, false);
+          await this.guardrails.audit(call.name, trigger, JSON.stringify(call.arguments), 'permission_denied');
+          return msg;
+        }
       }
     }
 
@@ -1136,6 +1172,38 @@ export class OrchestratorService {
     return true;
   }
 
+  private async runBrainOpsPause(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+  ): Promise<boolean> {
+    await this.brainOpsPause.pause(userText.slice(0, 500));
+    const finalText =
+      'Understood, sir — brain cleanup, consolidate, and rehydrate are paused until you resume. Use Settings or say "resume brain operations".';
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    void this.memory.logEvent(trigger, 'Brain ops paused');
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runBrainOpsResume(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+  ): Promise<boolean> {
+    await this.brainOpsPause.resume();
+    const finalText =
+      'Brain operations resumed, sir — cleanup, consolidate, and rehydrate are enabled again.';
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    void this.memory.logEvent(trigger, 'Brain ops resumed');
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
   private async runBrainCleanup(
     conversationId: string,
     userText: string,
@@ -1143,6 +1211,14 @@ export class OrchestratorService {
     trigger: string,
     clientPlatform: 'desktop' | 'web',
   ): Promise<boolean> {
+    if (await this.brainOpsPause.isPaused()) {
+      const finalText = BRAIN_OPS_BLOCKED_MESSAGE;
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
     const skill = this.skills.get('brain');
     if (!skill) {
       return false;
@@ -1168,9 +1244,10 @@ export class OrchestratorService {
       clientPlatform,
     );
 
+    const stats = await this.brain.getVaultStats();
     const finalText = output.includes('removed')
-      ? `Brain cleaned up, sir. ${output.split('\n')[0]} The graph is refreshed — orphan command pages are gone.`
-      : `Brain vault is tidy, sir. ${output.split('\n')[0]}`;
+      ? `Brain cleaned up, sir. ${output.split('\n')[0]} Vault now has ${stats.pageCount} notes and ${stats.edgeCount} links.`
+      : `Brain vault is tidy, sir. ${stats.pageCount} notes, ${stats.edgeCount} links.`;
 
     await this.memory.appendMessage(conversationId, 'assistant', finalText);
     void this.memory.logEvent(trigger, 'Brain cleanup');
@@ -1186,6 +1263,14 @@ export class OrchestratorService {
     trigger: string,
     clientPlatform: 'desktop' | 'web',
   ): Promise<boolean> {
+    if (await this.brainOpsPause.isPaused()) {
+      const finalText = BRAIN_OPS_BLOCKED_MESSAGE;
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
     const skill = this.skills.get('brain');
     if (!skill) {
       return false;
@@ -1216,16 +1301,13 @@ export class OrchestratorService {
       clientPlatform,
     );
 
-    const graph = await this.brain.getGraph();
-    const graphMatch = output.match(/BRAIN_GRAPH:[^\n]*?(\d+)\s+nodes,\s*(\d+)\s+links/i);
+    const stats = await this.brain.getVaultStats();
     const linkedMatch = output.match(/(\d+)\s+new pairs/i);
     const linked = linkedMatch?.[1] ?? '0';
-    const nodeCount = graphMatch?.[1] ?? String(graph.nodes.length);
-    const edgeCount = graphMatch?.[2] ?? String(graph.edges.length);
     const stampedAt = new Date().toISOString().slice(0, 16).replace('T', ' ');
     const finalText =
       `Relational mapping complete, sir — wrote ${linked} new link pair(s). ` +
-      `Graph now has ${nodeCount} notes and ${edgeCount} links (verified ${stampedAt} UTC). ` +
+      `Graph now has ${stats.pageCount} notes and ${stats.edgeCount} links (verified ${stampedAt} UTC). ` +
       `Refresh the graph panel if it was already open.`;
 
     await this.memory.appendMessage(conversationId, 'assistant', finalText);
@@ -1250,8 +1332,6 @@ export class OrchestratorService {
 
     emitter.onProgress?.({ stage: 'brain', message: 'Loading knowledge graph…', percent: 42, toolName: 'brain' });
 
-    void this.brain.cleanupVault();
-
     await this.executeToolCall(
       conversationId,
       { id: 'brain-graph', name: 'brain', arguments: { action: 'graph' } },
@@ -1260,9 +1340,10 @@ export class OrchestratorService {
       clientPlatform,
     );
 
+    const stats = await this.brain.getVaultStats();
     const graph = await this.brain.getGraph();
     const labels = graph.nodes.map((n) => n.label).join(', ');
-    const finalText = `Opening your brain graph, sir — ${graph.nodes.length} notes (${labels}) and ${graph.edges.length} links.`;
+    const finalText = `Opening your brain graph, sir — ${stats.pageCount} notes (${labels}) and ${stats.edgeCount} links.`;
 
     await this.memory.appendMessage(conversationId, 'assistant', finalText);
     this.persistTurnLearning(userText, finalText);

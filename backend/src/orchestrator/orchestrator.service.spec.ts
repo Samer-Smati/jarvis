@@ -3,6 +3,7 @@ import { GuardrailService } from '../guardrails/guardrail.service';
 import { FeedbackService } from '../feedback/feedback.service';
 import { LessonsService } from '../lessons/lessons.service';
 import { BrainService } from '../brain/brain.service';
+import { BrainOpsPauseService } from '../brain/brain-ops-pause.service';
 import { LlmChatResult, LlmProvider } from '../llm/llm.types';
 import { LlmService } from '../llm/llm.service';
 import { TaskRouterService } from '../llm/task-router.service';
@@ -59,6 +60,7 @@ describe('OrchestratorService', () => {
     >
   >;
   let brain: jest.Mocked<Pick<BrainService, 'getContextBlock' | 'remember' | 'learnFromTurn'>>;
+  let brainOpsPause: jest.Mocked<Pick<BrainOpsPauseService, 'isPaused' | 'pause' | 'resume'>>;
   let guardrails: jest.Mocked<Pick<GuardrailService, 'requestConfirmation' | 'audit'>>;
   let permissions: jest.Mocked<Pick<PermissionsService, 'isGranted' | 'requestGrant'>>;
   let personality: jest.Mocked<Pick<PersonalityService, 'getActivePrompt'>>;
@@ -75,6 +77,7 @@ describe('OrchestratorService', () => {
       registry,
       memory as unknown as MemoryService,
       brain as unknown as BrainService,
+      brainOpsPause as unknown as BrainOpsPauseService,
       guardrails as unknown as GuardrailService,
       permissions as unknown as PermissionsService,
       personality as unknown as PersonalityService,
@@ -115,6 +118,11 @@ describe('OrchestratorService', () => {
       getContextBlock: jest.fn().mockResolvedValue(''),
       remember: jest.fn().mockResolvedValue(undefined),
       learnFromTurn: jest.fn().mockResolvedValue(undefined),
+    };
+    brainOpsPause = {
+      isPaused: jest.fn().mockResolvedValue(false),
+      pause: jest.fn().mockResolvedValue({ paused: true }),
+      resume: jest.fn().mockResolvedValue({ paused: false }),
     };
     personality = {
       getActivePrompt: jest.fn().mockReturnValue('You are JARVIS.'),
@@ -241,10 +249,12 @@ describe('OrchestratorService', () => {
       calRegistry,
       memory as unknown as MemoryService,
       brain as unknown as BrainService,
+      brainOpsPause as unknown as BrainOpsPauseService,
       guardrails as unknown as GuardrailService,
       permissions as unknown as PermissionsService,
       personality as unknown as PersonalityService,
       feedback as unknown as FeedbackService,
+      lessons as unknown as LessonsService,
     ).handleUserMessage('c1', 'delete my meeting', emitter);
 
     expect(guardrails.requestConfirmation).toHaveBeenCalled();
