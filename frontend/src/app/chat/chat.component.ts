@@ -13,7 +13,7 @@ import {
   OutboundChatRequest,
 } from '../core/chat-request.util';
 import { ChatMessage, ChatImageAttachment, ChatImagePayload, ConfirmationRequest, PermissionRequest, ProgressStep, ToolActivity } from '../core/models';
-import { BrainGraphService, isBrainGraphRequest } from '../brain/brain-graph.service';
+import { BrainGraphService, isBrainGraphRequest, isBrainMutationToolOutput } from '../brain/brain-graph.service';
 import { VoiceService } from '../core/voice.service';
 import { compressImageForChat } from '../core/image-compress.util';
 
@@ -272,6 +272,9 @@ export class ChatComponent implements OnInit, OnDestroy {
         if (event.output?.includes('BRAIN_GRAPH:')) {
           this.brainGraph.open();
         }
+        if (event.toolName === 'brain' || isBrainMutationToolOutput(event.output ?? '')) {
+          this.brainGraph.requestRefresh();
+        }
         this.voice.speakStreamPauseForTool();
         this.scrollToBottom();
         this.cdr.markForCheck();
@@ -317,6 +320,9 @@ export class ChatComponent implements OnInit, OnDestroy {
         this.completeActiveRequest(event.requestId);
         if (event.finalText?.includes('BRAIN_GRAPH:') || /\bOpening your brain graph\b/i.test(event.finalText ?? '')) {
           this.brainGraph.open();
+        }
+        if (/\b(Vault now has \d+ notes|Graph now has \d+ notes|Brain cleaned up|Brain vault is tidy)\b/i.test(event.finalText ?? '')) {
+          this.brainGraph.requestRefresh();
         }
         if (!current.content?.trim()) {
           this.messages.splice(findAssistantIndex(this.messages, event.requestId), 1);

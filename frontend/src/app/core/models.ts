@@ -154,6 +154,8 @@ export interface BrainGraph {
   edges: BrainGraphEdge[];
   updatedAt: string;
   source?: 'vault' | 'pg' | 'seed';
+  pageCount?: number;
+  edgeCount?: number;
 }
 
 export interface BrainOpsStatus {

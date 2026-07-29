@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BrainBlobStore } from './brain-blob.store';
 import { BrainOpsPauseService } from './brain-ops-pause.service';
-import { isMetaComplaintForFiling } from './brain-ops.util';
+import { isMetaComplaintForFiling, isMetaFactPageTitle } from './brain-ops.util';
 import { BrainPgStore } from './brain-pg.store';
 import { createSeedVault } from './brain.seed';
 import { BrainCategory, BrainGraph, BrainGraphEdge, BrainPage, BrainQueryHit, BrainVault } from './brain.types';
@@ -829,13 +829,24 @@ ${content}`;
     const vault = await this.ensureLoaded();
     const vaultGraph = this.buildGraphFromVault(vault);
     if (!this.vaultIsEphemeralSeed && vaultGraph.nodes.length > 0) {
-      return { ...vaultGraph, source: 'vault' };
+      return this.withGraphCounts({ ...vaultGraph, source: 'vault' });
     }
     const pgGraph = await this.pgStore.loadGraph();
     if (pgGraph?.nodes.length) {
-      return { ...pgGraph, source: 'pg' };
+      return this.withGraphCounts({ ...pgGraph, source: 'pg' });
     }
-    return { ...vaultGraph, source: this.vaultIsEphemeralSeed ? 'seed' : 'vault' };
+    return this.withGraphCounts({
+      ...vaultGraph,
+      source: this.vaultIsEphemeralSeed ? 'seed' : 'vault',
+    });
+  }
+
+  private withGraphCounts(graph: BrainGraph): BrainGraph {
+    return {
+      ...graph,
+      pageCount: graph.nodes.length,
+      edgeCount: graph.edges.length,
+    };
   }
 
   async pruneMetaFactPages(confirm: string): Promise<{ removed: string[]; kept: number }> {
@@ -845,9 +856,6 @@ ${content}`;
     const vault = await this.ensureLoaded();
     const removed: string[] = [];
     for (const [path, page] of Object.entries(vault.pages)) {
-      if (page.category !== 'fact') {
-        continue;
-      }
       if (isMetaFactPageTitle(page.title)) {
         delete vault.pages[path];
         removed.push(`${page.title} (${path})`);
@@ -858,6 +866,7 @@ ${content}`;
       this.appendLog(vault, `prune_meta_facts: removed ${removed.length} page(s)`);
       vault.updatedAt = new Date().toISOString();
       await this.persist(vault);
+      void this.pgStore.syncVault(vault);
     }
     return { removed, kept: Object.keys(vault.pages).length };
   }
@@ -1320,13 +1329,9 @@ function isProtectedBrainPage(page: BrainPage): boolean {
   return false;
 }
 
-function isMetaFactPageTitle(title: string): boolean {
-  return /^User: (concerned|worried|upset|frustrated|complaining|annoyed)\b/i.test(title.trim());
-}
-
 function isGarbageBrainPage(page: BrainPage): boolean {
   const title = page.title.trim();
-  if (page.category === 'fact' && isMetaFactPageTitle(title)) {
+  if (isMetaFactPageTitle(title)) {
     return true;
   }
   if (page.category === 'fact') {

@@ -59,3 +59,7 @@ export function isMetaComplaintForFiling(text: string): boolean {
   }
   return false;
 }
+
+export function isMetaFactPageTitle(title: string): boolean {
+  return /^User: (concerned|worried|upset|frustrated|complaining|annoyed)\b/i.test(title.trim());
+}
