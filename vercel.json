@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
   "framework": null,
-  "installCommand": "npm ci --prefix backend && npm ci --prefix frontend",
+  "installCommand": "ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci --prefix backend && npm ci --prefix frontend",
   "buildCommand": "npm run build --prefix backend && npm run build --prefix frontend",
   "outputDirectory": "frontend/dist/frontend/browser",
   "functions": {
