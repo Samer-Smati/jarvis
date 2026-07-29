@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { GuardrailService } from '../guardrails/guardrail.service';
 import { LlmService } from '../llm/llm.service';
 import { ConversationMessageEntity } from '../memory/entities/conversation-message.entity';
-import { BrainService } from '../brain/brain.service';
+import { BrainService, BRAIN_REHYDRATE_CONFIRM_PHRASE } from '../brain/brain.service';
 import { MemoryService } from '../memory/memory.service';
 import { OrchestratorService } from '../orchestrator/orchestrator.service';
 import { ReminderEntity } from '../skills/entities/reminder.entity';
@@ -155,6 +155,32 @@ export class ChatController {
   @Get('brain/graph')
   brainGraph() {
     return this.brain.getGraph();
+  }
+
+  @Get('brain/rehydrate/preview')
+  async brainRehydratePreview() {
+    return this.brain.previewRehydrateFromPg();
+  }
+
+  @Post('brain/rehydrate')
+  async brainRehydrate(
+    @Body() body: { confirm?: string; expectedMinPages?: number },
+  ) {
+    const confirm = body?.confirm?.trim();
+    if (confirm !== BRAIN_REHYDRATE_CONFIRM_PHRASE) {
+      throw new BadRequestException(
+        `Refused — send { "confirm": "${BRAIN_REHYDRATE_CONFIRM_PHRASE}", "expectedMinPages": 30 } after reviewing GET /api/brain/rehydrate/preview.`,
+      );
+    }
+    try {
+      const result = await this.brain.rehydrateFromPg({
+        confirm,
+        expectedMinPages: body?.expectedMinPages,
+      });
+      return { ok: true, ...result };
+    } catch (error) {
+      throw new BadRequestException((error as Error).message);
+    }
   }
 
   @Get('brain/query')

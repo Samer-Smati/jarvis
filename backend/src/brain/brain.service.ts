@@ -20,6 +20,23 @@ export interface IngestUrlResult {
   excerpt: string;
 }
 
+export const BRAIN_REHYDRATE_CONFIRM_PHRASE = 'REHYDRATE_FROM_PG';
+
+export interface BrainRehydratePreview {
+  pgPageCount: number;
+  pgEdgeCount: number;
+  blobEnabled: boolean;
+  blobPageCount: number | null;
+  vaultIsEphemeralSeed: boolean;
+}
+
+export interface BrainRehydrateResult {
+  pgPageCount: number;
+  pgEdgeCount: number;
+  blobPageCount: number;
+  updatedAt: string;
+}
+
 @Injectable()
 export class BrainService implements OnModuleInit {
   private readonly logger = new Logger(BrainService.name);
@@ -683,6 +700,95 @@ ${content}`;
     return this.ensureLoaded();
   }
 
+  async previewRehydrateFromPg(): Promise<BrainRehydratePreview> {
+    const snapshot = await this.pgStore.loadVaultFromPg();
+    let blobPageCount: number | null = null;
+    if (this.blob.enabled()) {
+      const remote = await this.blob.load();
+      blobPageCount = remote ? Object.keys(remote.pages).length : null;
+    }
+    return {
+      pgPageCount: snapshot?.pages.length ?? 0,
+      pgEdgeCount: snapshot?.edgeCount ?? 0,
+      blobEnabled: this.blob.enabled(),
+      blobPageCount,
+      vaultIsEphemeralSeed: this.vaultIsEphemeralSeed,
+    };
+  }
+
+  async rehydrateFromPg(input: {
+    confirm: string;
+    expectedMinPages?: number;
+  }): Promise<BrainRehydrateResult> {
+    if (input.confirm !== BRAIN_REHYDRATE_CONFIRM_PHRASE) {
+      throw new Error(
+        `Rehydration refused — confirm must be exactly "${BRAIN_REHYDRATE_CONFIRM_PHRASE}".`,
+      );
+    }
+    if (!this.blob.enabled()) {
+      throw new Error('Rehydration refused — BLOB_READ_WRITE_TOKEN is not configured.');
+    }
+
+    const snapshot = await this.pgStore.loadVaultFromPg();
+    if (!snapshot?.pages.length) {
+      throw new Error('Rehydration refused — Postgres has no brain pages to export.');
+    }
+
+    const minPages = input.expectedMinPages ?? 5;
+    if (snapshot.pages.length < minPages) {
+      throw new Error(
+        `Rehydration refused — Postgres has ${snapshot.pages.length} page(s), below expected minimum ${minPages}.`,
+      );
+    }
+
+    const now = new Date().toISOString();
+    const pageMap: Record<string, BrainPage> = {};
+    for (const page of snapshot.pages) {
+      pageMap[page.path] = page;
+    }
+
+    const vault: BrainVault = {
+      version: 1,
+      hot: `# Hot Cache\n\nLast updated: ${now}\n\nVault rehydrated from PostgreSQL (${snapshot.pages.length} pages, ${snapshot.edgeCount} edges).`,
+      index: '',
+      log: `# Brain Log\n\n- [${now}] rehydrate_from_pg: restored ${snapshot.pages.length} pages from PostgreSQL.\n`,
+      pages: pageMap,
+      updatedAt: now,
+    };
+    this.rebuildIndex(vault);
+
+    this.vault = null;
+    this.vaultRepaired = true;
+    this.vaultIsEphemeralSeed = false;
+    await this.persist(vault);
+
+    const verified = await this.verifyBlobVaultPageCount();
+    if (verified !== snapshot.pages.length) {
+      throw new Error(
+        `Rehydration verification failed — blob has ${verified} page(s), expected ${snapshot.pages.length}.`,
+      );
+    }
+
+    this.logger.warn(
+      `Brain vault rehydrated from PostgreSQL: ${snapshot.pages.length} pages → blob.`,
+    );
+
+    return {
+      pgPageCount: snapshot.pages.length,
+      pgEdgeCount: snapshot.edgeCount,
+      blobPageCount: verified,
+      updatedAt: vault.updatedAt,
+    };
+  }
+
+  async verifyBlobVaultPageCount(): Promise<number> {
+    if (!this.blob.enabled()) {
+      return 0;
+    }
+    const remote = await this.blob.load(false);
+    return remote ? Object.keys(remote.pages).length : 0;
+  }
+
   async listPages(): Promise<BrainPage[]> {
     const vault = await this.ensureLoaded();
     return Object.values(vault.pages).sort(
@@ -851,7 +957,7 @@ ${content}`;
 
   private async loadBlobWithRetry(attempts = 3): Promise<BrainVault | null> {
     for (let i = 0; i < attempts; i++) {
-      const remote = await this.blob.load();
+      const remote = await this.blob.load(i > 0 ? false : true);
       if (remote) {
         return remote;
       }

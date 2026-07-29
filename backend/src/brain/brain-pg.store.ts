@@ -6,7 +6,12 @@ import { isPostgresEnabled } from '../database/database.util';
 import { BrainEdgeEntity } from './entities/brain-edge.entity';
 import { BrainPageEntity } from './entities/brain-page.entity';
 import { MemoryChunkEntity } from './entities/memory-chunk.entity';
-import { BrainGraph, BrainGraphEdge, BrainVault } from './brain.types';
+import { BrainCategory, BrainGraph, BrainGraphEdge, BrainPage, BrainVault } from './brain.types';
+
+export interface PgVaultSnapshot {
+  pages: BrainPage[];
+  edgeCount: number;
+}
 
 @Injectable()
 export class BrainPgStore {
@@ -161,6 +166,47 @@ export class BrainPgStore {
     const edgeCount = await this.edges.count();
     const chunkCount = await this.chunks.count();
     return `PostgreSQL (Neon): ${pageCount} pages, ${edgeCount} links, ${chunkCount} vector chunks`;
+  }
+
+  async countPages(): Promise<number> {
+    if (!this.enabled()) {
+      return 0;
+    }
+    return this.pages.count();
+  }
+
+  async loadVaultFromPg(): Promise<PgVaultSnapshot | null> {
+    if (!this.enabled()) {
+      return null;
+    }
+
+    const pageRows = await this.pages.find();
+    if (!pageRows.length) {
+      return null;
+    }
+
+    const edgeRows = await this.edges.find();
+    const linkSets = new Map<string, Set<string>>();
+    for (const row of pageRows) {
+      linkSets.set(row.path, new Set(Array.isArray(row.links) ? row.links : []));
+    }
+
+    for (const edge of edgeRows) {
+      linkSets.get(edge.sourcePath)?.add(edge.targetPath);
+      linkSets.get(edge.targetPath)?.add(edge.sourcePath);
+    }
+
+    const pages: BrainPage[] = pageRows.map((row) => ({
+      path: row.path,
+      title: row.title,
+      category: row.category as BrainCategory,
+      content: row.content,
+      links: [...(linkSets.get(row.path) ?? [])],
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    }));
+
+    return { pages, edgeCount: edgeRows.length };
   }
 
   private async saveVector(id: string, embedding: number[]): Promise<void> {
