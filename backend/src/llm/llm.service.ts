@@ -32,8 +32,11 @@ export class LlmService implements LlmProvider {
   private readonly logger = new Logger(LlmService.name);
   private active: LlmProvider;
   private readonly providers: Map<string, LlmProvider>;
-  private readyCache: { at: number; value: { ok: boolean; model?: string; error?: string } } | null = null;
+  private readyCache: { at: number; value: { ok: boolean; model?: string; error?: string; provider?: string } } | null =
+    null;
   private readonly readyTtlMs = 30_000;
+  private lastServingProvider?: string;
+  private lastServingModel?: string;
 
   constructor(
     config: ConfigService,
@@ -63,6 +66,21 @@ export class LlmService implements LlmProvider {
     return this.active.name;
   }
 
+  get servingProvider(): string | undefined {
+    return this.lastServingProvider;
+  }
+
+  get servingModel(): string | undefined {
+    return this.lastServingModel;
+  }
+
+  private recordServing(providerName: string, model?: string): void {
+    this.lastServingProvider = providerName;
+    if (model) {
+      this.lastServingModel = model;
+    }
+  }
+
   get available(): string[] {
     return [...this.providers.keys()];
   }
@@ -90,6 +108,7 @@ export class LlmService implements LlmProvider {
         const charCap = providerInputCharCap(providerName);
         const trimmedMessages = trimMessagesForLlm(options.messages, charCap);
         result = await this.active.chat({ ...options, messages: trimmedMessages });
+        this.recordServing(this.active.name);
       } else {
         result = await this.chatWithCloudFallback(options);
       }
@@ -168,6 +187,11 @@ export class LlmService implements LlmProvider {
         if (name !== preferred) {
           clearProviderCooldown(name);
         }
+        const probe = provider as LlmProvider & {
+          isReady?: () => Promise<{ ok: boolean; model?: string }>;
+        };
+        const ready = probe.isReady ? await probe.isReady() : { ok: true };
+        this.recordServing(name, ready.model);
         return result;
       } catch (error) {
         lastError = (error as Error).message;
@@ -187,44 +211,66 @@ export class LlmService implements LlmProvider {
     );
   }
 
-  async isReady(): Promise<{ ok: boolean; model?: string; error?: string }> {
+  async isReady(): Promise<{ ok: boolean; model?: string; error?: string; provider?: string }> {
     if (this.readyCache && Date.now() - this.readyCache.at < this.readyTtlMs) {
       return this.readyCache.value;
+    }
+
+    const activeReady = await this.isReadyForProvider(this.active.name);
+    if (activeReady.ok) {
+      const value = { ...activeReady, provider: this.active.name };
+      this.readyCache = { at: Date.now(), value };
+      return value;
     }
 
     const serverless = Boolean(process.env.VERCEL || process.env.JARVIS_SERVERLESS === '1');
     if (serverless || isServerlessLlmProvider(this.active.name)) {
       for (const name of listConfiguredFreeProviders()) {
-        if (isProviderInCooldown(name)) {
+        if (name === this.active.name || isProviderInCooldown(name)) {
           continue;
         }
-        const provider = this.providers.get(name) as LlmProvider & {
-          isReady?: () => Promise<{ ok: boolean; model?: string; error?: string }>;
-        };
-        if (!provider?.isReady) {
-          continue;
-        }
-        const ready = await provider.isReady();
+        const ready = await this.isReadyForProvider(name);
         if (ready.ok) {
-          this.readyCache = { at: Date.now(), value: ready };
-          return ready;
+          const value = {
+            ...ready,
+            provider: name,
+            error: activeReady.error
+              ? `Configured provider "${this.active.name}" unavailable (${activeReady.error}); fallback ${name} is ready.`
+              : undefined,
+          };
+          this.readyCache = { at: Date.now(), value };
+          return value;
         }
       }
       const value = {
         ok: false,
+        provider: this.active.name,
         error:
+          activeReady.error ??
           'No free cloud LLM available. Set GEMINI_API_KEY, GROQ_API_KEY, and/or OPENROUTER_API_KEY.',
       };
       this.readyCache = { at: Date.now(), value };
       return value;
     }
 
-    const probe = this.active as LlmProvider & {
-      isReady?: () => Promise<{ ok: boolean; model?: string; error?: string }>;
-    };
-    const value = probe.isReady ? await probe.isReady() : { ok: true };
+    const value = { ...activeReady, provider: this.active.name };
     this.readyCache = { at: Date.now(), value };
     return value;
+  }
+
+  private async isReadyForProvider(
+    name: string,
+  ): Promise<{ ok: boolean; model?: string; error?: string }> {
+    const provider = this.providers.get(name) as LlmProvider & {
+      isReady?: () => Promise<{ ok: boolean; model?: string; error?: string }>;
+    };
+    if (!provider) {
+      return { ok: false, error: `Unknown provider "${name}".` };
+    }
+    if (provider.isReady) {
+      return provider.isReady();
+    }
+    return { ok: true };
   }
 
   /** Start LM Studio / Ollama with a default model when nothing is online. */

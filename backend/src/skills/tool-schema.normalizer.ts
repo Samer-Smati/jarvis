@@ -16,10 +16,11 @@ export function normalizeToolCalls(
     if (!known.has(name)) {
       continue;
     }
+    const existing = byName.get(name);
     byName.set(name, {
-      id: call.id || `call_${name}_${byName.size}`,
+      id: call.id || existing?.id || `call_${name}_${byName.size}`,
       name,
-      arguments: sanitizeArgs(call.arguments),
+      arguments: sanitizeArgs({ ...(existing?.arguments ?? {}), ...call.arguments }),
     });
   }
 

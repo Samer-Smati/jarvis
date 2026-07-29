@@ -49,6 +49,10 @@ export class ChatComponent implements OnInit, OnDestroy {
   private activeRequestId: string | null = null;
   private outboundQueue: OutboundChatRequest[] = [];
   private lastRetryOutbound: OutboundChatRequest | null = null;
+  private sendLock = false;
+  private retryInFlight = false;
+  private lastSendFingerprint = '';
+  private lastSendAt = 0;
 
   listening$: Observable<boolean>;
   speaking$: Observable<boolean>;
@@ -498,6 +502,27 @@ export class ChatComponent implements OnInit, OnDestroy {
     if (!text && !this.pendingImages.length) {
       return;
     }
+    if (this.sendLock) {
+      return;
+    }
+    const fingerprint = text.toLowerCase();
+    const now = Date.now();
+    if (
+      fingerprint &&
+      fingerprint === this.lastSendFingerprint &&
+      now - this.lastSendAt < 90_000 &&
+      (this.busy || this.turnStatus?.retryable || !!this.activeRequestId)
+    ) {
+      this.toast.add({
+        severity: 'warn',
+        summary: 'JARVIS',
+        detail: 'That message is already in progress, sir — wait for the current reply or use Retry.',
+      });
+      return;
+    }
+    this.sendLock = true;
+    this.lastSendFingerprint = fingerprint;
+    this.lastSendAt = now;
     if (isBrainGraphRequest(text)) {
       this.brainGraph.open();
     }
@@ -520,7 +545,10 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.persistConversation();
     this.cdr.markForCheck();
     this.scrollToBottom();
-    void this.prepareOutbound(requestId, text, images);
+    void this.prepareOutbound(requestId, text, images).finally(() => {
+      this.sendLock = false;
+      this.cdr.markForCheck();
+    });
   }
 
   private async prepareOutbound(
@@ -595,9 +623,11 @@ export class ChatComponent implements OnInit, OnDestroy {
 
   retryLastRequest(): void {
     const prior = this.lastRetryOutbound;
-    if (!prior || this.busy) {
+    if (!prior || this.busy || this.retryInFlight) {
       return;
     }
+    this.retryInFlight = true;
+    this.turnStatusService.completeTurn(prior.requestId);
     const idx = findAssistantIndex(this.messages, prior.requestId);
     if (idx >= 0) {
       this.messages.splice(idx, 1);
@@ -606,7 +636,6 @@ export class ChatComponent implements OnInit, OnDestroy {
     if (userIdx >= 0) {
       this.messages.splice(userIdx, 1);
     }
-    this.turnStatusService.completeTurn(prior.requestId);
     const requestId = createChatRequestId();
     this.messages.push({
       role: 'user',
@@ -621,9 +650,14 @@ export class ChatComponent implements OnInit, OnDestroy {
           }))
         : undefined,
     });
+    this.lastSendFingerprint = prior.text.toLowerCase();
+    this.lastSendAt = Date.now();
     this.persistConversation();
     this.cdr.markForCheck();
-    void this.prepareOutbound(requestId, prior.text, []);
+    void this.prepareOutbound(requestId, prior.text, []).finally(() => {
+      this.retryInFlight = false;
+      this.cdr.markForCheck();
+    });
   }
 
   private handleStreamFailure(requestId: string, message: string, retryable: boolean): void {

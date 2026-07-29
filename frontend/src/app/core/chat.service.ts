@@ -191,9 +191,10 @@ export class ChatService {
     history?: Array<{ role: string; content: string; createdAt?: string }>,
     images?: Array<{ mimeType: string; data: string }>,
   ): void {
-    this.turnStatus.beginTurn(requestId, conversationId, 'Jarvis is thinking…', () =>
-      this.abortActiveStream(requestId),
-    );
+    this.turnStatus.beginTurn(requestId, conversationId, 'Jarvis is thinking…', () => {
+      this.abortActiveStream(requestId);
+      void this.killSwitch(conversationId);
+    });
     this.connect();
     if (this.useSse) {
       void this.sendViaSse(conversationId, requestId, text, history, images);
@@ -242,6 +243,19 @@ export class ChatService {
     }
     this.connect();
     this.socket?.emit('permission_response', { id, approved, platform: clientPlatform() });
+  }
+
+  private async killSwitch(conversationId: string): Promise<void> {
+    const base = environment.apiUrl || '';
+    try {
+      await fetch(`${base}/api/kill-switch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversationId }),
+      });
+    } catch {
+      /* best-effort abort of stale server run */
+    }
   }
 
   private async postJson(path: string, body: unknown): Promise<void> {

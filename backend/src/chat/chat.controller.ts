@@ -45,11 +45,23 @@ export class ChatController {
   @Get('status')
   async status() {
     const llmReady = await this.llm.isReady();
+    const configuredProvider = this.llm.name;
+    const readyProvider = llmReady.provider ?? configuredProvider;
+    const servingProvider = this.llm.servingProvider;
+    const servingModel = this.llm.servingModel;
     return {
-      provider: this.orchestrator.providerName,
+      provider: configuredProvider,
+      configuredProvider,
+      readyProvider,
+      servingProvider: servingProvider ?? readyProvider,
+      servingModel,
       llmReady: llmReady.ok,
       llmModel: llmReady.model,
       llmError: llmReady.error,
+      providerMismatch:
+        !!servingProvider &&
+        servingProvider !== configuredProvider &&
+        `Last response used ${servingProvider}${servingModel ? ` (${servingModel})` : ''}, not configured ${configuredProvider}.`,
       activeRuns: this.orchestrator.activeRunCount(),
       pendingConfirmations: this.guardrails.pendingRequests(),
     };

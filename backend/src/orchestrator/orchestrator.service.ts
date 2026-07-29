@@ -16,6 +16,8 @@ import { SkillRegistry } from '../skills/skill.registry';
 import { isSkillAllowedOnRuntime, missingEnvForSkill, runtimeProfile, permissionForSkill, maxSkillTier, isTierGranted, tierDenialMessage, runtimeDenialMessage } from '../skills/permissions';
 import { emitTurnStatus, OrchestratorEmitter } from './orchestrator.events';
 import { toolStatusLabel } from './tool-status-label.util';
+import { buildToolFailureReply, isToolFailureOutput } from './tool-failure.util';
+import { normalizeSelfImproveArgs } from '../skills/self-improve-args.util';
 import { PersonalityService } from './personality.service';
 import {
   buildLanguageHint,
@@ -420,6 +422,7 @@ export class OrchestratorService {
 
       let finalText = '';
       let lastToolOutput = '';
+      const toolFailures: Array<{ toolName: string; output: string }> = [];
       const deadline = isServerlessRuntime() ? Date.now() + SERVERLESS_DEADLINE_MS : Infinity;
       const maxIterations = isServerlessRuntime() ? SERVERLESS_MAX_TOOL_ITERATIONS : MAX_TOOL_ITERATIONS;
 
@@ -542,6 +545,9 @@ export class OrchestratorService {
           toolsUsed.push(call.name);
           const output = await this.executeToolCall(conversationId, call, emitter, trigger, clientPlatform);
           lastToolOutput = output;
+          if (isToolFailureOutput(output)) {
+            toolFailures.push({ toolName: call.name, output });
+          }
           messages.push({
             role: 'tool',
             content: output + buildToolResultLanguageReminder(languageMode),
@@ -563,9 +569,11 @@ export class OrchestratorService {
       }
 
       if (!finalText) {
-        finalText = lastToolOutput.includes('Updated ')
-          ? `Changes are on GitHub, sir. ${lastToolOutput.split('\n')[0]} Say "open PR" if you need the pull request.`
-          : '';
+        if (toolFailures.length) {
+          finalText = buildToolFailureReply(toolFailures);
+        } else if (lastToolOutput.includes('Updated ')) {
+          finalText = `Changes are on GitHub, sir. ${lastToolOutput.split('\n')[0]} Say "open PR" if you need the pull request.`;
+        }
       }
 
       if (this.isSuperseded(conversationId, runRequestId, abort)) {
@@ -585,7 +593,12 @@ export class OrchestratorService {
         await this.memory.appendMessage(conversationId, 'assistant', finalText);
         this.persistTurnLearning(userText, finalText);
       }
-      void this.memory.logEvent(trigger, `Handled: ${userText.slice(0, 120)}`);
+      void this.memory.logEvent(
+        trigger,
+        finalText?.trim()
+          ? `Handled: ${userText.slice(0, 120)}`
+          : `Failed (no response): ${userText.slice(0, 120)}`,
+      );
       emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
       await this.finishTurn(conversationId, userText, finalText, emitter, {
         taskRoute: taskRoute.task,
@@ -628,6 +641,13 @@ export class OrchestratorService {
     trigger: string,
     clientPlatform: 'desktop' | 'web',
   ): Promise<string> {
+    if (call.name === 'self_improve') {
+      call = {
+        ...call,
+        arguments: normalizeSelfImproveArgs(call.arguments ?? {}),
+      };
+    }
+
     emitter.onToolStart(call.name, call.arguments);
 
     if (call.name !== 'self_improve') {
@@ -662,6 +682,14 @@ export class OrchestratorService {
     if (!skill) {
       emitter.onToolEnd(call.name, 'Unknown skill.', false);
       return `Error: unknown skill "${call.name}".`;
+    }
+
+    if (call.name === 'self_improve' && !String(call.arguments?.action ?? '').trim()) {
+      const msg =
+        'Error: self_improve requires action (e.g. pull_request, write, inspect). The model sent an empty action — please retry.';
+      emitter.onToolEnd(call.name, msg, false);
+      await this.guardrails.audit(call.name, trigger, JSON.stringify(call.arguments), 'failure');
+      return msg;
     }
 
     const profile = runtimeProfile();
@@ -788,6 +816,12 @@ export class OrchestratorService {
     meta?: { taskRoute?: string; toolsUsed?: string[]; latencyMs?: number },
   ): Promise<void> {
     if (!finalText?.trim()) {
+      if (meta?.toolsUsed?.length) {
+        emitter.onError('The request finished without a visible reply, sir — a tool may have failed silently. Please retry.', {
+          retryable: true,
+        });
+        return;
+      }
       emitter.onDone(finalText);
       return;
     }
