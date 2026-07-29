@@ -8,7 +8,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { GuardrailService } from '../guardrails/guardrail.service';
-import { OrchestratorEmitter } from '../orchestrator/orchestrator.events';
+import { OrchestratorEmitter, TurnStatusEvent } from '../orchestrator/orchestrator.events';
 import { OrchestratorService } from '../orchestrator/orchestrator.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import type { ChatImagePart } from '../llm/llm.types';
@@ -28,6 +28,8 @@ interface ConfirmationResponsePayload {
   id: string;
   approved: boolean;
 }
+
+const HEARTBEAT_MS = 2500;
 
 @WebSocketGateway({
   cors: {
@@ -60,6 +62,7 @@ export class ChatGateway {
       client.emit('agent_error', {
         conversationId: conversationIdRaw ?? '',
         message,
+        retryable: false,
       });
       return;
     }
@@ -70,17 +73,59 @@ export class ChatGateway {
       return;
     }
     this.logger.log(`[${conversationId}] user: ${text.slice(0, 80)}${images?.length ? ` (+${images.length} img)` : ''}`);
-    const emitter = this.buildEmitter(conversationId, requestId, client);
-    void this.orchestrator.handleUserMessage(
-      conversationId,
-      text,
-      emitter,
-      'chat',
-      payload?.platform === 'web' ? 'web' : 'desktop',
-      payload?.history,
-      images?.length ? images : undefined,
-      requestId,
-    );
+    const turnStarted = Date.now();
+    const emitter = this.buildEmitter(conversationId, requestId, client, turnStarted);
+    client.emit('started', { conversationId, requestId, ts: turnStarted });
+    const heartbeat = setInterval(() => {
+      client.emit('heartbeat', {
+        conversationId,
+        requestId,
+        ts: Date.now(),
+        elapsedMs: Date.now() - turnStarted,
+      });
+    }, HEARTBEAT_MS);
+    let streamFinished = false;
+    const finish = () => {
+      streamFinished = true;
+      clearInterval(heartbeat);
+    };
+    try {
+      await this.orchestrator.handleUserMessage(
+        conversationId,
+        text,
+        {
+          ...emitter,
+          onDone: (finalText, meta) => {
+            finish();
+            emitter.onDone(finalText, meta);
+          },
+          onError: (message, meta) => {
+            finish();
+            emitter.onError(message, meta);
+          },
+        },
+        'chat',
+        payload?.platform === 'web' ? 'web' : 'desktop',
+        payload?.history,
+        images?.length ? images : undefined,
+        requestId,
+      );
+    } catch (error) {
+      if (!streamFinished) {
+        finish();
+        const message = error instanceof Error ? error.message : 'Unexpected server error.';
+        client.emit('agent_error', {
+          conversationId,
+          requestId,
+          message,
+          retryable: true,
+        });
+      }
+    } finally {
+      if (!streamFinished) {
+        finish();
+      }
+    }
   }
 
   @SubscribeMessage('permission_response')
@@ -107,19 +152,31 @@ export class ChatGateway {
     this.server?.emit('morning_briefing', { text });
   }
 
-  private buildEmitter(conversationId: string, requestId: string, client: Socket): OrchestratorEmitter {
-    const emit = (event: string, data: Record<string, unknown>) =>
+  private buildEmitter(
+    conversationId: string,
+    requestId: string,
+    client: Socket,
+    turnStarted: number,
+  ): OrchestratorEmitter {
+    const emitStatus = (event: string, data: Record<string, unknown>) =>
       client.emit(event, { conversationId, requestId, ...data });
+    const emitTurn = (event: TurnStatusEvent) => {
+      const payload = { ...event, elapsedMs: Date.now() - turnStarted };
+      emitStatus('progress', payload);
+      emitStatus('turn_status', payload);
+    };
     return {
-      onToken: (token) => emit('token', { token }),
-      onThinking: (token) => emit('thinking', { token }),
-      onProgress: (event) => emit('progress', { ...event }),
-      onToolStart: (toolName, args) => emit('tool_start', { toolName, args }),
-      onToolEnd: (toolName, output, success) => emit('tool_end', { toolName, output, success }),
-      onConfirmationRequest: (request) => emit('confirmation_request', { request }),
-      onPermissionRequest: (request) => emit('permission_request', { request }),
-      onDone: (finalText, meta) => emit('done', { finalText, ...meta }),
-      onError: (message) => emit('agent_error', { message }),
+      onToken: (token) => emitStatus('token', { token }),
+      onThinking: (token) => emitStatus('thinking', { token }),
+      onProgress: (event) => emitTurn(event),
+      onTurnStatus: (event) => emitTurn(event),
+      onToolStart: (toolName, args) => emitStatus('tool_start', { toolName, args }),
+      onToolEnd: (toolName, output, success) => emitStatus('tool_end', { toolName, output, success }),
+      onConfirmationRequest: (request) => emitStatus('confirmation_request', { request }),
+      onPermissionRequest: (request) => emitStatus('permission_request', { request }),
+      onDone: (finalText, meta) => emitStatus('done', { finalText, ...meta }),
+      onError: (message, meta) =>
+        emitStatus('agent_error', { message, retryable: meta?.retryable ?? true }),
     };
   }
 }

@@ -81,8 +81,12 @@ export class ChatSseController {
       }
     };
 
-    send('started', { ts: Date.now() });
-    const heartbeat = setInterval(() => send('heartbeat', { ts: Date.now() }), 2500);
+    const turnStarted = Date.now();
+    send('started', { ts: turnStarted });
+    const heartbeat = setInterval(
+      () => send('heartbeat', { ts: Date.now(), elapsedMs: Date.now() - turnStarted }),
+      2500,
+    );
     let streamFinished = false;
     const finish = (event: 'done' | 'agent_error', payload: Record<string, unknown>) => {
       if (streamFinished) {
@@ -91,17 +95,23 @@ export class ChatSseController {
       streamFinished = true;
       send(event, payload);
     };
+    const emitTurn = (event: Record<string, unknown>) => {
+      const payload = { ...event, elapsedMs: Date.now() - turnStarted };
+      send('progress', payload);
+      send('turn_status', payload);
+    };
 
     const emitter: OrchestratorEmitter = {
       onToken: (token) => send('token', { token }),
       onThinking: (token) => send('thinking', { token }),
-      onProgress: (event) => send('progress', { ...event }),
+      onProgress: (event) => emitTurn({ ...event }),
+      onTurnStatus: (event) => emitTurn({ ...event }),
       onToolStart: (toolName, args) => send('tool_start', { toolName, args }),
       onToolEnd: (toolName, output, success) => send('tool_end', { toolName, output, success }),
       onConfirmationRequest: (request) => send('confirmation_request', { request }),
       onPermissionRequest: (request) => send('permission_request', { request }),
       onDone: (finalText, meta) => finish('done', { finalText, ...meta }),
-      onError: (message) => finish('agent_error', { message }),
+      onError: (message, meta) => finish('agent_error', { message, retryable: meta?.retryable ?? true }),
     };
 
     this.logger.log(`[SSE ${conversationId}] user: ${text.slice(0, 80)}`);
@@ -127,18 +137,20 @@ export class ChatSseController {
       const message = (error as Error).message;
       if (!streamFinished) {
         if (message === 'SERVERLESS_TIMEOUT') {
-          finish('done', {
-            finalText:
+          finish('agent_error', {
+            message:
               'Cloud time limit reached, sir. Say "open PR" if a GitHub branch was updated, or send a shorter follow-up and I will continue.',
+            retryable: true,
           });
         } else {
-          finish('agent_error', { message });
+          finish('agent_error', { message, retryable: true });
         }
       }
     } finally {
       if (!streamFinished) {
-        finish('done', {
-          finalText: 'Connection closed before I could finish, sir. Please try again.',
+        finish('agent_error', {
+          message: 'Connection closed before I could finish, sir. Please try again.',
+          retryable: true,
         });
       }
       clearInterval(heartbeat);

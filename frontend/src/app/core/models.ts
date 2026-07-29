@@ -1,3 +1,38 @@
+export type TurnStage =
+  | 'queued'
+  | 'accepted'
+  | 'routing'
+  | 'thinking'
+  | 'tool'
+  | 'writing'
+  | 'waiting_user'
+  | 'done'
+  | 'error'
+  | 'timeout';
+
+export interface TurnStatusEvent {
+  stage: TurnStage | string;
+  message: string;
+  percent?: number;
+  detail?: string;
+  toolName?: string;
+  elapsedMs?: number;
+  slow?: boolean;
+  retryable?: boolean;
+}
+
+export interface ActiveTurnStatus {
+  requestId: string;
+  conversationId: string;
+  stage: TurnStage | string;
+  message: string;
+  slow: boolean;
+  retryable: boolean;
+  isTerminal: boolean;
+  startedAt: number;
+  lastEventAt: number;
+}
+
 export interface ToolActivity {
   toolName: string;
   label?: string;
@@ -7,12 +42,8 @@ export interface ToolActivity {
   running: boolean;
 }
 
-export interface ProgressStep {
+export interface ProgressStep extends TurnStatusEvent {
   stage: string;
-  message: string;
-  percent?: number;
-  detail?: string;
-  toolName?: string;
   at: number;
 }
 

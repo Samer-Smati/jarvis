@@ -83,7 +83,7 @@
         <div class="upgrade-panel" *ngIf="message.progress?.length || message.thinking">
           <div class="progress-block" *ngIf="message.progress?.length">
             <div class="progress-header">
-              <span class="hud-label">// Upgrade process</span>
+              <span class="hud-label">// Processing</span>
               <span class="progress-pct" *ngIf="message.progressPercent != null">{{ message.progressPercent }}%</span>
             </div>
             <div class="progress-track" *ngIf="message.progressPercent != null">
@@ -184,6 +184,17 @@
         </button>
       </div>
     </div>
+    <div class="turn-status-bar hud-panel" *ngIf="turnStatus && !turnStatus.isTerminal">
+      <i class="pi pi-spin pi-spinner"></i>
+      <span class="turn-status-message">{{ turnStatus.message }}</span>
+      <span class="slow-hint" *ngIf="turnStatus.slow">Still working — this is taking longer than usual.</span>
+    </div>
+    <div class="turn-status-bar hud-panel error" *ngIf="turnStatus?.isTerminal && turnStatus?.retryable">
+      <i class="pi pi-exclamation-triangle"></i>
+      <span class="turn-status-message">{{ turnStatus?.message }}</span>
+      <button type="button" class="retry-btn" (click)="retryLastRequest()">Retry</button>
+    </div>
+    <div class="connection-hint" *ngIf="connectionMessage">{{ connectionMessage }}</div>
     <div class="composer-row">
     <button
       type="button"
@@ -212,7 +223,7 @@
       (keydown.enter)="$event.preventDefault(); send()"
       (paste)="onPaste($event)">
     </textarea>
-    <p-button icon="pi pi-send" [disabled]="!input.trim() && !pendingImages.length" (onClick)="send()"></p-button>
+    <p-button icon="pi pi-send" [disabled]="busy || (!input.trim() && !pendingImages.length)" (onClick)="send()"></p-button>
     <span class="queue-hint" *ngIf="queuedCount > 0">{{ queuedCount }} queued</span>
     </div>
   </div>

@@ -14,7 +14,8 @@ import { scopeForDeviceTarget } from '../permissions/permission.types';
 import { PermissionsService } from '../permissions/permissions.service';
 import { SkillRegistry } from '../skills/skill.registry';
 import { isSkillAllowedOnRuntime, missingEnvForSkill, runtimeProfile, permissionForSkill, maxSkillTier, isTierGranted, tierDenialMessage, runtimeDenialMessage } from '../skills/permissions';
-import { OrchestratorEmitter } from './orchestrator.events';
+import { emitTurnStatus, OrchestratorEmitter } from './orchestrator.events';
+import { toolStatusLabel } from './tool-status-label.util';
 import { PersonalityService } from './personality.service';
 import {
   buildLanguageHint,
@@ -104,6 +105,8 @@ export class OrchestratorService {
     const toolsUsed: string[] = [];
 
     try {
+      emitTurnStatus(emitter, { stage: 'accepted', message: 'Request received, sir…' });
+
       const storedText =
         images?.length && !userText.trim()
           ? `[${images.length} image(s) attached]`
@@ -283,6 +286,13 @@ export class OrchestratorService {
       const contextChars =
         history.reduce((sum, m) => sum + String(m.content ?? '').length, 0) + userText.length;
       const taskRoute = this.taskRouter.resolve(userText, images, contextChars);
+      const routeLabel = taskRoute.route.model
+        ? `${taskRoute.route.provider}/${taskRoute.route.model}`
+        : taskRoute.route.provider;
+      emitTurnStatus(emitter, {
+        stage: 'routing',
+        message: `Routing to ${taskRoute.task} (${routeLabel})…`,
+      });
 
       const memoryContext = await this.memory.buildContext(userText, taskRoute.task);
       if (memoryContext.lessonIds?.length) {
@@ -434,14 +444,17 @@ export class OrchestratorService {
           break;
         }
 
-        if (iteration > 0) {
-          emitter.onProgress?.({
-            stage: 'reply',
+        if (iteration === 0) {
+          emitTurnStatus(emitter, { stage: 'thinking', message: 'Thinking…' });
+        } else {
+          emitTurnStatus(emitter, {
+            stage: 'thinking',
             message: 'Preparing your answer…',
             percent: Math.min(40 + iteration * 8, 88),
           });
         }
         let streamedContent = '';
+        let writingEmitted = false;
         const tokenFilter = new ToolMarkupStreamFilter();
         const result = await this.llmService.chatWithRoute(userText, {
           messages,
@@ -452,6 +465,10 @@ export class OrchestratorService {
             tokenFilter.feed(token, (safe) => {
               streamedContent += safe;
               if (safe) {
+                if (!writingEmitted) {
+                  writingEmitted = true;
+                  emitTurnStatus(emitter, { stage: 'writing', message: 'Writing response…' });
+                }
                 emitter.onToken(safe);
               }
             });
@@ -587,7 +604,7 @@ export class OrchestratorService {
         : (error as Error).message;
       this.logger.error(`Run failed: ${message}`);
       await this.guardrails.audit('run_error', trigger, message, 'error');
-      emitter.onError(message);
+      emitter.onError(message, { retryable: !abort.signal.aborted });
     } finally {
       const stillActive = this.activeRuns.get(conversationId);
       if (stillActive?.controller === abort) {
@@ -612,6 +629,14 @@ export class OrchestratorService {
     clientPlatform: 'desktop' | 'web',
   ): Promise<string> {
     emitter.onToolStart(call.name, call.arguments);
+
+    if (call.name !== 'self_improve') {
+      emitTurnStatus(emitter, {
+        stage: 'tool',
+        message: toolStatusLabel(call.name, call.arguments),
+        toolName: call.name,
+      });
+    }
 
     if (call.name === 'self_improve') {
       const action = String(call.arguments?.action ?? '');
@@ -668,6 +693,10 @@ export class OrchestratorService {
       const scope = scopeForDeviceTarget(target);
       const platform = clientPlatform;
       if (scope && !(await this.permissions.isGranted(scope, platform))) {
+        emitTurnStatus(emitter, {
+          stage: 'waiting_user',
+          message: 'Waiting for your permission…',
+        });
         const approved = await this.permissions.requestGrant(
           conversationId,
           scope,
@@ -683,6 +712,10 @@ export class OrchestratorService {
     }
 
     if (this.skillNeedsConfirmation(skill, call.arguments)) {
+      emitTurnStatus(emitter, {
+        stage: 'waiting_user',
+        message: 'Waiting for your confirmation…',
+      });
       const approved = await this.guardrails.requestConfirmation(
         conversationId,
         skill.name,

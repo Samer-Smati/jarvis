@@ -12,7 +12,8 @@ import {
   findUserIndex,
   OutboundChatRequest,
 } from '../core/chat-request.util';
-import { ChatMessage, ChatImageAttachment, ChatImagePayload, ConfirmationRequest, PermissionRequest, ProgressStep, ToolActivity } from '../core/models';
+import { ChatMessage, ChatImageAttachment, ChatImagePayload, ConfirmationRequest, PermissionRequest, ProgressStep, ToolActivity, ActiveTurnStatus } from '../core/models';
+import { TurnStatusService } from '../core/turn-status.service';
 import { BrainGraphService, isBrainGraphRequest, isBrainMutationToolOutput } from '../brain/brain-graph.service';
 import { VoiceService } from '../core/voice.service';
 import { compressImageForChat } from '../core/image-compress.util';
@@ -42,9 +43,12 @@ export class ChatComponent implements OnInit, OnDestroy {
   busy = false;
   queuedCount = 0;
   conversationId = '';
+  turnStatus: ActiveTurnStatus | null = null;
+  connectionMessage = '';
 
   private activeRequestId: string | null = null;
   private outboundQueue: OutboundChatRequest[] = [];
+  private lastRetryOutbound: OutboundChatRequest | null = null;
 
   listening$: Observable<boolean>;
   speaking$: Observable<boolean>;
@@ -78,6 +82,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     private toast: MessageService,
     private voice: VoiceService,
     private brainGraph: BrainGraphService,
+    private turnStatusService: TurnStatusService,
     private cdr: ChangeDetectorRef,
     private zone: NgZone,
   ) {
@@ -106,6 +111,42 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.loadHistory();
 
     this.subscriptions.add(
+      this.turnStatusService.status$.subscribe((status) => {
+        this.turnStatus = status;
+        this.cdr.markForCheck();
+      }),
+    );
+
+    this.subscriptions.add(
+      this.turnStatusService.timeout$.subscribe((event) => {
+        if (!event?.requestId) {
+          return;
+        }
+        this.handleStreamFailure(
+          event.requestId,
+          event.message,
+          true,
+        );
+      }),
+    );
+
+    this.subscriptions.add(
+      this.chat.connection$.subscribe((status) => {
+        this.connectionMessage = status.connected ? '' : (status.message ?? '');
+        this.cdr.markForCheck();
+      }),
+    );
+
+    this.subscriptions.add(
+      this.chat.superseded$.subscribe((event) => {
+        if (!event.requestId) {
+          return;
+        }
+        this.handleSuperseded(event.requestId, event.reason);
+      }),
+    );
+
+    this.subscriptions.add(
       this.chat.token$.subscribe((event) => {
         if (!this.acceptStreamEvent(event.requestId)) {
           return;
@@ -116,7 +157,10 @@ export class ChatComponent implements OnInit, OnDestroy {
             return;
           }
           current.content += event.token;
-          current.statusHint = undefined;
+          current.statusHint = 'Writing response…';
+          if (event.requestId) {
+            this.turnStatusService.updateMessage(event.requestId, 'Writing response…', 'writing');
+          }
           this.voice.speakStreamAppend(event.token);
           this.scrollToBottom();
           this.cdr.markForCheck();
@@ -180,6 +224,13 @@ export class ChatComponent implements OnInit, OnDestroy {
           current.progressPercent = 100;
         }
         current.statusHint = event.message;
+        if (event.requestId) {
+          this.turnStatusService.updateFromStatus(
+            event.requestId,
+            event.conversationId ?? this.conversationId,
+            event,
+          );
+        }
         this.scrollToBottom();
         this.cdr.markForCheck();
       }),
@@ -195,6 +246,9 @@ export class ChatComponent implements OnInit, OnDestroy {
           return;
         }
         current.statusHint = 'Connected, sir…';
+        if (event.requestId) {
+          this.turnStatusService.updateMessage(event.requestId, 'Connected, sir…', 'accepted');
+        }
         this.cdr.markForCheck();
       }),
     );
@@ -208,10 +262,13 @@ export class ChatComponent implements OnInit, OnDestroy {
         if (!current) {
           return;
         }
-        if (!current.content?.trim() && current.streaming && !current.statusHint) {
+        if (!current.content?.trim() && current.streaming) {
           current.statusHint = current.tools?.some((t) => t.running)
             ? 'Running a check, sir…'
             : 'Still working, sir…';
+          if (event.requestId) {
+            this.turnStatusService.markSlow(event.requestId);
+          }
           this.cdr.markForCheck();
         }
       }),
@@ -242,6 +299,13 @@ export class ChatComponent implements OnInit, OnDestroy {
           running: true,
         });
         current.statusHint = label;
+        if (event.requestId) {
+          this.turnStatusService.updateFromStatus(event.requestId, event.conversationId ?? this.conversationId, {
+            stage: 'tool',
+            message: label,
+            toolName: event.toolName,
+          });
+        }
         this.scrollToBottom();
         this.cdr.markForCheck();
       }),
@@ -256,7 +320,9 @@ export class ChatComponent implements OnInit, OnDestroy {
         if (!current) {
           return;
         }
-        const tool = current.tools?.find((t) => t.running);
+        const tool = current.tools?.find(
+          (t) => t.running && t.toolName === event.toolName,
+        ) ?? current.tools?.find((t) => t.running);
         if (tool) {
           tool.running = false;
           tool.output = event.output;
@@ -305,7 +371,13 @@ export class ChatComponent implements OnInit, OnDestroy {
 
     this.subscriptions.add(
       this.chat.done$.subscribe((event) => {
-        if (event.superseded || !event.requestId) {
+        if (event.superseded) {
+          if (event.requestId) {
+            this.handleSuperseded(event.requestId);
+          }
+          return;
+        }
+        if (!event.requestId) {
           return;
         }
         const current = this.assistantForRequest(event.requestId, true);
@@ -317,6 +389,7 @@ export class ChatComponent implements OnInit, OnDestroy {
         current.statusHint = undefined;
         current.interactionId = event.interactionId;
         current.tools = this.compactToolBadges(current.tools);
+        this.turnStatusService.completeTurn(event.requestId);
         this.completeActiveRequest(event.requestId);
         if (event.finalText?.includes('BRAIN_GRAPH:') || /\bOpening your brain graph\b/i.test(event.finalText ?? '')) {
           this.brainGraph.open();
@@ -341,17 +414,7 @@ export class ChatComponent implements OnInit, OnDestroy {
         if (!event.requestId) {
           return;
         }
-        const current = this.assistantForRequest(event.requestId, true);
-        if (!current) {
-          return;
-        }
-        current.content = event.message || 'Something went wrong, sir.';
-        current.streaming = false;
-        this.completeActiveRequest(event.requestId);
-        this.persistConversation();
-        this.scrollToBottom();
-        this.cdr.markForCheck();
-        this.toast.add({ severity: 'error', summary: 'JARVIS', detail: event.message });
+        this.handleStreamFailure(event.requestId, event.message || 'Something went wrong, sir.', event.retryable ?? true);
       }),
     );
 
@@ -493,6 +556,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     if (userIdx >= 0) {
       this.messages[userIdx].pending = false;
     }
+    this.lastRetryOutbound = outbound;
     this.messages.push({
       role: 'assistant',
       content: '',
@@ -527,6 +591,79 @@ export class ChatComponent implements OnInit, OnDestroy {
     }
     this.queuedCount = this.outboundQueue.length;
     this.dispatchOutbound(next);
+  }
+
+  retryLastRequest(): void {
+    const prior = this.lastRetryOutbound;
+    if (!prior || this.busy) {
+      return;
+    }
+    const idx = findAssistantIndex(this.messages, prior.requestId);
+    if (idx >= 0) {
+      this.messages.splice(idx, 1);
+    }
+    const userIdx = findUserIndex(this.messages, prior.requestId);
+    if (userIdx >= 0) {
+      this.messages.splice(userIdx, 1);
+    }
+    this.turnStatusService.completeTurn(prior.requestId);
+    const requestId = createChatRequestId();
+    this.messages.push({
+      role: 'user',
+      content: prior.text,
+      requestId,
+      createdAt: new Date().toISOString(),
+      images: prior.images?.length
+        ? prior.images.map((img, i) => ({
+            url: '',
+            name: `retry-${i}`,
+            mimeType: img.mimeType,
+          }))
+        : undefined,
+    });
+    this.persistConversation();
+    this.cdr.markForCheck();
+    void this.prepareOutbound(requestId, prior.text, []);
+  }
+
+  private handleStreamFailure(requestId: string, message: string, retryable: boolean): void {
+    const current = this.assistantForRequest(requestId, true);
+    if (current) {
+      current.content = message;
+      current.streaming = false;
+      current.statusHint = undefined;
+    }
+    this.turnStatusService.failTurn(
+      requestId,
+      this.conversationId,
+      message,
+      retryable,
+    );
+    this.completeActiveRequest(requestId);
+    this.persistConversation();
+    this.scrollToBottom();
+    this.cdr.markForCheck();
+    this.toast.add({ severity: 'error', summary: 'JARVIS', detail: message });
+  }
+
+  private handleSuperseded(requestId: string, reason = 'Superseded by a newer message.'): void {
+    const current = this.assistantForRequest(requestId, true);
+    if (current?.streaming) {
+      current.content = reason;
+      current.streaming = false;
+      current.statusHint = undefined;
+    } else if (current && !current.content?.trim()) {
+      const idx = findAssistantIndex(this.messages, requestId);
+      if (idx >= 0) {
+        this.messages.splice(idx, 1);
+      }
+    }
+    this.turnStatusService.completeTurn(requestId);
+    if (this.activeRequestId === requestId) {
+      this.completeActiveRequest(requestId);
+    }
+    this.persistConversation();
+    this.cdr.markForCheck();
   }
 
   private completeActiveRequest(requestId: string): void {
