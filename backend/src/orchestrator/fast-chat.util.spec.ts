@@ -23,6 +23,9 @@ import {
   isAboutUserQuery,
   buildAboutUserReply,
   isUserProfileVaultHit,
+  prefersStructuredMemoryOverBrain,
+  isUrlIngestTurn,
+  isSaveToBrainRequest,
 } from './fast-chat.util';
 
 const META_SENTENCE =
@@ -169,6 +172,21 @@ describe('fast-chat explicit lessons', () => {
     );
     expect(text).toContain('weekly sales report');
     expect(text?.length).toBeLessThanOrEqual(220);
+  });
+});
+
+describe('structured memory vs brain routing', () => {
+  it('does not force URL ingest when user demands remember_fact instead of brain', () => {
+    const text =
+      'Store this with remember_fact — do NOT use brain/ingest_url. My name is Samer Smati. https://example.com/portfolio';
+    expect(prefersStructuredMemoryOverBrain(text)).toBe(true);
+    expect(isUrlIngestTurn(text)).toBe(false);
+    expect(isSaveToBrainRequest(text)).toBe(false);
+  });
+
+  it('still treats bare portfolio URLs as ingest turns', () => {
+    expect(isUrlIngestTurn('https://example.com/me')).toBe(true);
+    expect(isUrlIngestTurn('Read this and save it https://example.com/me')).toBe(true);
   });
 });
 

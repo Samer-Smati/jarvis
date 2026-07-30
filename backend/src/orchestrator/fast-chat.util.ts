@@ -86,7 +86,10 @@ export function isSaveToBrainRequest(text: string): boolean {
   if (isExplicitLessonRequest(t)) {
     return false;
   }
-  return /\b(save (that|this|it) (in|to) (your )?brain|remember that|file (that|this) in (your )?brain|save (that|this) (in|to) my brain)\b/i.test(
+  if (prefersStructuredMemoryOverBrain(t)) {
+    return false;
+  }
+  return /\b(save (that|this|it) (in|to) (your )?brain|remember that|file (that|this) (in|to) (your )?brain|save (that|this) (in|to) my brain)\b/i.test(
     t,
   );
 }
@@ -551,6 +554,9 @@ export function extractUrls(text: string): string[] {
 
 /** User shared a URL to read or save. */
 export function isUrlIngestTurn(text: string): boolean {
+  if (prefersStructuredMemoryOverBrain(text)) {
+    return false;
+  }
   const urls = extractUrls(text);
   if (!urls.length) {
     return false;
@@ -562,6 +568,27 @@ export function isUrlIngestTurn(text: string): boolean {
   return /\b(read|open|check|look at|this link|ingest|remember|save|add|summarize|summarise|tell me|what is|file|brain|learn)\b/i.test(
     text,
   );
+}
+
+/**
+ * User explicitly wants semantic_memories / user_preferences (remember_fact),
+ * not brain ingest_url / graph. Used to stop early routes from hijacking the turn.
+ */
+export function prefersStructuredMemoryOverBrain(text: string): boolean {
+  const t = text.trim();
+  if (!t) {
+    return false;
+  }
+  if (/\b(remember_fact|rememberTyped|semantic_memories|user_preferences)\b/i.test(t)) {
+    return true;
+  }
+  if (
+    /\b(do not|don't|dont|never)\b.{0,40}\b(brain|ingest_url|ingest url|vault)\b/i.test(t) &&
+    /\b(remember|store|save|preference|fact)\b/i.test(t)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /** User wants to upgrade the self_improve skill source itself. */

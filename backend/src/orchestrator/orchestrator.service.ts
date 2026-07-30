@@ -35,7 +35,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isBrainPlanOnlyRequest, isBrainOpsMetaQuestion, isBrainOpsPauseRequest, isBrainOpsResumeRequest, isBrainMutatingAction, BRAIN_OPS_BLOCKED_MESSAGE, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, buildAboutUserReply, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery, isWebSearchMetaQuestion, isCodeArchitectureQuestion, isPlanOnlyRequest } from './fast-chat.util';
+import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isBrainPlanOnlyRequest, isBrainOpsMetaQuestion, isBrainOpsPauseRequest, isBrainOpsResumeRequest, isBrainMutatingAction, BRAIN_OPS_BLOCKED_MESSAGE, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, buildAboutUserReply, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery, isWebSearchMetaQuestion, isCodeArchitectureQuestion, isPlanOnlyRequest, prefersStructuredMemoryOverBrain } from './fast-chat.util';
 import {
   buildWebSearchUnavailableMessage,
   isFailedWebSearchOutput,
@@ -404,7 +404,9 @@ export class OrchestratorService {
         systemPrompt += `\n\nThis turn REQUIRES live web data. You MUST call web_search with a focused query before answering. Do not answer from training data or memory alone — search first, then synthesize from results with source links.`;
       }
       const urls = extractUrls(userText);
-      if (urls.length && !isUrlIngestTurn(userText)) {
+      if (prefersStructuredMemoryOverBrain(userText)) {
+        systemPrompt += `\n\nThe user wants STRUCTURED long-term memory via remember_fact (writes semantic_memories / user_preferences). Do NOT call brain, ingest_url, or graph this turn unless they also explicitly ask to open the graph. Call remember_fact once per lasting fact/preference.`;
+      } else if (urls.length && !isUrlIngestTurn(userText)) {
         systemPrompt += `\n\nThe user mentioned a URL (${urls[0]}). You CAN fetch it with brain action=ingest_url. Never refuse link access.`;
       }
       if (images?.length) {
