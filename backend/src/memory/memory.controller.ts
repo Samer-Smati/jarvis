@@ -22,11 +22,24 @@ export class MemoryController {
   }
 
   @Post('facts')
-  createFact(@Body() body: { text: string; memoryType?: MemoryType; source?: string }) {
+  createFact(
+    @Body()
+    body: {
+      text: string;
+      memoryType?: MemoryType;
+      source?: string;
+      key?: string;
+      pinned?: boolean;
+      confidence?: number;
+    },
+  ) {
     return this.memory.rememberTyped({
       text: body.text,
       memoryType: body.memoryType ?? 'fact',
       source: body.source ?? 'api',
+      key: body.key,
+      pinned: body.pinned,
+      confidence: body.confidence,
     });
   }
 

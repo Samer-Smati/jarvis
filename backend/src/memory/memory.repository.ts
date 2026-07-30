@@ -30,14 +30,24 @@ export class MemoryRepository {
     return this.semantic.save(row);
   }
 
-  async upsertPreference(key: string, value: string, source?: string): Promise<UserPreferenceEntity> {
+  async upsertPreference(
+    key: string,
+    value: string,
+    source?: string,
+    pinned?: boolean,
+  ): Promise<UserPreferenceEntity> {
     const existing = await this.preferences.findOne({ where: { key, forgottenAt: IsNull() } });
     if (existing) {
       existing.value = value;
       existing.source = source ?? existing.source;
+      if (pinned != null) {
+        existing.pinned = pinned;
+      }
       return this.preferences.save(existing);
     }
-    return this.preferences.save(this.preferences.create({ key, value, source }));
+    return this.preferences.save(
+      this.preferences.create({ key, value, source, pinned: pinned ?? false }),
+    );
   }
 
   async getPreferenceValue(key: string): Promise<string | null> {

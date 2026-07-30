@@ -125,7 +125,7 @@ export class MemoryService {
     }
 
     if (input.memoryType === 'preference' && input.key) {
-      await this.repository.upsertPreference(input.key, trimmed, input.source);
+      await this.repository.upsertPreference(input.key, trimmed, input.source, input.pinned);
       const vector = await this.embeddings.tryEmbed(`${input.key}: ${trimmed}`);
       return this.repository.createFact(
         { ...input, text: `${input.key}: ${trimmed}` },
