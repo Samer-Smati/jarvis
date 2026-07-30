@@ -20,6 +20,9 @@ import {
   requiresWebSearch,
   extractWebSearchQuery,
   hasMeaningfulSearchQueryExtract,
+  isAboutUserQuery,
+  buildAboutUserReply,
+  isUserProfileVaultHit,
 } from './fast-chat.util';
 
 const META_SENTENCE =
@@ -166,5 +169,75 @@ describe('fast-chat explicit lessons', () => {
     );
     expect(text).toContain('weekly sales report');
     expect(text?.length).toBeLessThanOrEqual(220);
+  });
+});
+
+describe('about-user routing', () => {
+  it('matches classic about-me prompts and correction follow-ups', () => {
+    expect(isAboutUserQuery('What do you know about me?')).toBe(true);
+    expect(isAboutUserQuery('tell me about myself')).toBe(true);
+    expect(
+      isAboutUserQuery(
+        "That's not about me — that's a Hugging Face models page. I asked what you know about ME specifically: my name, role, preferences",
+      ),
+    ).toBe(true);
+    expect(isAboutUserQuery('about me specifically — my name and role')).toBe(true);
+  });
+
+  it('does not treat unrelated questions as about-me', () => {
+    expect(isAboutUserQuery('What do you know about Hugging Face models?')).toBe(false);
+    expect(isAboutUserQuery('Open the brain graph')).toBe(false);
+  });
+
+  it('prioritizes the user profile entity over unrelated vault hits', () => {
+    const text = buildAboutUserReply({
+      userPage: {
+        title: 'Samer Smati',
+        content: '# Samer Smati\nFull-stack engineer and JARVIS owner. Prefers French.',
+      },
+      queryHits: [
+        {
+          title: 'Hugging Face Models',
+          path: 'sources/huggingface-models.md',
+          excerpt: 'Catalog of open LLM weights on the Hub.',
+        },
+      ],
+      facts: ['Likes tea'],
+    });
+    expect(text).toContain('Samer Smati');
+    expect(text).toContain('Full-stack engineer');
+    expect(text).not.toContain('Hugging Face');
+  });
+
+  it('filters non-profile vault hits when no user entity page exists', () => {
+    expect(
+      isUserProfileVaultHit({
+        title: 'Hugging Face Models',
+        path: 'sources/huggingface-models.md',
+        excerpt: 'Catalog of open LLM weights',
+      }),
+    ).toBe(false);
+    expect(
+      isUserProfileVaultHit({
+        title: 'User Profile',
+        path: 'entities/user-samer-smati.md',
+        excerpt: 'Samer is the owner',
+      }),
+    ).toBe(true);
+
+    const text = buildAboutUserReply({
+      userPage: null,
+      queryHits: [
+        {
+          title: 'Hugging Face Models',
+          path: 'sources/huggingface-models.md',
+          excerpt: 'Catalog of open LLM weights on the Hub.',
+        },
+      ],
+      facts: [],
+    });
+    expect(text).toBeTruthy();
+    expect(text).not.toContain('Hugging Face Models');
+    expect(text).toMatch(/don't have a dedicated user profile|no dedicated user profile/i);
   });
 });

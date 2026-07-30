@@ -116,9 +116,72 @@ export function extractExplicitLessonText(text: string): string | null {
 
 export function isAboutUserQuery(text: string): boolean {
   const t = text.trim();
-  return /\b(what do you know about me|anything you know about me|what(?:'s| is) my profile|tell me about me|who am i)\b/i.test(
-    t,
-  );
+  if (
+    /\b(what do you know about me|anything you know about me|what(?:'s| is) my profile|tell me about me|tell me about myself|who am i)\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(that(?:'s| is) not about me|not about me\b|about me specifically|know about me specifically|what you know about me|my name[, ]+(role|preferences))\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function isUserProfileVaultHit(hit: {
+  title: string;
+  path?: string;
+  excerpt?: string;
+}): boolean {
+  const path = hit.path ?? '';
+  const blob = `${hit.title} ${path} ${hit.excerpt ?? ''}`;
+  if (/entities\/.+/i.test(path) && /user|profile|samer|owner/i.test(`${hit.title} ${path}`)) {
+    return true;
+  }
+  if (
+    /\b(hugging\s*face|model hub|models?\s+page|open.?source models)\b/i.test(blob) &&
+    !/\b(samer|user profile|my profile|owner|about me)\b/i.test(blob)
+  ) {
+    return false;
+  }
+  return /\b(user profile|samer|owner|full-?stack|adtech|jarvis owner)\b/i.test(blob);
+}
+
+export function buildAboutUserReply(input: {
+  userPage?: { title: string; content: string } | null;
+  queryHits?: Array<{ title: string; path?: string; excerpt: string }>;
+  facts?: string[];
+}): string | null {
+  if (input.userPage) {
+    const snippet = input.userPage.content.replace(/^#.+$/m, '').trim().slice(0, 420);
+    return `From my brain, sir: I have your profile page "${input.userPage.title}" linked in the knowledge graph. ${snippet}`;
+  }
+
+  const profileHits = (input.queryHits ?? []).filter(isUserProfileVaultHit);
+  if (profileHits.length) {
+    return `From my brain vault, sir: ${profileHits
+      .slice(0, 2)
+      .map((h) => `${h.title} — ${h.excerpt}`)
+      .join(' ')}`;
+  }
+
+  if (input.facts?.length) {
+    return `From memory, sir: ${input.facts.slice(0, 4).join(' ')}`;
+  }
+
+  if ((input.queryHits ?? []).length) {
+    return (
+      "Sir, I don't have a dedicated user profile page yet — the vault hits I found aren't about you personally. " +
+      'Share your name/role or profile URL and I will file them properly.'
+    );
+  }
+
+  return null;
 }
 
 export function isLinkProfileRequest(text: string): boolean {

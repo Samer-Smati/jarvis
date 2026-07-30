@@ -48,6 +48,9 @@ describe('OrchestratorService', () => {
   let llm: jest.Mocked<LlmProvider>;
   let llmService: jest.Mocked<Pick<LlmService, 'chatWithRoute'>>;
   let taskRouter: jest.Mocked<Pick<TaskRouterService, 'resolve' | 'recordUsage'>>;
+  let brain: jest.Mocked<
+    Pick<BrainService, 'getContextBlock' | 'remember' | 'learnFromTurn' | 'findUserEntityPage' | 'query'>
+  >;
   let memory: jest.Mocked<
     Pick<
       MemoryService,
@@ -57,9 +60,9 @@ describe('OrchestratorService', () => {
       | 'rememberFact'
       | 'logEvent'
       | 'indexConversationTurn'
+      | 'recallFacts'
     >
   >;
-  let brain: jest.Mocked<Pick<BrainService, 'getContextBlock' | 'remember' | 'learnFromTurn'>>;
   let brainOpsPause: jest.Mocked<Pick<BrainOpsPauseService, 'isPaused' | 'pause' | 'resume'>>;
   let guardrails: jest.Mocked<Pick<GuardrailService, 'requestConfirmation' | 'audit'>>;
   let permissions: jest.Mocked<Pick<PermissionsService, 'isGranted' | 'requestGrant'>>;
@@ -113,11 +116,14 @@ describe('OrchestratorService', () => {
       rememberFact: jest.fn().mockResolvedValue(undefined),
       logEvent: jest.fn().mockResolvedValue(undefined),
       indexConversationTurn: jest.fn().mockResolvedValue(undefined),
+      recallFacts: jest.fn().mockResolvedValue([]),
     };
     brain = {
       getContextBlock: jest.fn().mockResolvedValue(''),
       remember: jest.fn().mockResolvedValue(undefined),
       learnFromTurn: jest.fn().mockResolvedValue(undefined),
+      findUserEntityPage: jest.fn().mockResolvedValue(null),
+      query: jest.fn().mockResolvedValue({ hot: '', hits: [] }),
     };
     brainOpsPause = {
       isPaused: jest.fn().mockResolvedValue(false),
@@ -280,8 +286,101 @@ describe('OrchestratorService', () => {
     const emitter = emitterMock();
     await buildService().handleUserMessage('c1', 'hi', emitter);
 
-    expect(emitter.onError).toHaveBeenCalledWith('boom');
+    expect(emitter.onError).toHaveBeenCalledWith('boom', expect.objectContaining({ retryable: true }));
     expect(emitter.onDone).not.toHaveBeenCalled();
+  });
+
+  it('synthesizes a reply when tools succeed but the LLM returns empty prose', async () => {
+    const brainSkill: Skill = {
+      name: 'brain',
+      description: 'brain',
+      parameters: { type: 'object', properties: {} },
+      requiresConfirmation: false,
+      execute: jest.fn().mockResolvedValue({
+        success: true,
+        output:
+          'Hot cache:\n\nMatching pages:\n- User Profile (entities/user-samer.md, score 9)\n  Samer is a full-stack engineer.',
+      }),
+    };
+    registry = new SkillRegistry([brainSkill]);
+    llmService.chatWithRoute
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            id: '1',
+            name: 'brain',
+            arguments: { action: 'query', query: 'user profile name role preferences facts' },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ content: '', toolCalls: [] });
+
+    const emitter = emitterMock();
+    await buildService().handleUserMessage(
+      'c1',
+      'Please look up my stored profile facts in the vault.',
+      emitter,
+    );
+
+    expect(emitter.onDone).toHaveBeenCalledWith(
+      expect.stringMatching(/User Profile|full-stack engineer/i),
+      expect.objectContaining({ interactionId: 'log-1' }),
+    );
+    expect(emitter.onError).not.toHaveBeenCalled();
+    expect(memory.logEvent).toHaveBeenCalledWith(
+      'chat',
+      expect.stringMatching(/^Handled:/),
+    );
+  });
+
+  it('emits onError instead of empty onDone when there is no reply to show', async () => {
+    llmService.chatWithRoute.mockResolvedValue({ content: '', toolCalls: [] });
+
+    const emitter = emitterMock();
+    await buildService().handleUserMessage('c1', 'Please summarize quantum foam briefly.', emitter);
+
+    expect(emitter.onError).toHaveBeenCalledWith(
+      expect.stringMatching(/without a visible reply/i),
+      expect.objectContaining({ retryable: true }),
+    );
+    expect(emitter.onDone).not.toHaveBeenCalled();
+  });
+
+  it('answers about-me from the user entity page, not unrelated vault hits', async () => {
+    brain.findUserEntityPage.mockResolvedValue({
+      path: 'entities/user-samer-smati.md',
+      title: 'Samer Smati',
+      content: '# Samer Smati\nFull-stack engineer and JARVIS owner.',
+      category: 'entity',
+      updatedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      links: [],
+    } as Awaited<ReturnType<BrainService['findUserEntityPage']>>);
+    brain.query.mockResolvedValue({
+      hot: '',
+      hits: [
+        {
+          title: 'Hugging Face Models',
+          path: 'sources/huggingface-models.md',
+          excerpt: 'Catalog of open LLM weights on the Hub.',
+          score: 99,
+        },
+      ],
+    });
+
+    const emitter = emitterMock();
+    await buildService().handleUserMessage(
+      'c1',
+      "That's not about me — that's a Hugging Face models page. I asked what you know about ME specifically",
+      emitter,
+    );
+
+    expect(brain.query).not.toHaveBeenCalled();
+    expect(emitter.onDone).toHaveBeenCalledTimes(1);
+    expect(emitter.onDone.mock.calls[0][0]).toMatch(/Samer Smati[\s\S]*Full-stack engineer/);
+    expect(emitter.onDone.mock.calls[0][0]).not.toContain('Hugging Face');
+    expect(memory.logEvent).toHaveBeenCalledWith('chat', 'About user query');
   });
 
   it('supersedes an in-flight run when a newer request id arrives', async () => {

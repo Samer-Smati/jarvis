@@ -11,6 +11,8 @@ import {
   findAssistantIndex,
   findUserIndex,
   OutboundChatRequest,
+  resolveEmptyAssistantDone,
+  EMPTY_ASSISTANT_REPLY_MESSAGE,
 } from '../core/chat-request.util';
 import { ChatMessage, ChatImageAttachment, ChatImagePayload, ConfirmationRequest, PermissionRequest, ProgressStep, ToolActivity, ActiveTurnStatus } from '../core/models';
 import { TurnStatusService } from '../core/turn-status.service';
@@ -402,7 +404,18 @@ export class ChatComponent implements OnInit, OnDestroy {
           this.brainGraph.requestRefresh();
         }
         if (!current.content?.trim()) {
-          this.messages.splice(findAssistantIndex(this.messages, event.requestId), 1);
+          resolveEmptyAssistantDone(this.messages, event.requestId);
+          this.turnStatusService.failTurn(
+            event.requestId,
+            this.conversationId,
+            EMPTY_ASSISTANT_REPLY_MESSAGE,
+            true,
+          );
+          this.toast.add({
+            severity: 'error',
+            summary: 'JARVIS',
+            detail: EMPTY_ASSISTANT_REPLY_MESSAGE,
+          });
         } else {
           this.voice.speakStreamFinish(event.finalText || current.content);
         }

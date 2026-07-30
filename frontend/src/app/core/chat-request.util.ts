@@ -55,6 +55,30 @@ export function applyAssistantCompletion(
   return true;
 }
 
+export const EMPTY_ASSISTANT_REPLY_MESSAGE =
+  'The request finished without a visible reply, sir — please retry.';
+
+/**
+ * Empty done events must never delete the assistant bubble — fill a retryable failure instead.
+ */
+export function resolveEmptyAssistantDone(
+  messages: ChatMessage[],
+  requestId: string,
+): { filled: boolean; message: string } {
+  const index = findAssistantIndex(messages, requestId);
+  if (index < 0) {
+    return { filled: false, message: EMPTY_ASSISTANT_REPLY_MESSAGE };
+  }
+  const assistant = messages[index];
+  if (assistant.content?.trim()) {
+    return { filled: false, message: assistant.content };
+  }
+  assistant.content = EMPTY_ASSISTANT_REPLY_MESSAGE;
+  assistant.streaming = false;
+  assistant.statusHint = undefined;
+  return { filled: true, message: EMPTY_ASSISTANT_REPLY_MESSAGE };
+}
+
 /**
  * Regression helper: simulates two turns where the first response arrives after the second.
  * Each assistant bubble must retain the answer tied to its requestId.

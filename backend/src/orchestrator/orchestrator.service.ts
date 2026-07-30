@@ -16,7 +16,12 @@ import { SkillRegistry } from '../skills/skill.registry';
 import { isSkillAllowedOnRuntime, missingEnvForSkill, runtimeProfile, permissionForSkill, maxSkillTier, isTierGranted, tierDenialMessage, runtimeDenialMessage } from '../skills/permissions';
 import { emitTurnStatus, OrchestratorEmitter } from './orchestrator.events';
 import { toolStatusLabel } from './tool-status-label.util';
-import { buildToolFailureReply, isToolFailureOutput } from './tool-failure.util';
+import {
+  buildSuccessfulToolReply,
+  buildToolFailureReply,
+  EMPTY_TURN_ERROR,
+  isToolFailureOutput,
+} from './tool-failure.util';
 import {
   applyPrClaimGuard,
   buildPrGuardRetrySystemPrompt,
@@ -30,7 +35,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isBrainPlanOnlyRequest, isBrainOpsMetaQuestion, isBrainOpsPauseRequest, isBrainOpsResumeRequest, isBrainMutatingAction, BRAIN_OPS_BLOCKED_MESSAGE, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery, isWebSearchMetaQuestion, isCodeArchitectureQuestion, isPlanOnlyRequest } from './fast-chat.util';
+import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isBrainPlanOnlyRequest, isBrainOpsMetaQuestion, isBrainOpsPauseRequest, isBrainOpsResumeRequest, isBrainMutatingAction, BRAIN_OPS_BLOCKED_MESSAGE, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, buildAboutUserReply, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery, isWebSearchMetaQuestion, isCodeArchitectureQuestion, isPlanOnlyRequest } from './fast-chat.util';
 import {
   buildWebSearchUnavailableMessage,
   isFailedWebSearchOutput,
@@ -598,6 +603,8 @@ export class OrchestratorService {
           finalText = buildToolFailureReply(toolFailures);
         } else if (lastToolOutput.includes('Updated ')) {
           finalText = `Changes are on GitHub, sir. ${lastToolOutput.split('\n')[0]} Say "open PR" if you need the pull request.`;
+        } else {
+          finalText = buildSuccessfulToolReply(toolRecords, lastToolOutput) ?? '';
         }
       }
 
@@ -871,13 +878,7 @@ export class OrchestratorService {
     meta?: { taskRoute?: string; toolsUsed?: string[]; latencyMs?: number },
   ): Promise<void> {
     if (!finalText?.trim()) {
-      if (meta?.toolsUsed?.length) {
-        emitter.onError('The request finished without a visible reply, sir — a tool may have failed silently. Please retry.', {
-          retryable: true,
-        });
-        return;
-      }
-      emitter.onDone(finalText);
+      emitter.onError(EMPTY_TURN_ERROR, { retryable: true });
       return;
     }
     const logged = await this.feedback.logInteraction({
@@ -1638,22 +1639,17 @@ export class OrchestratorService {
     trigger: string,
   ): Promise<boolean> {
     const userPage = await this.brain.findUserEntityPage();
-    const query = await this.brain.query('user profile samer owner engineer', 5);
+    const query = userPage
+      ? { hits: [] as Array<{ title: string; path: string; excerpt: string; score: number }> }
+      : await this.brain.query('user profile samer owner engineer', 5);
     const facts = await this.memory.recallFacts('user profile samer');
 
-    let finalText = '';
-
-    if (userPage) {
-      const snippet = userPage.content.replace(/^#.+$/m, '').trim().slice(0, 420);
-      finalText = `From my brain, sir: I have your profile page "${userPage.title}" linked in the knowledge graph. ${snippet}`;
-    } else if (query.hits.length) {
-      finalText = `From my brain vault, sir: ${query.hits
-        .slice(0, 2)
-        .map((h) => `${h.title} — ${h.excerpt}`)
-        .join(' ')}`;
-    } else if (facts.length) {
-      finalText = `From memory, sir: ${facts.slice(0, 4).join(' ')}`;
-    } else {
+    const finalText = buildAboutUserReply({
+      userPage,
+      queryHits: query.hits,
+      facts,
+    });
+    if (!finalText) {
       return false;
     }
 

@@ -1,8 +1,10 @@
 import {
   applyAssistantCompletion,
   createChatRequestId,
+  EMPTY_ASSISTANT_REPLY_MESSAGE,
   findAssistantIndex,
   isEventForRequest,
+  resolveEmptyAssistantDone,
   simulateDelayedResponseSwap,
 } from './chat-request.util';
 
@@ -48,5 +50,19 @@ describe('chat-request.util', () => {
     expect(swapped).toBe(false);
     expect(messages[1].content).toContain('PR #4');
     expect(messages[3].content).toContain('skills.sh');
+  });
+
+  it('keeps an empty assistant bubble with a retryable failure instead of removing it', () => {
+    const messages = [
+      { role: 'user' as const, content: 'Q', requestId: 'r1' },
+      { role: 'assistant' as const, content: '', streaming: true, requestId: 'r1' },
+    ];
+
+    const result = resolveEmptyAssistantDone(messages, 'r1');
+
+    expect(result.filled).toBe(true);
+    expect(messages.length).toBe(2);
+    expect(messages[1].content).toBe(EMPTY_ASSISTANT_REPLY_MESSAGE);
+    expect(messages[1].streaming).toBe(false);
   });
 });
