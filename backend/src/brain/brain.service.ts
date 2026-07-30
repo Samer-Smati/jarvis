@@ -8,12 +8,12 @@ import { isMetaComplaintForFiling, isMetaFactPageTitle } from './brain-ops.util'
 import { BrainPgStore } from './brain-pg.store';
 import { createSeedVault } from './brain.seed';
 import { BrainCategory, BrainGraph, BrainGraphEdge, BrainPage, BrainQueryHit, BrainVault } from './brain.types';
+import { JARVIS_ENTITY_PATH, selectUserEntityPage } from './user-entity.util';
 import { filterStaleMemoryHits } from '../memory/memory-hit-filter.util';
 
 const HOT_MAX_CHARS = 2400;
 const LOG_MAX_LINES = 200;
 const JOURNAL_MAX_CHARS = 14000;
-const JARVIS_ENTITY_PATH = 'entities/jarvis.md';
 
 export interface IngestUrlResult {
   sourcePath: string;
@@ -256,26 +256,14 @@ ${content}`;
 
   async findUserEntityPage(): Promise<BrainPage | null> {
     const vault = await this.ensureLoaded();
-    const candidates = Object.values(vault.pages).filter(
-      (p) =>
-        p.category === 'entity' &&
-        p.path !== JARVIS_ENTITY_PATH &&
-        /user|profile|samer|owner|sir/i.test(`${p.title} ${p.path} ${p.content}`),
-    );
-    return candidates.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0] ?? null;
+    return selectUserEntityPage(Object.values(vault.pages));
   }
 
   private findUserEntityPageSync(): BrainPage | null {
     if (!this.vault) {
       return null;
     }
-    const candidates = Object.values(this.vault.pages).filter(
-      (p) =>
-        p.category === 'entity' &&
-        p.path !== JARVIS_ENTITY_PATH &&
-        /user|profile|samer|owner|sir/i.test(`${p.title} ${p.path} ${p.content}`),
-    );
-    return candidates.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0] ?? null;
+    return selectUserEntityPage(Object.values(this.vault.pages));
   }
 
   async linkUserEntityToJarvis(): Promise<string> {
