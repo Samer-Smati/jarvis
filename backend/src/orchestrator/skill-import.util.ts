@@ -79,6 +79,9 @@ export function isSkillImportRequest(text: string): boolean {
   return matchSkillImportPhrase(text) !== null;
 }
 
+const SKILL_SLUG_TOKEN = String.raw`["'\`]?([a-z0-9][a-z0-9._/-]*)["'\`]?`;
+const SOURCE_TOKEN = String.raw`([a-z0-9][a-z0-9._/-]*)`;
+
 /** Phrase match only — source may still be unknown (caller reports via buildRawSkillUrl). */
 export function matchSkillImportPhrase(text: string): { skillSlug: string; sourceRaw: string } | null {
   const t = text.trim();
@@ -86,10 +89,17 @@ export function matchSkillImportPhrase(text: string): { skillSlug: string; sourc
     return null;
   }
 
+  // Include "integrate skill X from Y" here so it is treated as a NEW import, not approval
+  // of a previously pending skill (approval is short: approve / yes / go ahead).
   const patterns = [
-    /\bimport\s+skill\s+([a-z0-9][a-z0-9._/-]*)\s+from\s+([a-z0-9][a-z0-9._/-]*)/i,
-    /\bfetch\s+skill\s+([a-z0-9][a-z0-9._/-]*)\s+from\s+([a-z0-9][a-z0-9._/-]*)/i,
-    /\badd\s+skill\s+([a-z0-9][a-z0-9._/-]*)\s+from\s+([a-z0-9][a-z0-9._/-]*)/i,
+    new RegExp(
+      String.raw`\b(?:import|fetch|add|integrate)\s+(?:the\s+)?skill\s+${SKILL_SLUG_TOKEN}\s+from\s+${SOURCE_TOKEN}`,
+      'i',
+    ),
+    new RegExp(
+      String.raw`\b(?:import|fetch|add|integrate)\s+${SKILL_SLUG_TOKEN}\s+skill\s+from\s+${SOURCE_TOKEN}`,
+      'i',
+    ),
   ];
 
   for (const pattern of patterns) {
@@ -118,12 +128,20 @@ export function isSkillIntegrateApproval(text: string, recentContext: string): b
   if (!t) {
     return false;
   }
+  // A new "import/integrate skill X from Y" always wins over stale pending approval.
+  if (matchSkillImportPhrase(t)) {
+    return false;
+  }
   if (!hasPendingSkillImportContext(recentContext)) {
     return false;
   }
   if (
-    /\b(approve|integrate|open (the )?pr|create (the )?pr|go ahead|do it|proceed)\b/i.test(t)
+    /\b(approve|open (the )?pr|create (the )?pr|go ahead|do it|proceed)\b/i.test(t)
   ) {
+    return true;
+  }
+  // Bare "integrate" alone is approval; "integrate skill X from Y" already excluded above.
+  if (/^(integrate)\b/i.test(t) && !/\bfrom\b/i.test(t)) {
     return true;
   }
   return /^(yes|yeah|yep|sure|ok|okay|please)\b/i.test(t);
@@ -144,17 +162,23 @@ export function parsePendingSkillImport(recentContext: string): {
   url: string;
   hash: string;
 } | null {
-  const hashMatch = /Content hash:\s*([a-f0-9]{8,64})/i.exec(recentContext);
-  const urlMatch =
-    /Fetched from:\s*(https:\/\/raw\.githubusercontent\.com\/[^\s]+)/i.exec(recentContext) ||
-    /(https:\/\/raw\.githubusercontent\.com\/(?:obra\/superpowers|anthropics\/skills)\/[^\s]+SKILL\.md)/i.exec(
-      recentContext,
-    );
-  if (!hashMatch || !urlMatch) {
+  // Prefer the most recent import reply in history (not the oldest).
+  const hashes = [...recentContext.matchAll(/Content hash:\s*([a-f0-9]{8,64})/gi)];
+  const urls = [
+    ...recentContext.matchAll(/Fetched from:\s*(https:\/\/raw\.githubusercontent\.com\/[^\s]+)/gi),
+  ];
+  const fallbackUrls = [
+    ...recentContext.matchAll(
+      /(https:\/\/raw\.githubusercontent\.com\/(?:obra\/superpowers|anthropics\/skills)\/[^\s]+SKILL\.md)/gi,
+    ),
+  ];
+  const urlMatches = urls.length ? urls : fallbackUrls;
+  if (!hashes.length || !urlMatches.length) {
     return null;
   }
 
-  const url = urlMatch[1].trim();
+  const hash = hashes[hashes.length - 1][1].toLowerCase();
+  const url = urlMatches[urlMatches.length - 1][1].trim();
   const parsed = parseRawSkillUrl(url);
   if (!parsed) {
     return null;
@@ -162,7 +186,7 @@ export function parsePendingSkillImport(recentContext: string): {
   return {
     ...parsed,
     url,
-    hash: hashMatch[1].toLowerCase(),
+    hash,
   };
 }
 

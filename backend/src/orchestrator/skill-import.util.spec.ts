@@ -97,6 +97,42 @@ describe('skill-import.util', () => {
       });
     });
 
+    it('extracts executing-plans from the exact Import capitalisation (not a prior pending skill)', () => {
+      const userText = 'Import skill executing-plans from obra/superpowers';
+      const stalePending = [
+        'Fetched from: https://raw.githubusercontent.com/obra/superpowers/main/skills/test-driven-development/SKILL.md',
+        'Content hash: deadbeef0001',
+        'Proposed append-only section',
+        '<!-- skill-import:test-driven-development -->',
+        'Say approve to write',
+      ].join('\n');
+
+      expect(isSkillImportRequest(userText)).toBe(true);
+      expect(matchSkillImportPhrase(userText)).toEqual({
+        skillSlug: 'executing-plans',
+        sourceRaw: 'obra/superpowers',
+      });
+      expect(parseSkillImportRequest(userText)).toEqual({
+        source: 'obra/superpowers',
+        skillSlug: 'executing-plans',
+        url: 'https://raw.githubusercontent.com/obra/superpowers/main/skills/executing-plans/SKILL.md',
+      });
+      // Must NOT treat a new import phrasing as approval of the previous skill.
+      expect(isSkillIntegrateApproval(userText, stalePending)).toBe(false);
+    });
+
+    it('treats "integrate skill X from Y" as a new import, not approval of stale pending', () => {
+      const userText = 'Integrate skill executing-plans from obra/superpowers';
+      const stalePending = [
+        'Fetched from: https://raw.githubusercontent.com/obra/superpowers/main/skills/test-driven-development/SKILL.md',
+        'Content hash: deadbeef0001',
+        'Proposed append-only section',
+        'Say approve to write',
+      ].join('\n');
+      expect(matchSkillImportPhrase(userText)?.skillSlug).toBe('executing-plans');
+      expect(isSkillIntegrateApproval(userText, stalePending)).toBe(false);
+    });
+
     it('detects integrate approval only with pending import context', () => {
       const pending = [
         'Fetched from: https://raw.githubusercontent.com/obra/superpowers/main/skills/executing-plans/SKILL.md',
@@ -106,7 +142,25 @@ describe('skill-import.util', () => {
       ].join('\n');
       expect(isSkillIntegrateApproval('approve', pending)).toBe(true);
       expect(isSkillIntegrateApproval('yes', pending)).toBe(true);
+      expect(isSkillIntegrateApproval('integrate', pending)).toBe(true);
       expect(isSkillIntegrateApproval('approve', 'unrelated chat')).toBe(false);
+    });
+
+    it('parses the most recent pending import when history has multiple', () => {
+      const pending = [
+        'Fetched from: https://raw.githubusercontent.com/obra/superpowers/main/skills/test-driven-development/SKILL.md',
+        'Content hash: deadbeef0001',
+        'Proposed append-only section',
+        'Fetched from: https://raw.githubusercontent.com/obra/superpowers/main/skills/executing-plans/SKILL.md',
+        'Content hash: abcdef123456',
+        'Proposed append-only section',
+      ].join('\n');
+      expect(parsePendingSkillImport(pending)).toEqual({
+        source: 'obra/superpowers',
+        skillSlug: 'executing-plans',
+        url: 'https://raw.githubusercontent.com/obra/superpowers/main/skills/executing-plans/SKILL.md',
+        hash: 'abcdef123456',
+      });
     });
 
     it('parses pending import from assistant context', () => {
