@@ -60,8 +60,8 @@ describe('free-provider-pool.util', () => {
     expect(resolvePreferredFreeProvider()).toBe('groq');
   });
 
-  it('marks daily quota providers in cooldown', () => {
-    markProviderCooldown('openrouter', 'OpenRouter request failed (429): free-models-per-day');
-    expect(isProviderInCooldown('openrouter')).toBe(true);
+  it('marks empty-response providers in short cooldown', () => {
+    markProviderCooldown('groq', 'empty response');
+    expect(isProviderInCooldown('groq')).toBe(true);
   });
 });

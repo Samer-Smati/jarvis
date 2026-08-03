@@ -19,7 +19,7 @@ import { toolStatusLabel } from './tool-status-label.util';
 import {
   buildSuccessfulToolReply,
   buildToolFailureReply,
-  EMPTY_TURN_ERROR,
+  EMPTY_TURN_FALLBACK,
   isToolFailureOutput,
 } from './tool-failure.util';
 import {
@@ -443,6 +443,7 @@ export class OrchestratorService {
 
       let finalText = '';
       let lastToolOutput = '';
+      let emptyProseRetried = false;
       const toolFailures: Array<{ toolName: string; output: string }> = [];
       const deadline = isServerlessRuntime() ? Date.now() + SERVERLESS_DEADLINE_MS : Infinity;
       const maxIterations = isServerlessRuntime() ? SERVERLESS_MAX_TOOL_ITERATIONS : MAX_TOOL_ITERATIONS;
@@ -480,9 +481,10 @@ export class OrchestratorService {
         let streamedContent = '';
         let writingEmitted = false;
         const tokenFilter = new ToolMarkupStreamFilter();
+        const turnTools = emptyProseRetried ? [] : tools;
         const result = await this.llmService.chatWithRoute(userText, {
           messages,
-          tools,
+          tools: turnTools,
           signal: abort.signal,
           route: taskRoute.route,
           onToken: (token) => {
@@ -553,6 +555,15 @@ export class OrchestratorService {
             break;
           }
           const proseCandidate = sanitizeUserFacingAssistantText((result.content || streamedContent).trim());
+          if (!proseCandidate && !toolsUsed.length && !emptyProseRetried) {
+            emptyProseRetried = true;
+            messages.push({
+              role: 'user',
+              content:
+                'Your previous response was empty. Answer the user now in one to three short spoken sentences. Do not call tools.',
+            });
+            continue;
+          }
           const guarded = this.resolveFinalTextWithPrGuard(
             userText,
             proseCandidate,
@@ -613,7 +624,7 @@ export class OrchestratorService {
         } else if (lastToolOutput.includes('Updated ')) {
           finalText = `Changes are on GitHub, sir. ${lastToolOutput.split('\n')[0]} Say "open PR" if you need the pull request.`;
         } else {
-          finalText = buildSuccessfulToolReply(toolRecords, lastToolOutput) ?? '';
+          finalText = buildSuccessfulToolReply(toolRecords, lastToolOutput) ?? EMPTY_TURN_FALLBACK;
         }
       }
 
@@ -631,7 +642,7 @@ export class OrchestratorService {
         if (postGuard.blocked) {
           finalText = postGuard.text;
         }
-        finalText = sanitizeUserFacingAssistantText(finalText);
+        finalText = sanitizeUserFacingAssistantText(finalText) || EMPTY_TURN_FALLBACK;
         finalText = sanitizeSelfImproveDenial(finalText, userText);
         finalText = sanitizeLinkDenial(finalText, userText);
         finalText = sanitizeBrainDenial(finalText, userText);
@@ -900,20 +911,17 @@ export class OrchestratorService {
     emitter: OrchestratorEmitter,
     meta?: { taskRoute?: string; toolsUsed?: string[]; latencyMs?: number },
   ): Promise<void> {
-    if (!finalText?.trim()) {
-      emitter.onError(EMPTY_TURN_ERROR, { retryable: true });
-      return;
-    }
+    const text = finalText?.trim() || EMPTY_TURN_FALLBACK;
     const logged = await this.feedback.logInteraction({
       conversationId,
       prompt: userText,
-      response: finalText,
+      response: text,
       taskRoute: meta?.taskRoute,
       provider: this.llm.name,
       toolsUsed: meta?.toolsUsed,
       latencyMs: meta?.latencyMs,
     });
-    emitter.onDone(finalText, { interactionId: logged.id, taskRoute: meta?.taskRoute });
+    emitter.onDone(text, { interactionId: logged.id, taskRoute: meta?.taskRoute });
   }
 
   private persistTurnLearning(userText: string, assistantText: string): void {
