@@ -87,6 +87,9 @@ export function isSwitchableProviderError(message: string): boolean {
 }
 
 export function providerCooldownMs(message: string): number {
+  if (/empty response/i.test(message)) {
+    return 8_000;
+  }
   if (isDailyQuotaExhaustedError(message)) {
     const resetMs = parseOpenRouterResetMs(message);
     return resetMs ?? 6 * 60 * 60 * 1000;

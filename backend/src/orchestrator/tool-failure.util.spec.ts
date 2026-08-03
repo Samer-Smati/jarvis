@@ -1,6 +1,7 @@
 import {
   buildSuccessfulToolReply,
   buildToolFailureReply,
+  EMPTY_TURN_FALLBACK,
   isToolFailureOutput,
 } from './tool-failure.util';
 
@@ -43,5 +44,9 @@ describe('tool-failure.util', () => {
         'Error: vault unavailable',
       ),
     ).toBeNull();
+  });
+
+  it('exports a spoken empty-turn fallback as last resort only', () => {
+    expect(EMPTY_TURN_FALLBACK).toMatch(/say that once more/i);
   });
 });

@@ -26,6 +26,14 @@ import {
   trimMessagesForLlm,
 } from './message-trim.util';
 
+/** Cloud provider returned no prose and no tool calls — rotate like a soft failure. */
+export function isEmptyLlmResult(result: Pick<LlmChatResult, 'content' | 'toolCalls'>): boolean {
+  if (result.toolCalls?.length) {
+    return false;
+  }
+  return !(result.content?.trim());
+}
+
 /** Facade over the configured providers; the active one can be switched at runtime. */
 @Injectable()
 export class LlmService implements LlmProvider {
@@ -184,14 +192,19 @@ export class LlmService implements LlmProvider {
           this.logger.warn(`Free LLM failover: trying ${name}`);
         }
         const result = await provider.chat({ ...options, messages: trimmedMessages });
+        if (isEmptyLlmResult(result)) {
+          markProviderCooldown(name, 'empty response');
+          this.logger.warn(`${name} returned an empty reply — rotating to next free provider`);
+          continue;
+        }
         if (name !== preferred) {
           clearProviderCooldown(name);
         }
-        const probe = provider as LlmProvider & {
+        const probeAfter = provider as LlmProvider & {
           isReady?: () => Promise<{ ok: boolean; model?: string }>;
         };
-        const ready = probe.isReady ? await probe.isReady() : { ok: true };
-        this.recordServing(name, ready.model);
+        const readyAfter = probeAfter.isReady ? await probeAfter.isReady() : { ok: true };
+        this.recordServing(name, readyAfter.model);
         return result;
       } catch (error) {
         lastError = (error as Error).message;

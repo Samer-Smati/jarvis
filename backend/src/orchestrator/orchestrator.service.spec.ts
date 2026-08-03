@@ -369,17 +369,26 @@ describe('OrchestratorService', () => {
     );
   });
 
-  it('emits onError instead of empty onDone when there is no reply to show', async () => {
-    llmService.chatWithRoute.mockResolvedValue({ content: '', toolCalls: [] });
+  it('recovers an empty LLM reply into a real answer on the next attempt', async () => {
+    llmService.chatWithRoute
+      .mockResolvedValueOnce({ content: '', toolCalls: [] })
+      .mockResolvedValueOnce({
+        content: 'Quantum foam is the jitter of spacetime at tiny scales, sir.',
+        toolCalls: [],
+      });
 
     const emitter = emitterMock();
     await buildService().handleUserMessage('c1', 'Please summarize quantum foam briefly.', emitter);
 
-    expect(emitter.onError).toHaveBeenCalledWith(
-      expect.stringMatching(/without a visible reply/i),
-      expect.objectContaining({ retryable: true }),
+    expect(llmService.chatWithRoute).toHaveBeenCalledTimes(2);
+    expect(emitter.onDone).toHaveBeenCalledWith(
+      expect.stringMatching(/Quantum foam/i),
+      expect.objectContaining({ interactionId: 'log-1' }),
     );
-    expect(emitter.onDone).not.toHaveBeenCalled();
+    expect(emitter.onError).not.toHaveBeenCalledWith(
+      expect.stringMatching(/without a visible reply/i),
+      expect.anything(),
+    );
   });
 
   it('answers about-me from the user entity page, not unrelated vault hits', async () => {

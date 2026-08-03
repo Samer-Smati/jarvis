@@ -37,6 +37,10 @@ export function buildToolFailureReply(failures: Array<{ toolName: string; output
 export const EMPTY_TURN_ERROR =
   'The request finished without a visible reply, sir — please retry.';
 
+/** Spoken fallback when the model returns no prose and no usable tool output. */
+export const EMPTY_TURN_FALLBACK =
+  "Sorry, sir — I didn't catch a clear reply that time. Could you say that once more?";
+
 /** When tools succeeded but the model returned no prose, turn tool output into a user-visible reply. */
 export function buildSuccessfulToolReply(
   toolRecords: Array<{ toolName: string; action: string; output: string }>,
