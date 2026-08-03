@@ -238,6 +238,17 @@ export function parseRetryAfterMs(message: string): number | null {
   return null;
 }
 
+/** Cap provider rate-limit waits so we rotate to the next free LLM instead of stalling the chat turn. */
+export const MAX_PROVIDER_RETRY_SLEEP_MS = 1_500;
+
+export function cappedRetryAfterMs(message: string, maxMs = MAX_PROVIDER_RETRY_SLEEP_MS): number | null {
+  const raw = parseRetryAfterMs(message);
+  if (raw == null) {
+    return null;
+  }
+  return Math.min(raw, maxMs);
+}
+
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -117,6 +117,12 @@ export class BrainPgStore {
       return [];
     }
 
+    // After a newborn wipe (or cold start) there is nothing to search — do not wait on embeddings.
+    const chunkCount = await this.chunks.count();
+    if (!chunkCount) {
+      return [];
+    }
+
     const queryVector = await this.embeddings.tryEmbed(query.slice(0, 1500));
     if (!queryVector?.length) {
       return this.keywordFallback(query, limit);
