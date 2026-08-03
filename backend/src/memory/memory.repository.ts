@@ -18,6 +18,27 @@ export class MemoryRepository {
   ) {}
 
   async createFact(input: RememberTypedInput, embedding?: string): Promise<SemanticMemoryEntity> {
+    // Check for existing fact with same text, memoryType, and source to avoid duplicates
+    const existing = await this.semantic.findOne({
+      where: {
+        text: input.text,
+        memoryType: input.memoryType,
+        source: input.source,
+        forgottenAt: IsNull(),
+      },
+    });
+
+    if (existing) {
+      // Update existing row instead of creating duplicate
+      existing.confidence = input.confidence ?? existing.confidence;
+      existing.pinned = input.pinned ?? existing.pinned;
+      existing.lastVerified = new Date();
+      if (embedding) {
+        existing.embedding = embedding;
+      }
+      return this.semantic.save(existing);
+    }
+
     const row = this.semantic.create({
       text: input.text,
       memoryType: input.memoryType,
