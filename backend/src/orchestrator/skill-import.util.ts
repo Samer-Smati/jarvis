@@ -362,23 +362,114 @@ function extractFrontmatterField(frontmatter: string, field: string): string {
   return match[1].trim().replace(/^['"]|['"]$/g, '');
 }
 
+const PRIORITY_HEADINGS =
+  /overview|bite-?sized|no placeholders|self-?review|execution|task structure|scope|when to use|iron law|remember|process/i;
+
 export function extractTopBullets(body: string, n = TOP_BULLET_COUNT): string[] {
-  const bullets: string[] = [];
-  for (const line of body.split(/\r?\n/)) {
-    const match = /^\s*(?:[-*]|\d+\.)\s+(.+)$/.exec(line);
+  const scored: Array<{ text: string; score: number }> = [];
+  let sectionBoost = 0;
+
+  for (const rawLine of body.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (/^#{1,3}\s+/.test(line)) {
+      sectionBoost = PRIORITY_HEADINGS.test(line) ? 8 : 0;
+      continue;
+    }
+
+    const bold = /^\*\*([^*]+)\*\*:?\s*(.*)$/.exec(line);
+    if (bold) {
+      const text = `${bold[1].trim()}${bold[2].trim() ? `: ${bold[2].trim()}` : ''}`.trim();
+      if (text.length >= 24) {
+        scored.push({ text: truncateBullet(text), score: 12 + sectionBoost + Math.min(text.length / 40, 4) });
+      }
+      continue;
+    }
+
+    const match = /^(?:[-*]|\d+\.)\s+(.+)$/.exec(line);
     if (!match) {
       continue;
     }
-    const text = match[1].trim();
-    if (text.length < 3) {
+    const text = match[1].trim().replace(/^\*\*(.+?)\*\*:?\s*/, '$1: ').trim();
+    if (!isUsefulBullet(text)) {
       continue;
     }
-    bullets.push(text);
-    if (bullets.length >= n) {
+    scored.push({
+      text: truncateBullet(text),
+      score: sectionBoost + Math.min(text.length / 25, 6) + (text.includes(':') ? 1 : 0),
+    });
+  }
+
+  // Overview first paragraph as a high-value bullet when lists are thin
+  const overview = extractOverviewSentence(body);
+  if (overview) {
+    scored.push({ text: overview, score: 20 });
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of scored) {
+    const key = item.text.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(item.text);
+    if (out.length >= n) {
       break;
     }
   }
-  return bullets;
+  return out;
+}
+
+function isUsefulBullet(text: string): boolean {
+  if (text.length < 28) {
+    return false;
+  }
+  if (/^\(.*\)$/.test(text)) {
+    return false;
+  }
+  if (/"[^"]+"\s*-\s*step\b/i.test(text)) {
+    return false;
+  }
+  if (/^(tbd|todo|n\/a)\b/i.test(text)) {
+    return false;
+  }
+  return true;
+}
+
+function truncateBullet(text: string): string {
+  return text.length > 220 ? `${text.slice(0, 217).trim()}…` : text;
+}
+
+function extractOverviewSentence(body: string): string | null {
+  const overviewIdx = body.search(/^##\s+Overview\s*$/im);
+  if (overviewIdx < 0) {
+    return null;
+  }
+  const after = body.slice(overviewIdx).split(/\r?\n/).slice(1);
+  const paras: string[] = [];
+  for (const line of after) {
+    if (/^#+\s+/.test(line.trim())) {
+      break;
+    }
+    const t = line.trim();
+    if (!t) {
+      if (paras.length) {
+        break;
+      }
+      continue;
+    }
+    if (t.startsWith('-') || t.startsWith('*') || t.startsWith('```')) {
+      break;
+    }
+    paras.push(t.replace(/\*\*/g, ''));
+  }
+  const joined = paras.join(' ').replace(/\s+/g, ' ').trim();
+  if (joined.length < 40) {
+    return null;
+  }
+  return truncateBullet(joined);
 }
 
 export function skillImportMarker(slug: string): string {

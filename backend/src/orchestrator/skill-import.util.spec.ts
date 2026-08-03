@@ -286,5 +286,39 @@ Memory — permanent conversation history:
       expect(twice.alreadyPresent).toBe(true);
       expect(twice.content).toBe(once.content);
     });
+
+    it('prefers substantive writing-plans rules over weak early list stubs', () => {
+      const writingPlansBody = `
+## Overview
+
+Write comprehensive implementation plans with bite-sized tasks. DRY. YAGNI. TDD.
+
+**Announce at start:** "I'm using the writing-plans skill to create the implementation plan."
+
+**Save plans to:** docs/plans/feature.md
+- (User preferences for plan location override this default)
+
+## File Structure
+
+- Design units with clear boundaries and well-defined interfaces. Each file should have one clear responsibility.
+- Prefer smaller, focused files over large ones that do too much.
+
+## Bite-Sized Task Granularity
+
+**Each step is one action (2-5 minutes):**
+- "Write the failing test" - step
+- "Run it to make sure it fails" - step
+
+## No Placeholders
+
+- "TBD", "TODO", "implement later", "fill in details"
+- Steps that describe what to do without showing how (code blocks required for code steps)
+`;
+      const bullets = extractTopBullets(writingPlansBody, 8);
+      expect(bullets.some((b) => /Announce at start/i.test(b))).toBe(true);
+      expect(bullets.some((b) => /comprehensive implementation plans/i.test(b))).toBe(true);
+      expect(bullets.every((b) => !/^\(User preferences/i.test(b))).toBe(true);
+      expect(bullets.every((b) => !/"Write the failing test" - step/i.test(b))).toBe(true);
+    });
   });
 });

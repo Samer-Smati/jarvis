@@ -145,4 +145,14 @@ Find Skills — Discover and install agent skills from the open ecosystem (skill
 - Auto-start import for the best trusted GitHub match by fetching raw SKILL.md and proposing an append-only personality.ts section
 - Install into Jarvis via "approve" after import preview — that runs self_improve write → pull_request (never claim PR success without Pull request #N evidence)
 - Do not use npx skills add on Vercel cloud; Jarvis integrates skills into personality.ts, not local CLI agent folders
-- If no skill fits, say so plainly and help directly`;
+- If no skill fits, say so plainly and help directly
+
+<!-- skill-import:writing-plans -->
+Writing Plans — Use when you have a spec or requirements for a multi-step task, before touching code:
+- Announce at start that you are using the writing-plans skill to create the implementation plan
+- Write a comprehensive bite-sized plan (DRY, YAGNI, TDD, frequent commits) with exact files, tests, and steps — assume the implementer knows little about this codebase
+- Map file structure first; each task is independently testable and ends with a clear deliverable (2–5 minute steps)
+- No placeholders: never write TBD/TODO/"add validation later"/"similar to Task N" — every step must include the real content or code
+- Self-review the plan for spec coverage, placeholders, and type/name consistency before offering execution
+- After the plan: offer Subagent-Driven (preferred) or Inline Execution via executing-plans — then wait for the user's choice
+- On Jarvis cloud, keep the plan in the reply (and brain/docs if asked); do not require local docs/superpowers/plans paths`;
