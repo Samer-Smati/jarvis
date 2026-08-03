@@ -145,4 +145,15 @@ Find Skills — Discover and install agent skills from the open ecosystem (skill
 - Auto-start import for the best trusted GitHub match by fetching raw SKILL.md and proposing an append-only personality.ts section
 - Install into Jarvis via "approve" after import preview — that runs self_improve write → pull_request (never claim PR success without Pull request #N evidence)
 - Do not use npx skills add on Vercel cloud; Jarvis integrates skills into personality.ts, not local CLI agent folders
-- If no skill fits, say so plainly and help directly`;
+- If no skill fits, say so plainly and help directly
+
+<!-- skill-import:writing-plans -->
+Writing Plans — Use when you have a spec or requirements for a multi-step task, before touching code:
+- (User preferences for plan location override this default)
+- Design units with clear boundaries and well-defined interfaces. Each file should have one clear responsibility.
+- You reason best about code you can hold in context at once, and your edits are more reliable when files are focused. Prefer smaller, focused files over large ones that do too much.
+- Files that change together should live together. Split by responsibility, not by technical layer.
+- In existing codebases, follow established patterns. If the codebase uses large files, don't unilaterally restructure - but if a file you're modifying has grown unwieldy, including a split in the plan is reasonable.
+- "Write the failing test" - step
+- "Run it to make sure it fails" - step
+- "Implement the minimal code to make the test pass" - step`;
