@@ -27,6 +27,7 @@ export class MemoryRepository {
         forgottenAt: IsNull(),
       },
     });
+
     if (existing) {
       // Update existing row instead of creating duplicate
       existing.confidence = input.confidence ?? existing.confidence;
@@ -37,6 +38,7 @@ export class MemoryRepository {
       }
       return this.semantic.save(existing);
     }
+
     const row = this.semantic.create({
       text: input.text,
       memoryType: input.memoryType,
@@ -55,9 +57,7 @@ export class MemoryRepository {
     source?: string,
     pinned?: boolean,
   ): Promise<UserPreferenceEntity> {
-    const existing = await this.preferences.findOne({
-      where: { key, forgottenAt: IsNull() }
-    });
+    const existing = await this.preferences.findOne({ where: { key, forgottenAt: IsNull() } });
     if (existing) {
       existing.value = value;
       existing.source = source ?? existing.source;
@@ -72,9 +72,7 @@ export class MemoryRepository {
   }
 
   async getPreferenceValue(key: string): Promise<string | null> {
-    const existing = await this.preferences.findOne({
-      where: { key, forgottenAt: IsNull() }
-    });
+    const existing = await this.preferences.findOne({ where: { key, forgottenAt: IsNull() } });
     return existing?.value ?? null;
   }
 
@@ -84,35 +82,42 @@ export class MemoryRepository {
         name: input.name,
         description: input.description,
         status: input.status ?? 'active',
-        metadata: input.metadata,
+        tags: input.tags?.join(', '),
       }),
     );
   }
 
-  async listActiveFacts(): Promise<SemanticMemoryEntity[]> {
+  async listActiveFacts(limit = 50): Promise<SemanticMemoryEntity[]> {
     return this.semantic.find({
       where: { forgottenAt: IsNull() },
       order: { pinned: 'DESC', updatedAt: 'DESC' },
+      take: limit,
     });
   }
 
-  async listActivePreferences(): Promise<UserPreferenceEntity[]> {
+  async listActivePreferences(limit = 30): Promise<UserPreferenceEntity[]> {
     return this.preferences.find({
       where: { forgottenAt: IsNull() },
-      order: { updatedAt: 'DESC' },
+      order: { pinned: 'DESC', updatedAt: 'DESC' },
+      take: limit,
     });
   }
 
-  async listActiveProjects(): Promise<UserProjectEntity[]> {
+  async listActiveProjects(limit = 20): Promise<UserProjectEntity[]> {
     return this.projects.find({
-      where: { forgottenAt: IsNull() },
-      order: { updatedAt: 'DESC' },
+      where: { forgottenAt: IsNull(), status: 'active' },
+      order: { pinned: 'DESC', updatedAt: 'DESC' },
+      take: limit,
     });
   }
 
-  async pinFact(id: string): Promise<boolean> {
-    const result = await this.semantic.update({ id }, { pinned: true });
-    return (result.affected ?? 0) > 0;
+  async pinFact(id: string, pinned: boolean): Promise<SemanticMemoryEntity | null> {
+    const row = await this.semantic.findOne({ where: { id } });
+    if (!row) {
+      return null;
+    }
+    row.pinned = pinned;
+    return this.semantic.save(row);
   }
 
   async forgetFact(id: string): Promise<boolean> {
@@ -120,8 +125,8 @@ export class MemoryRepository {
     return (result.affected ?? 0) > 0;
   }
 
-  async forgetPreference(key: string): Promise<boolean> {
-    const result = await this.preferences.update({ key }, { forgottenAt: new Date() });
+  async forgetPreference(id: string): Promise<boolean> {
+    const result = await this.preferences.update({ id }, { forgottenAt: new Date() });
     return (result.affected ?? 0) > 0;
   }
 
@@ -164,6 +169,7 @@ export class MemoryRepository {
       .andWhere('m.confidence < :minConfidence', { minConfidence })
       .andWhere('m.updatedAt < :cutoff', { cutoff })
       .getMany();
+
     let pruned = 0;
     for (const row of candidates) {
       row.forgottenAt = new Date();
