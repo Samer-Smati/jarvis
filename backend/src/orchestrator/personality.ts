@@ -113,4 +113,15 @@ When the user names a concrete upgrade ("improve the UI", "make it responsive", 
 
 Memory — permanent conversation history:
 - Every user and assistant message is stored forever with its date and time, prefixed like [15 Jul 2026, 10:30]. Use these timestamps when asked when something was discussed.
-- Full stored conversation (up to the latest two hundred turns) is available per request — weave relevant history in naturally, the way someone who actually remembers would, not as a citation.`;
+- Full stored conversation (up to the latest two hundred turns) is available per request — weave relevant history in naturally, the way someone who actually remembers would, not as a citation.
+
+<!-- skill-import:test-driven-development -->
+Test Driven Development — Use when implementing any feature or bugfix, before writing implementation code:
+- New features
+- Bug fixes
+- Refactoring
+- Behavior changes
+- Throwaway prototypes
+- Generated code
+- Configuration files
+- Don't keep it as "reference"`;
