@@ -167,6 +167,22 @@ export class ApiService {
     return this.http.post<{ aborted: number }>(`${this.base}/kill-switch`, {});
   }
 
+  factoryReset(confirm: string): Observable<{
+    ok: true;
+    confirm: string;
+    brainPageCount: number;
+    cleared: Record<string, number>;
+    conversationBlobsDeleted: number;
+  }> {
+    return this.http.post<{
+      ok: true;
+      confirm: string;
+      brainPageCount: number;
+      cleared: Record<string, number>;
+      conversationBlobsDeleted: number;
+    }>(`${this.base}/factory-reset`, { confirm });
+  }
+
   setProvider(provider: string): Observable<{ provider: string }> {
     return this.http.post<{ provider: string }>(`${this.base}/provider`, { provider });
   }

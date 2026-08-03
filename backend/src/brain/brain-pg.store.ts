@@ -71,6 +71,18 @@ export class BrainPgStore {
     }
   }
 
+  async clearAllChunks(): Promise<number> {
+    if (!this.enabled()) {
+      return 0;
+    }
+    const count = await this.chunks.count();
+    if (!count) {
+      return 0;
+    }
+    await this.chunks.clear();
+    return count;
+  }
+
   async indexTurn(userText: string, assistantText: string, journalPath?: string): Promise<void> {
     const text = `User: ${userText.slice(0, 600)}\nJARVIS: ${assistantText.slice(0, 600)}`;
     await this.indexChunk(text, 'turn', journalPath);

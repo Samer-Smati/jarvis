@@ -1,6 +1,7 @@
 import { Component, OnInit } from '@angular/core';
 import { MessageService } from 'primeng/api';
 import { ApiService } from '../core/api.service';
+import { ConversationHistoryService } from '../core/conversation-history.service';
 import { SkillInfo, PermissionGrant } from '../core/models';
 import { isDesktopClient } from '../core/platform.util';
 import { isPerformanceMode, setPerformanceMode } from '../core/performance.util';
@@ -55,6 +56,8 @@ export class SettingsComponent implements OnInit {
   brainOpsPaused = true;
   brainOpsReason?: string;
   brainOpsSince?: string;
+  factoryResetConfirm = '';
+  factoryResetBusy = false;
   diagnostics?: {
     uptimeSec: number;
     memoryMb: { rss: number; heapUsed: number };
@@ -68,6 +71,7 @@ export class SettingsComponent implements OnInit {
     private api: ApiService,
     private toast: MessageService,
     private voice: VoiceService,
+    private conversationHistory: ConversationHistoryService,
   ) {
     this.voiceEnabled = voice.enabled;
     this.ttsSupported = voice.ttsSupported;
@@ -271,6 +275,36 @@ export class SettingsComponent implements OnInit {
           summary: 'Kill switch',
           detail: `${result?.aborted ?? 0} run(s) halted.`,
         }),
+    });
+  }
+
+  runFactoryReset(): void {
+    const confirm = this.factoryResetConfirm.trim();
+    if (confirm !== 'NEWBORN' || this.factoryResetBusy) {
+      return;
+    }
+    this.factoryResetBusy = true;
+    this.api.factoryReset(confirm).subscribe({
+      next: (result) => {
+        const localCleared = this.conversationHistory.clearAllLocal();
+        this.factoryResetBusy = false;
+        this.factoryResetConfirm = '';
+        this.toast.add({
+          severity: 'success',
+          summary: 'Newborn reset',
+          detail: `JARVIS wiped and reseeded (${result.brainPageCount} seed pages). Cleared ${localCleared} local chat(s). Reloading…`,
+          life: 4000,
+        });
+        setTimeout(() => window.location.assign('/'), 1200);
+      },
+      error: (err) => {
+        this.factoryResetBusy = false;
+        this.toast.add({
+          severity: 'error',
+          summary: 'Newborn reset',
+          detail: err?.error?.message ?? 'Factory reset failed.',
+        });
+      },
     });
   }
 }

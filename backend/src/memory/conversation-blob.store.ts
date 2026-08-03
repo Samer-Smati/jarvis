@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { list, put } from '@vercel/blob';
+import { del, list, put } from '@vercel/blob';
 
 export interface BlobMessage {
   id: string;
@@ -76,5 +76,28 @@ export class ConversationBlobStore {
       createdAt: m.createdAt ?? new Date().toISOString(),
     }));
     await this.save(conversationId, messages);
+  }
+
+  /** Delete every conversation blob under jarvis/conversations/. */
+  async deleteAll(): Promise<number> {
+    if (!this.enabled()) {
+      return 0;
+    }
+    let deleted = 0;
+    let cursor: string | undefined;
+    do {
+      const page = await list({
+        prefix: 'jarvis/conversations/',
+        cursor,
+        limit: 100,
+      });
+      const urls = page.blobs.map((b) => b.url).filter(Boolean);
+      if (urls.length) {
+        await del(urls);
+        deleted += urls.length;
+      }
+      cursor = page.hasMore ? page.cursor : undefined;
+    } while (cursor);
+    return deleted;
   }
 }

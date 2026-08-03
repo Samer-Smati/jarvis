@@ -6,6 +6,7 @@ import { LlmService } from '../llm/llm.service';
 import { ConversationMessageEntity } from '../memory/entities/conversation-message.entity';
 import { BrainOpsPauseService } from '../brain/brain-ops-pause.service';
 import { BrainService, BRAIN_PRUNE_META_CONFIRM_PHRASE, BRAIN_REHYDRATE_CONFIRM_PHRASE } from '../brain/brain.service';
+import { FACTORY_RESET_CONFIRM_PHRASE, FactoryResetService } from '../memory/factory-reset.service';
 import { MemoryService } from '../memory/memory.service';
 import { OrchestratorService } from '../orchestrator/orchestrator.service';
 import { ReminderEntity } from '../skills/entities/reminder.entity';
@@ -26,6 +27,7 @@ export class ChatController {
     private readonly memory: MemoryService,
     private readonly brain: BrainService,
     private readonly brainOpsPause: BrainOpsPauseService,
+    private readonly factoryReset: FactoryResetService,
     private readonly guardrails: GuardrailService,
     private readonly llm: LlmService,
     @InjectRepository(ReminderEntity)
@@ -262,6 +264,22 @@ export class ChatController {
     }
     const aborted = this.orchestrator.killSwitch(conversationId);
     return { aborted };
+  }
+
+  @Post('factory-reset')
+  async factoryResetEndpoint(@Body() body: { confirm?: string }) {
+    const confirm = body?.confirm?.trim();
+    if (confirm !== FACTORY_RESET_CONFIRM_PHRASE) {
+      throw new BadRequestException(
+        `Refused — send { "confirm": "${FACTORY_RESET_CONFIRM_PHRASE}" } to wipe all memories, conversations, and brain data. This cannot be undone.`,
+      );
+    }
+    this.orchestrator.killSwitch();
+    try {
+      return await this.factoryReset.resetToNewborn(confirm);
+    } catch (error) {
+      throw new BadRequestException((error as Error).message);
+    }
   }
 }
 
