@@ -31,6 +31,12 @@ interface TavilyExtractResponse {
   failed_results?: Array<{ url?: string; error?: string }>;
 }
 
+export interface FetchedRawText {
+  url: string;
+  text: string;
+  status: number;
+}
+
 @Injectable()
 export class WebFetchService {
   async fetchReadable(rawUrl: string): Promise<FetchedPage> {
@@ -59,6 +65,41 @@ export class WebFetchService {
       };
     } catch {
       return direct;
+    }
+  }
+
+  /** Plain GET for raw markdown/text (e.g. raw.githubusercontent.com). No HTML→text, no Tavily. */
+  async fetchRawText(rawUrl: string): Promise<FetchedRawText> {
+    const url = validatePublicHttpUrl(rawUrl);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        redirect: 'follow',
+        signal: controller.signal,
+        headers: {
+          Accept: 'text/plain, text/markdown, */*',
+          'User-Agent': USER_AGENT,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} for ${url.toString()}`);
+      }
+
+      const maxRawBytes = resolveMaxRawBytes();
+      const { bytes } = await readResponseBodyCapped(response, maxRawBytes);
+      const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes).trim();
+
+      return {
+        url: url.toString(),
+        text: text.slice(0, MAX_TEXT_CHARS),
+        status: response.status,
+      };
+    } finally {
+      clearTimeout(timer);
     }
   }
 

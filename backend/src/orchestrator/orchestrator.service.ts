@@ -25,6 +25,7 @@ import {
 import {
   applyPrClaimGuard,
   buildPrGuardRetrySystemPrompt,
+  hasPullRequestEvidence,
   ToolTurnRecord,
 } from './pr-claim-guard.util';
 import { normalizeSelfImproveArgs } from '../skills/self-improve-args.util';
@@ -41,12 +42,31 @@ import {
   formatRememberFactReply,
   resolvePreferenceWrites,
 } from './remember-fact.util';
+import {
+  appendPersonalitySection,
+  buildPersonalityAppendSection,
+  buildRawSkillUrl,
+  buildSkillImportFailureReply,
+  buildSkillImportSuccessReply,
+  buildSkillIntegrateAlreadyPresentReply,
+  buildSkillIntegrateFailureReply,
+  buildSkillIntegrateSuccessReply,
+  extractTopBullets,
+  hashSkillContent,
+  isSkillImportRequest,
+  isSkillIntegrateApproval,
+  matchSkillImportPhrase,
+  parsePendingSkillImport,
+  PERSONALITY_PATH,
+  stripInspectFileOutput,
+  validateSkillMarkdown,
+} from './skill-import.util';
 import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isBrainPlanOnlyRequest, isBrainOpsMetaQuestion, isBrainOpsPauseRequest, isBrainOpsResumeRequest, isBrainMutatingAction, BRAIN_OPS_BLOCKED_MESSAGE, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, buildAboutUserReply, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery, isWebSearchMetaQuestion, isCodeArchitectureQuestion, isPlanOnlyRequest, prefersStructuredMemoryOverBrain } from './fast-chat.util';
 import {
   buildWebSearchUnavailableMessage,
   isFailedWebSearchOutput,
 } from '../skills/impl/web-search.util';
-
+import { WebFetchService } from '../integrations/web-fetch.service';
 const MAX_TOOL_ITERATIONS = 8;
 const SERVERLESS_MAX_TOOL_ITERATIONS = 6;
 const SERVERLESS_DEADLINE_MS = 285_000;
@@ -97,6 +117,7 @@ export class OrchestratorService {
     private readonly personality: PersonalityService,
     private readonly feedback: FeedbackService,
     private readonly lessons: LessonsService,
+    private readonly webFetch: WebFetchService,
   ) {}
 
   get providerName(): string {
@@ -157,6 +178,27 @@ export class OrchestratorService {
         .slice(-8)
         .map((m) => String(m.content ?? ''))
         .join('\n');
+
+      if (isSkillImportRequest(userText) && !images?.length) {
+        const handled = await this.runSkillImport(conversationId, userText, emitter, trigger);
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isSkillIntegrateApproval(userText, recentContext) && !images?.length) {
+        const handled = await this.runSkillIntegrate(
+          conversationId,
+          userText,
+          emitter,
+          trigger,
+          clientPlatform,
+          recentContext,
+        );
+        if (handled) {
+          return;
+        }
+      }
 
       if (isResponsiveUpgradeRequest(userText) && !images?.length) {
         const handled = await this.runResponsivePresetUpgrade(
@@ -974,6 +1016,291 @@ export class OrchestratorService {
       return action === 'delete' || action === 'move';
     }
     return false;
+  }
+
+  private async runSkillImport(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+  ): Promise<boolean> {
+    const phrase = matchSkillImportPhrase(userText);
+    if (!phrase) {
+      return false;
+    }
+
+    const built = buildRawSkillUrl(phrase.sourceRaw, phrase.skillSlug);
+    if (!built.ok) {
+      const finalText = buildSkillImportFailureReply(built.reason);
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      void this.memory.logEvent(trigger, `Skill import failed: ${built.reason.slice(0, 120)}`);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    emitter.onProgress?.({
+      stage: 'skill_import',
+      message: `Fetching ${built.skillSlug}…`,
+      percent: 30,
+      detail: built.url,
+    });
+
+    let fetchedText: string;
+    try {
+      const fetched = await this.webFetch.fetchRawText(built.url);
+      fetchedText = fetched.text;
+    } catch (error) {
+      const finalText = buildSkillImportFailureReply((error as Error).message);
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      void this.memory.logEvent(trigger, `Skill import fetch failed: ${built.skillSlug}`);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    const validated = validateSkillMarkdown(fetchedText, built.skillSlug);
+    if (!validated.ok) {
+      const finalText = buildSkillImportFailureReply(validated.reason);
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      void this.memory.logEvent(trigger, `Skill import invalid: ${built.skillSlug}`);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    const hash = hashSkillContent(validated.skill.raw);
+    const proposedSection = buildPersonalityAppendSection({
+      name: validated.skill.name,
+      description: validated.skill.description,
+      bullets: extractTopBullets(validated.skill.body),
+      slug: built.skillSlug,
+    });
+
+    const finalText = buildSkillImportSuccessReply({
+      url: built.url,
+      hash,
+      skill: validated.skill,
+      proposedSection,
+    });
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    void this.memory.logEvent(trigger, `Skill import ready: ${built.skillSlug}`);
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runSkillIntegrate(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+    clientPlatform: 'desktop' | 'web',
+    recentContext: string,
+  ): Promise<boolean> {
+    const pending = parsePendingSkillImport(recentContext);
+    if (!pending) {
+      const finalText = buildSkillIntegrateFailureReply(
+        'No pending skill import found in recent context. Import a skill first (e.g. "import skill executing-plans from obra/superpowers").',
+      );
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    if (!this.skills.get('self_improve')) {
+      const finalText = buildSkillIntegrateFailureReply('self_improve skill is not registered.');
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    emitter.onProgress?.({
+      stage: 'skill_integrate',
+      message: `Re-fetching ${pending.skillSlug}…`,
+      percent: 20,
+      detail: pending.url,
+    });
+
+    let fetchedText: string;
+    try {
+      const fetched = await this.webFetch.fetchRawText(pending.url);
+      fetchedText = fetched.text;
+    } catch (error) {
+      const finalText = buildSkillIntegrateFailureReply((error as Error).message);
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    const validated = validateSkillMarkdown(fetchedText, pending.skillSlug);
+    if (!validated.ok) {
+      const finalText = buildSkillIntegrateFailureReply(validated.reason);
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    const hash = hashSkillContent(validated.skill.raw);
+    if (hash !== pending.hash) {
+      const finalText = buildSkillIntegrateFailureReply(
+        `Content hash mismatch (import ${pending.hash}, re-fetch ${hash}). Re-run the import to refresh, then approve again.`,
+      );
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    const proposedSection = buildPersonalityAppendSection({
+      name: validated.skill.name,
+      description: validated.skill.description,
+      bullets: extractTopBullets(validated.skill.body),
+      slug: pending.skillSlug,
+    });
+
+    const branch = `jarvis/skill-import-${pending.skillSlug}-${new Date()
+      .toISOString()
+      .slice(0, 16)
+      .replace(/[:T]/g, '-')}`;
+
+    emitter.onProgress?.({
+      stage: 'inspect',
+      message: `Reading ${PERSONALITY_PATH}…`,
+      percent: 35,
+      toolName: 'self_improve',
+    });
+
+    const inspectOutput = await this.executeToolCall(
+      conversationId,
+      {
+        id: 'skill-import-inspect',
+        name: 'self_improve',
+        arguments: { action: 'inspect', path: PERSONALITY_PATH, mode: 'read' },
+      },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    if (
+      inspectOutput.startsWith('Error:') ||
+      inspectOutput.startsWith('Inspect error:') ||
+      inspectOutput.includes('Access denied') ||
+      inspectOutput.includes('requires GITHUB_TOKEN')
+    ) {
+      const finalText = buildSkillIntegrateFailureReply(`inspect failed: ${inspectOutput.slice(0, 400)}`);
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    const currentFile = stripInspectFileOutput(inspectOutput, PERSONALITY_PATH);
+    if (currentFile.includes('...[truncated]')) {
+      const finalText = buildSkillIntegrateFailureReply(
+        `${PERSONALITY_PATH} was truncated by inspect — cannot safely append. Increase MAX_READ or retry.`,
+      );
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    const appended = appendPersonalitySection(currentFile, proposedSection, pending.skillSlug);
+    if (appended.alreadyPresent) {
+      const finalText = buildSkillIntegrateAlreadyPresentReply(pending.skillSlug);
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      void this.memory.logEvent(trigger, `Skill already present: ${pending.skillSlug}`);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    emitter.onProgress?.({
+      stage: 'write',
+      message: `Writing ${PERSONALITY_PATH}…`,
+      percent: 55,
+      toolName: 'self_improve',
+    });
+
+    const writeOutput = await this.executeToolCall(
+      conversationId,
+      {
+        id: 'skill-import-write',
+        name: 'self_improve',
+        arguments: {
+          action: 'write',
+          path: PERSONALITY_PATH,
+          content: appended.content,
+          branch,
+          message: `feat(jarvis): import skill ${pending.skillSlug} into personality`,
+        },
+      },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    if (
+      writeOutput.startsWith('Error:') ||
+      writeOutput.includes('requires GITHUB_TOKEN') ||
+      writeOutput.includes('Write blocked') ||
+      writeOutput.includes('Write error:')
+    ) {
+      const finalText = buildSkillIntegrateFailureReply(`write failed: ${writeOutput.slice(0, 400)}`);
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    emitter.onProgress?.({
+      stage: 'pull_request',
+      message: 'Opening pull request…',
+      percent: 88,
+      toolName: 'self_improve',
+    });
+
+    const prOutput = await this.executeToolCall(
+      conversationId,
+      {
+        id: 'skill-import-pr',
+        name: 'self_improve',
+        arguments: {
+          action: 'pull_request',
+          branch,
+          title: `Import skill ${pending.skillSlug} into system prompt`,
+          message: [
+            `Import ${pending.skillSlug} from ${pending.source} into personality.ts (append-only).`,
+            '',
+            `Source: ${pending.url}`,
+            `Content hash: ${hash}`,
+            `Approved after: "${userText.slice(0, 200)}"`,
+          ].join('\n'),
+        },
+      },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    const finalText = hasPullRequestEvidence([prOutput])
+      ? buildSkillIntegrateSuccessReply(prOutput)
+      : buildSkillIntegrateFailureReply(
+          `pull_request did not return a verifiable PR URL. Tool output: ${prOutput.slice(0, 500)}`,
+        );
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    this.persistTurnLearning(userText, finalText);
+    void this.memory.logEvent(trigger, `Skill integrate: ${pending.skillSlug}`);
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
   }
 
   private async runResponsivePresetUpgrade(

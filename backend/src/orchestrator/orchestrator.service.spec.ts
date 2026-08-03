@@ -62,6 +62,7 @@ describe('OrchestratorService', () => {
       | 'logEvent'
       | 'indexConversationTurn'
       | 'recallFacts'
+      | 'listPreferences'
     >
   >;
   let brainOpsPause: jest.Mocked<Pick<BrainOpsPauseService, 'isPaused' | 'pause' | 'resume'>>;
@@ -70,6 +71,7 @@ describe('OrchestratorService', () => {
   let personality: jest.Mocked<Pick<PersonalityService, 'getActivePrompt'>>;
   let feedback: jest.Mocked<Pick<FeedbackService, 'logInteraction'>>;
   let lessons: jest.Mocked<Pick<LessonsService, 'recordRetrieval' | 'createDirect'>>;
+  let webFetch: { fetchRawText: jest.Mock; fetchReadable: jest.Mock };
   let skill: Skill;
   let registry: SkillRegistry;
 
@@ -87,6 +89,7 @@ describe('OrchestratorService', () => {
       personality as unknown as PersonalityService,
       feedback as unknown as FeedbackService,
       lessons as unknown as LessonsService,
+      webFetch as unknown as import('../integrations/web-fetch.service').WebFetchService,
     );
 
   beforeEach(() => {
@@ -125,6 +128,7 @@ describe('OrchestratorService', () => {
       logEvent: jest.fn().mockResolvedValue(undefined),
       indexConversationTurn: jest.fn().mockResolvedValue(undefined),
       recallFacts: jest.fn().mockResolvedValue([]),
+      listPreferences: jest.fn().mockResolvedValue([]),
     };
     brain = {
       getContextBlock: jest.fn().mockResolvedValue(''),
@@ -147,6 +151,10 @@ describe('OrchestratorService', () => {
     lessons = {
       recordRetrieval: jest.fn().mockResolvedValue(undefined),
       createDirect: jest.fn().mockResolvedValue({ id: 'lesson-1' }),
+    };
+    webFetch = {
+      fetchRawText: jest.fn(),
+      fetchReadable: jest.fn(),
     };
     guardrails = {
       requestConfirmation: jest.fn(),
@@ -269,6 +277,7 @@ describe('OrchestratorService', () => {
       personality as unknown as PersonalityService,
       feedback as unknown as FeedbackService,
       lessons as unknown as LessonsService,
+      webFetch as unknown as import('../integrations/web-fetch.service').WebFetchService,
     ).handleUserMessage('c1', 'delete my meeting', emitter);
 
     expect(guardrails.requestConfirmation).toHaveBeenCalled();

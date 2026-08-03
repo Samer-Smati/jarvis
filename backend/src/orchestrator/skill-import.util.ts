@@ -1,0 +1,401 @@
+import { createHash } from 'node:crypto';
+
+export const MIN_SKILL_CHARS = 200;
+export const TOP_BULLET_COUNT = 8;
+export const BODY_EXCERPT_CHARS = 3000;
+export const PERSONALITY_PATH = 'backend/src/orchestrator/personality.ts';
+
+const SOURCE_ALIASES: Record<string, string> = {
+  superpowers: 'obra/superpowers',
+  'obra/superpowers': 'obra/superpowers',
+  'anthropics/skills': 'anthropics/skills',
+};
+
+const RAW_URL_TEMPLATES: Record<string, (slug: string) => string> = {
+  'obra/superpowers': (slug) =>
+    `https://raw.githubusercontent.com/obra/superpowers/main/skills/${slug}/SKILL.md`,
+  'anthropics/skills': (slug) =>
+    `https://raw.githubusercontent.com/anthropics/skills/main/${slug}/SKILL.md`,
+};
+
+export interface SkillImportRef {
+  source: string;
+  skillSlug: string;
+  url: string;
+}
+
+export interface ValidatedSkill {
+  name: string;
+  description: string;
+  body: string;
+  raw: string;
+}
+
+export type SkillValidationResult =
+  | { ok: true; skill: ValidatedSkill }
+  | { ok: false; reason: string };
+
+export function normalizeSkillSlug(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/^skills\//, '')
+    .replace(/\/skill\.md$/i, '')
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+export function resolveKnownSource(raw: string): string | null {
+  const key = raw.trim().toLowerCase().replace(/^https?:\/\/github\.com\//, '');
+  if (SOURCE_ALIASES[key]) {
+    return SOURCE_ALIASES[key];
+  }
+  if (RAW_URL_TEMPLATES[key]) {
+    return key;
+  }
+  return null;
+}
+
+export function buildRawSkillUrl(
+  source: string,
+  skillSlug: string,
+): { ok: true; source: string; skillSlug: string; url: string } | { ok: false; reason: string } {
+  const resolved = resolveKnownSource(source);
+  if (!resolved) {
+    return {
+      ok: false,
+      reason: `Unknown skill source "${source}". Allowed: obra/superpowers, anthropics/skills (alias: superpowers).`,
+    };
+  }
+  const slug = normalizeSkillSlug(skillSlug);
+  if (!slug) {
+    return { ok: false, reason: 'Skill slug is empty or invalid.' };
+  }
+  const template = RAW_URL_TEMPLATES[resolved];
+  return { ok: true, source: resolved, skillSlug: slug, url: template(slug) };
+}
+
+export function isSkillImportRequest(text: string): boolean {
+  return matchSkillImportPhrase(text) !== null;
+}
+
+/** Phrase match only — source may still be unknown (caller reports via buildRawSkillUrl). */
+export function matchSkillImportPhrase(text: string): { skillSlug: string; sourceRaw: string } | null {
+  const t = text.trim();
+  if (!t) {
+    return null;
+  }
+
+  const patterns = [
+    /\bimport\s+skill\s+([a-z0-9][a-z0-9._/-]*)\s+from\s+([a-z0-9][a-z0-9._/-]*)/i,
+    /\bfetch\s+skill\s+([a-z0-9][a-z0-9._/-]*)\s+from\s+([a-z0-9][a-z0-9._/-]*)/i,
+    /\badd\s+skill\s+([a-z0-9][a-z0-9._/-]*)\s+from\s+([a-z0-9][a-z0-9._/-]*)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = pattern.exec(t);
+    if (match) {
+      return { skillSlug: match[1], sourceRaw: match[2] };
+    }
+  }
+  return null;
+}
+
+export function parseSkillImportRequest(text: string): SkillImportRef | null {
+  const phrase = matchSkillImportPhrase(text);
+  if (!phrase) {
+    return null;
+  }
+  const built = buildRawSkillUrl(phrase.sourceRaw, phrase.skillSlug);
+  if (!built.ok) {
+    return null;
+  }
+  return { source: built.source, skillSlug: built.skillSlug, url: built.url };
+}
+
+export function isSkillIntegrateApproval(text: string, recentContext: string): boolean {
+  const t = text.trim();
+  if (!t) {
+    return false;
+  }
+  if (!hasPendingSkillImportContext(recentContext)) {
+    return false;
+  }
+  if (
+    /\b(approve|integrate|open (the )?pr|create (the )?pr|go ahead|do it|proceed)\b/i.test(t)
+  ) {
+    return true;
+  }
+  return /^(yes|yeah|yep|sure|ok|okay|please)\b/i.test(t);
+}
+
+export function hasPendingSkillImportContext(recentContext: string): boolean {
+  return (
+    /Content hash:\s*[a-f0-9]{8,}/i.test(recentContext) &&
+    (/Proposed append-only section/i.test(recentContext) ||
+      /<!-- skill-import:[a-z0-9._-]+ -->/i.test(recentContext) ||
+      /Say (approve|integrate)/i.test(recentContext))
+  );
+}
+
+export function parsePendingSkillImport(recentContext: string): {
+  source: string;
+  skillSlug: string;
+  url: string;
+  hash: string;
+} | null {
+  const hashMatch = /Content hash:\s*([a-f0-9]{8,64})/i.exec(recentContext);
+  const urlMatch =
+    /Fetched from:\s*(https:\/\/raw\.githubusercontent\.com\/[^\s]+)/i.exec(recentContext) ||
+    /(https:\/\/raw\.githubusercontent\.com\/(?:obra\/superpowers|anthropics\/skills)\/[^\s]+SKILL\.md)/i.exec(
+      recentContext,
+    );
+  if (!hashMatch || !urlMatch) {
+    return null;
+  }
+
+  const url = urlMatch[1].trim();
+  const parsed = parseRawSkillUrl(url);
+  if (!parsed) {
+    return null;
+  }
+  return {
+    ...parsed,
+    url,
+    hash: hashMatch[1].toLowerCase(),
+  };
+}
+
+export function parseRawSkillUrl(url: string): { source: string; skillSlug: string } | null {
+  const obra = /^https:\/\/raw\.githubusercontent\.com\/obra\/superpowers\/[^/]+\/skills\/([^/]+)\/SKILL\.md$/i.exec(
+    url.trim(),
+  );
+  if (obra) {
+    return { source: 'obra/superpowers', skillSlug: normalizeSkillSlug(obra[1]) };
+  }
+  const anth = /^https:\/\/raw\.githubusercontent\.com\/anthropics\/skills\/[^/]+\/([^/]+)\/SKILL\.md$/i.exec(
+    url.trim(),
+  );
+  if (anth) {
+    return { source: 'anthropics/skills', skillSlug: normalizeSkillSlug(anth[1]) };
+  }
+  return null;
+}
+
+export function hashSkillContent(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex').slice(0, 12);
+}
+
+export function validateSkillMarkdown(text: string, expectedSlug?: string): SkillValidationResult {
+  const raw = text.trim();
+  if (!raw) {
+    return { ok: false, reason: 'Fetched content is empty.' };
+  }
+  if (raw.length < MIN_SKILL_CHARS) {
+    return {
+      ok: false,
+      reason: `Content too short (${raw.length} chars; need ≥ ${MIN_SKILL_CHARS}). Not a real SKILL.md.`,
+    };
+  }
+  if (
+    /<!DOCTYPE/i.test(raw) ||
+    /<html[\s>]/i.test(raw) ||
+    /skills\.sh/i.test(raw) ||
+    /<nav[\s>]/i.test(raw)
+  ) {
+    return {
+      ok: false,
+      reason: 'Content looks like HTML/navigation furniture, not a SKILL.md. Rejected.',
+    };
+  }
+  if (!/^---\r?\n/.test(raw)) {
+    return { ok: false, reason: 'Missing YAML frontmatter (expected to start with ---).' };
+  }
+
+  const fmEnd = raw.indexOf('\n---', 3);
+  if (fmEnd < 0 || fmEnd > 2048) {
+    return { ok: false, reason: 'YAML frontmatter is missing a closing --- within the first 2KB.' };
+  }
+
+  const frontmatter = raw.slice(3, fmEnd).trim();
+  const body = raw.slice(fmEnd + 4).replace(/^\r?\n/, '');
+  const name = extractFrontmatterField(frontmatter, 'name');
+  const description = extractFrontmatterField(frontmatter, 'description');
+  if (!name) {
+    return { ok: false, reason: 'Frontmatter missing non-empty name: field.' };
+  }
+  if (!description) {
+    return { ok: false, reason: 'Frontmatter missing non-empty description: field.' };
+  }
+
+  const hasHeading = /^#\s+/m.test(body);
+  const longParagraph = body
+    .split(/\n\s*\n/)
+    .some((p) => p.replace(/\s+/g, ' ').trim().length >= 80);
+  if (!hasHeading && !longParagraph) {
+    return {
+      ok: false,
+      reason: 'Body has no markdown heading and no substantive paragraph (≥80 chars).',
+    };
+  }
+
+  if (expectedSlug) {
+    const expected = normalizeSkillSlug(expectedSlug);
+    const actual = normalizeSkillSlug(name);
+    if (expected && actual && expected !== actual) {
+      return {
+        ok: false,
+        reason: `Frontmatter name "${name}" does not match requested skill slug "${expectedSlug}".`,
+      };
+    }
+  }
+
+  return { ok: true, skill: { name, description, body, raw } };
+}
+
+function extractFrontmatterField(frontmatter: string, field: string): string {
+  const re = new RegExp(`^${field}:\\s*(.+)$`, 'im');
+  const match = re.exec(frontmatter);
+  if (!match) {
+    return '';
+  }
+  return match[1].trim().replace(/^['"]|['"]$/g, '');
+}
+
+export function extractTopBullets(body: string, n = TOP_BULLET_COUNT): string[] {
+  const bullets: string[] = [];
+  for (const line of body.split(/\r?\n/)) {
+    const match = /^\s*(?:[-*]|\d+\.)\s+(.+)$/.exec(line);
+    if (!match) {
+      continue;
+    }
+    const text = match[1].trim();
+    if (text.length < 3) {
+      continue;
+    }
+    bullets.push(text);
+    if (bullets.length >= n) {
+      break;
+    }
+  }
+  return bullets;
+}
+
+export function skillImportMarker(slug: string): string {
+  return `<!-- skill-import:${normalizeSkillSlug(slug)} -->`;
+}
+
+export function buildPersonalityAppendSection(input: {
+  name: string;
+  description: string;
+  bullets: string[];
+  slug?: string;
+}): string {
+  const slug = normalizeSkillSlug(input.slug ?? input.name);
+  const title = humanizeSkillTitle(input.name);
+  const lines = [
+    skillImportMarker(slug),
+    `${title} — ${input.description}:`,
+  ];
+  if (input.bullets.length) {
+    for (const bullet of input.bullets) {
+      lines.push(`- ${bullet}`);
+    }
+  } else {
+    lines.push(`- Follow the ${title} practice when its trigger conditions apply.`);
+  }
+  return lines.join('\n');
+}
+
+function humanizeSkillTitle(name: string): string {
+  return name
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim();
+}
+
+export function appendPersonalitySection(
+  currentFile: string,
+  section: string,
+  slug: string,
+): { content: string; alreadyPresent: boolean } {
+  const marker = skillImportMarker(slug);
+  if (currentFile.includes(marker)) {
+    return { content: currentFile, alreadyPresent: true };
+  }
+
+  const closeIdx = currentFile.lastIndexOf('`;');
+  if (closeIdx === -1) {
+    return {
+      content: `${currentFile.trimEnd()}\n\n${section}\n`,
+      alreadyPresent: false,
+    };
+  }
+
+  const before = currentFile.slice(0, closeIdx);
+  const after = currentFile.slice(closeIdx);
+  const spacer = before.endsWith('\n') ? '\n' : '\n\n';
+  return {
+    content: `${before}${spacer}${section}${after}`,
+    alreadyPresent: false,
+  };
+}
+
+export function stripInspectFileOutput(output: string, path = PERSONALITY_PATH): string {
+  let text = output.trim();
+  if (text.startsWith('Error:') || text.startsWith('Inspect error:')) {
+    return text;
+  }
+  const header = `=== ${path} ===\n`;
+  if (text.startsWith(header)) {
+    text = text.slice(header.length);
+  }
+  return text;
+}
+
+export function buildSkillImportSuccessReply(input: {
+  url: string;
+  hash: string;
+  skill: ValidatedSkill;
+  proposedSection: string;
+}): string {
+  const excerpt =
+    input.skill.raw.length > BODY_EXCERPT_CHARS
+      ? `${input.skill.raw.slice(0, BODY_EXCERPT_CHARS)}\n…[truncated]`
+      : input.skill.raw;
+
+  return [
+    'Skill import ready for review (nothing written yet).',
+    '',
+    `Fetched from: ${input.url}`,
+    `Content hash: ${input.hash}`,
+    `name: ${input.skill.name}`,
+    `description: ${input.skill.description}`,
+    '',
+    '--- SKILL.md excerpt ---',
+    excerpt,
+    '--- end excerpt ---',
+    '',
+    'Proposed append-only section for backend/src/orchestrator/personality.ts:',
+    input.proposedSection,
+    '',
+    'Say approve (or integrate) to write this section and open a pull request.',
+  ].join('\n');
+}
+
+export function buildSkillImportFailureReply(reason: string): string {
+  return `Skill import failed: ${reason}`;
+}
+
+export function buildSkillIntegrateFailureReply(reason: string): string {
+  return `Skill integrate failed: ${reason}`;
+}
+
+export function buildSkillIntegrateAlreadyPresentReply(slug: string): string {
+  return `Skill integrate skipped: <!-- skill-import:${normalizeSkillSlug(slug)} --> is already in personality.ts. No pull request opened.`;
+}
+
+export function buildSkillIntegrateSuccessReply(prOutput: string): string {
+  const firstLine = prOutput.split('\n').map((l) => l.trim()).find(Boolean) ?? prOutput.trim();
+  return `Done, sir. ${firstLine}`;
+}
