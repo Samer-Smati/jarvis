@@ -112,7 +112,11 @@ export class BrainPgStore {
     }
   }
 
-  async searchSimilar(query: string, limit = 5): Promise<Array<{ text: string; score: number }>> {
+  async searchSimilar(
+    query: string,
+    limit = 5,
+    options?: { excludeSourceTypes?: string[] },
+  ): Promise<Array<{ text: string; score: number }>> {
     if (!this.enabled()) {
       return [];
     }
@@ -123,9 +127,10 @@ export class BrainPgStore {
       return [];
     }
 
+    const exclude = options?.excludeSourceTypes?.filter(Boolean) ?? [];
     const queryVector = await this.embeddings.tryEmbed(query.slice(0, 1500));
     if (!queryVector?.length) {
-      return this.keywordFallback(query, limit);
+      return this.keywordFallback(query, limit, exclude);
     }
 
     try {
@@ -135,16 +140,17 @@ export class BrainPgStore {
         SELECT text, 1 - (embedding <=> $1::vector) AS score
         FROM memory_chunks
         WHERE embedding IS NOT NULL
+          AND (cardinality($3::text[]) = 0 OR NOT ("sourceType" = ANY($3::text[])))
         ORDER BY embedding <=> $1::vector
         LIMIT $2
         `,
-        [vectorLiteral, limit],
+        [vectorLiteral, limit, exclude],
       )) as Array<{ text: string; score: string }>;
 
       return rows.map((r) => ({ text: r.text, score: Number(r.score) }));
     } catch (error) {
       this.logger.warn(`pgvector search fallback: ${(error as Error).message}`);
-      return this.keywordFallback(query, limit);
+      return this.keywordFallback(query, limit, exclude);
     }
   }
 
@@ -243,13 +249,19 @@ export class BrainPgStore {
     ]);
   }
 
-  private async keywordFallback(query: string, limit: number): Promise<Array<{ text: string; score: number }>> {
+  private async keywordFallback(
+    query: string,
+    limit: number,
+    excludeSourceTypes: string[] = [],
+  ): Promise<Array<{ text: string; score: number }>> {
     const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
     if (!terms.length) {
       return [];
     }
+    const exclude = new Set(excludeSourceTypes);
     const rows = await this.chunks.find({ order: { createdAt: 'DESC' }, take: 50 });
     return rows
+      .filter((row) => !exclude.has(row.sourceType))
       .map((row) => {
         const lower = row.text.toLowerCase();
         let score = 0;

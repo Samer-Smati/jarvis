@@ -227,6 +227,32 @@ describe('about-user routing', () => {
     expect(text).not.toContain('Hugging Face');
   });
 
+  it('prioritizes stored preferences over turn-like memory hits', () => {
+    const text = buildAboutUserReply({
+      userPage: null,
+      preferences: ['user.name: Samer Smati', 'user.role: full-stack developer'],
+      facts: [
+        'User: My name is Samer Smati\nJARVIS: Fact stored.',
+        'user.region: GCC/MENA (Dubai)',
+      ],
+    });
+    expect(text).toContain('user.name: Samer Smati');
+    expect(text).toContain('user.role: full-stack developer');
+    expect(text).not.toContain('JARVIS:');
+    expect(text).not.toMatch(/^From memory/i);
+  });
+
+  it('ignores conversation-turn echoes when building from facts only', () => {
+    const text = buildAboutUserReply({
+      userPage: null,
+      facts: [
+        'User: What do you know about me?\nJARVIS: From memory, sir: User: My name is Samer',
+      ],
+    });
+    expect(text).not.toContain('From memory, sir: User:');
+    expect(text).toMatch(/don't have structured facts/i);
+  });
+
   it('filters non-profile vault hits when no user entity page exists', () => {
     expect(
       isUserProfileVaultHit({

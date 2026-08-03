@@ -1703,11 +1703,18 @@ export class OrchestratorService {
     const query = userPage
       ? { hits: [] as Array<{ title: string; path: string; excerpt: string; score: number }> }
       : await this.brain.query('user profile samer owner engineer', 5);
-    const facts = await this.memory.recallFacts('user profile samer');
+    const [prefs, facts] = await Promise.all([
+      this.memory.listPreferences(),
+      this.memory.recallFacts('user profile samer'),
+    ]);
+    const preferences = prefs
+      .filter((p) => p.key?.startsWith('user.'))
+      .map((p) => `${p.key}: ${p.value}`);
 
     const finalText = buildAboutUserReply({
       userPage,
       queryHits: query.hits,
+      preferences,
       facts,
     });
     if (!finalText) {

@@ -13,7 +13,7 @@ import { UserProjectEntity } from './entities/user-project.entity';
 import { MemoryRepository } from './memory.repository';
 import { CreateProjectInput, MemoryContextBlock, RememberTypedInput } from './memory.types';
 import { LessonsService } from '../lessons/lessons.service';
-import { filterStaleMemoryHits } from './memory-hit-filter.util';
+import { filterFactMemoryHits, filterStaleMemoryHits } from './memory-hit-filter.util';
 
 export interface RememberFactResult {
   preferenceRows: Array<{ id: string; key: string; value: string }>;
@@ -276,9 +276,12 @@ export class MemoryService {
     const filterForgotten = (items: string[]) =>
       items.filter((t) => !forgotten.has(t.trim().toLowerCase()));
 
-    const pgHits = await this.brainPg.searchSimilar(query, limit);
+    // Never treat indexed chat turns as durable "facts" (causes about-me echo bugs).
+    const pgHits = await this.brainPg.searchSimilar(query, limit, {
+      excludeSourceTypes: ['turn'],
+    });
     if (pgHits.length) {
-      return filterForgotten(filterStaleMemoryHits(pgHits.map((h) => h.text.slice(0, 320))));
+      return filterForgotten(filterFactMemoryHits(pgHits.map((h) => h.text.slice(0, 320))));
     }
 
     const all = await this.semantic.find({ where: { forgottenAt: IsNull() } });

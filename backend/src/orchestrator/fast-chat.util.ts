@@ -8,6 +8,7 @@ import {
   isBrainUiDenyRequest,
   isMetaComplaintForFiling,
 } from '../brain/brain-ops.util';
+import { isConversationTurnHit } from '../memory/memory-hit-filter.util';
 
 /** Short greetings / acks — skip tool definitions on serverless for faster first token. */
 export {
@@ -158,11 +159,20 @@ export function isUserProfileVaultHit(hit: {
 export function buildAboutUserReply(input: {
   userPage?: { title: string; content: string } | null;
   queryHits?: Array<{ title: string; path?: string; excerpt: string }>;
+  preferences?: string[];
   facts?: string[];
 }): string | null {
   if (input.userPage) {
     const snippet = input.userPage.content.replace(/^#.+$/m, '').trim().slice(0, 420);
     return `From my brain, sir: I have your profile page "${input.userPage.title}" linked in the knowledge graph. ${snippet}`;
+  }
+
+  const prefs = (input.preferences ?? []).map((p) => p.trim()).filter(Boolean);
+  if (prefs.length) {
+    return `From your stored preferences, sir:\n${prefs
+      .slice(0, 10)
+      .map((p) => `- ${p}`)
+      .join('\n')}`;
   }
 
   const profileHits = (input.queryHits ?? []).filter(isUserProfileVaultHit);
@@ -173,8 +183,9 @@ export function buildAboutUserReply(input: {
       .join(' ')}`;
   }
 
-  if (input.facts?.length) {
-    return `From memory, sir: ${input.facts.slice(0, 4).join(' ')}`;
+  const facts = (input.facts ?? []).filter((f) => !isConversationTurnHit(f));
+  if (facts.length) {
+    return `From memory, sir: ${facts.slice(0, 4).join(' ')}`;
   }
 
   if ((input.queryHits ?? []).length) {
@@ -184,7 +195,10 @@ export function buildAboutUserReply(input: {
     );
   }
 
-  return null;
+  return (
+    "Sir, I don't have structured facts about you stored yet. " +
+    'Tell me your name, role, and preferences and I will remember them with remember_fact.'
+  );
 }
 
 export function isLinkProfileRequest(text: string): boolean {

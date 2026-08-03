@@ -16,6 +16,17 @@ export function isStaleFastPathBoilerplate(text: string): boolean {
   return STALE_FAST_PATH_PATTERNS.some((pattern) => pattern.test(jarvisLine));
 }
 
+/** Indexed chat turns look like `User: …\nJARVIS: …` — not durable facts. */
+export function isConversationTurnHit(text: string): boolean {
+  const trimmed = text.trim();
+  return /^User:\s/im.test(trimmed) && /\nJARVIS:\s/i.test(trimmed);
+}
+
 export function filterStaleMemoryHits(hits: string[]): string[] {
   return hits.filter((hit) => !isStaleFastPathBoilerplate(hit));
+}
+
+/** For recallFacts / about-me: drop boilerplate and raw turn transcripts. */
+export function filterFactMemoryHits(hits: string[]): string[] {
+  return hits.filter((hit) => !isStaleFastPathBoilerplate(hit) && !isConversationTurnHit(hit));
 }
