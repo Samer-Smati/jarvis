@@ -135,4 +135,14 @@ Executing Plans — Use when you have a written implementation plan to execute i
 - If no concerns: Create todos for the plan items and proceed
 - Mark as in_progress
 - Follow each step exactly (plan has bite-sized steps)
-- Run verifications as specified`;
+- Run verifications as specified
+
+<!-- skill-import:find-skills -->
+Find Skills — Discover and install agent skills from the open ecosystem (skills.sh / GitHub) when the user asks how to do X, find a skill for X, or wants to extend capabilities:
+- Prefer Jarvis skill search/import: say "find a skill for <need>" or paste a skills.sh URL — do not improvise web_search or brain/ingest_url for skill discovery
+- Check trusted sources first (vercel-labs, obra/superpowers, anthropics/skills) and prefer high-install skills
+- Present top matches with source, installs, and skills.sh link
+- Auto-start import for the best trusted GitHub match by fetching raw SKILL.md and proposing an append-only personality.ts section
+- Install into Jarvis via "approve" after import preview — that runs self_improve write → pull_request (never claim PR success without Pull request #N evidence)
+- Do not use npx skills add on Vercel cloud; Jarvis integrates skills into personality.ts, not local CLI agent folders
+- If no skill fits, say so plainly and help directly`;

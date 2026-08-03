@@ -61,6 +61,13 @@ import {
   stripInspectFileOutput,
   validateSkillMarkdown,
 } from './skill-import.util';
+import {
+  buildSkillFindListReply,
+  extractSkillFindQuery,
+  findSkillsForQuery,
+  isSkillFindRequest,
+  pickBestImportableSkill,
+} from './skills-find.util';
 import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isBrainPlanOnlyRequest, isBrainOpsMetaQuestion, isBrainOpsPauseRequest, isBrainOpsResumeRequest, isBrainMutatingAction, BRAIN_OPS_BLOCKED_MESSAGE, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, buildAboutUserReply, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery, isWebSearchMetaQuestion, isCodeArchitectureQuestion, isPlanOnlyRequest, prefersStructuredMemoryOverBrain } from './fast-chat.util';
 import {
   buildWebSearchUnavailableMessage,
@@ -181,6 +188,13 @@ export class OrchestratorService {
 
       if (isSkillImportRequest(userText) && !images?.length) {
         const handled = await this.runSkillImport(conversationId, userText, emitter, trigger);
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isSkillFindRequest(userText) && !images?.length) {
+        const handled = await this.runSkillFind(conversationId, userText, emitter, trigger);
         if (handled) {
           return;
         }
@@ -1029,44 +1043,114 @@ export class OrchestratorService {
       return false;
     }
 
-    const built = buildRawSkillUrl(phrase.sourceRaw, phrase.skillSlug);
-    if (!built.ok) {
-      const finalText = buildSkillImportFailureReply(built.reason);
-      await this.memory.appendMessage(conversationId, 'assistant', finalText);
-      void this.memory.logEvent(trigger, `Skill import failed: ${built.reason.slice(0, 120)}`);
+    const result = await this.fetchAndPreviewSkillImport(
+      phrase.sourceRaw,
+      phrase.skillSlug,
+      emitter,
+    );
+    const finalText = result.ok
+      ? result.reply
+      : buildSkillImportFailureReply(result.reason);
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    void this.memory.logEvent(
+      trigger,
+      result.ok
+        ? `Skill import ready: ${phrase.skillSlug}`
+        : `Skill import failed: ${result.reason.slice(0, 120)}`,
+    );
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runSkillFind(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+  ): Promise<boolean> {
+    const query = extractSkillFindQuery(userText) || userText.trim();
+    emitter.onProgress?.({
+      stage: 'skill_find',
+      message: `Searching skills for "${query.slice(0, 60)}"…`,
+      percent: 25,
+    });
+
+    const found = await findSkillsForQuery(query);
+    const best = pickBestImportableSkill(found.hits);
+    const list = buildSkillFindListReply({
+      query,
+      hits: found.hits,
+      source: found.source,
+      notice: found.notice,
+      autoImport: best ? { slug: best.slug, source: best.source } : undefined,
+    });
+
+    if (!best) {
+      await this.memory.appendMessage(conversationId, 'assistant', list);
+      void this.memory.logEvent(trigger, `Skill find: no importable hit for ${query.slice(0, 80)}`);
       emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
-      emitter.onDone(finalText);
+      emitter.onDone(list);
       return true;
+    }
+
+    const preview = await this.fetchAndPreviewSkillImport(best.source, best.slug, emitter);
+    const finalText = preview.ok
+      ? `${list}\n\n${preview.reply}`
+      : `${list}\n\nAuto-import failed: ${preview.reason}`;
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    void this.memory.logEvent(
+      trigger,
+      preview.ok
+        ? `Skill find+import ready: ${best.slug} from ${best.source}`
+        : `Skill find ok, import failed: ${best.slug}`,
+    );
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async fetchAndPreviewSkillImport(
+    sourceRaw: string,
+    skillSlug: string,
+    emitter: OrchestratorEmitter,
+  ): Promise<{ ok: true; reply: string } | { ok: false; reason: string }> {
+    const built = buildRawSkillUrl(sourceRaw, skillSlug);
+    if (!built.ok) {
+      return { ok: false, reason: built.reason };
     }
 
     emitter.onProgress?.({
       stage: 'skill_import',
       message: `Fetching ${built.skillSlug}…`,
-      percent: 30,
+      percent: 40,
       detail: built.url,
     });
 
-    let fetchedText: string;
-    try {
-      const fetched = await this.webFetch.fetchRawText(built.url);
-      fetchedText = fetched.text;
-    } catch (error) {
-      const finalText = buildSkillImportFailureReply((error as Error).message);
-      await this.memory.appendMessage(conversationId, 'assistant', finalText);
-      void this.memory.logEvent(trigger, `Skill import fetch failed: ${built.skillSlug}`);
-      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
-      emitter.onDone(finalText);
-      return true;
+    let fetchedText = '';
+    let fetchedUrl = built.url;
+    const errors: string[] = [];
+    for (const url of built.urls) {
+      try {
+        const fetched = await this.webFetch.fetchRawText(url);
+        fetchedText = fetched.text;
+        fetchedUrl = url;
+        break;
+      } catch (error) {
+        errors.push(`${url} → ${(error as Error).message}`);
+      }
+    }
+    if (!fetchedText) {
+      return {
+        ok: false,
+        reason: errors.join(' | ') || `Could not fetch SKILL.md for ${built.source}/${built.skillSlug}`,
+      };
     }
 
     const validated = validateSkillMarkdown(fetchedText, built.skillSlug);
     if (!validated.ok) {
-      const finalText = buildSkillImportFailureReply(validated.reason);
-      await this.memory.appendMessage(conversationId, 'assistant', finalText);
-      void this.memory.logEvent(trigger, `Skill import invalid: ${built.skillSlug}`);
-      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
-      emitter.onDone(finalText);
-      return true;
+      return { ok: false, reason: validated.reason };
     }
 
     const hash = hashSkillContent(validated.skill.raw);
@@ -1077,17 +1161,15 @@ export class OrchestratorService {
       slug: built.skillSlug,
     });
 
-    const finalText = buildSkillImportSuccessReply({
-      url: built.url,
-      hash,
-      skill: validated.skill,
-      proposedSection,
-    });
-    await this.memory.appendMessage(conversationId, 'assistant', finalText);
-    void this.memory.logEvent(trigger, `Skill import ready: ${built.skillSlug}`);
-    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
-    emitter.onDone(finalText);
-    return true;
+    return {
+      ok: true,
+      reply: buildSkillImportSuccessReply({
+        url: fetchedUrl,
+        hash,
+        skill: validated.skill,
+        proposedSection,
+      }),
+    };
   }
 
   private async runSkillIntegrate(

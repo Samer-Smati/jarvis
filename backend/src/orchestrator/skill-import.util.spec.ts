@@ -12,6 +12,12 @@ import {
   skillImportMarker,
   validateSkillMarkdown,
 } from './skill-import.util';
+import {
+  extractSkillFindQuery,
+  isSkillFindRequest,
+  pickBestImportableSkill,
+  searchCuratedSkills,
+} from './skills-find.util';
 
 const GOOD_SKILL = `---
 name: executing-plans
@@ -54,12 +60,15 @@ describe('skill-import.util', () => {
   describe('buildRawSkillUrl', () => {
     it('resolves obra/superpowers and alias', () => {
       const a = buildRawSkillUrl('obra/superpowers', 'executing-plans');
-      expect(a).toEqual({
-        ok: true,
-        source: 'obra/superpowers',
-        skillSlug: 'executing-plans',
-        url: 'https://raw.githubusercontent.com/obra/superpowers/main/skills/executing-plans/SKILL.md',
-      });
+      expect(a.ok).toBe(true);
+      if (a.ok) {
+        expect(a.source).toBe('obra/superpowers');
+        expect(a.skillSlug).toBe('executing-plans');
+        expect(a.url).toBe(
+          'https://raw.githubusercontent.com/obra/superpowers/main/skills/executing-plans/SKILL.md',
+        );
+        expect(a.urls[0]).toBe(a.url);
+      }
       const b = buildRawSkillUrl('superpowers', 'executing-plans');
       expect(b.ok && b.url).toBe(
         'https://raw.githubusercontent.com/obra/superpowers/main/skills/executing-plans/SKILL.md',
@@ -68,20 +77,50 @@ describe('skill-import.util', () => {
 
     it('resolves anthropics/skills', () => {
       const r = buildRawSkillUrl('anthropics/skills', 'docx');
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.source).toBe('anthropics/skills');
+        expect(r.skillSlug).toBe('docx');
+        expect(r.url).toContain('anthropics/skills');
+        expect(r.url).toContain('docx/SKILL.md');
+      }
+    });
+
+    it('resolves vercel-labs/skills find-skills and skills.sh URLs', () => {
+      const r = buildRawSkillUrl('vercel-labs/skills', 'find-skills');
       expect(r).toEqual({
         ok: true,
-        source: 'anthropics/skills',
-        skillSlug: 'docx',
-        url: 'https://raw.githubusercontent.com/anthropics/skills/main/docx/SKILL.md',
+        source: 'vercel-labs/skills',
+        skillSlug: 'find-skills',
+        url: 'https://raw.githubusercontent.com/vercel-labs/skills/main/skills/find-skills/SKILL.md',
+        urls: ['https://raw.githubusercontent.com/vercel-labs/skills/main/skills/find-skills/SKILL.md'],
+      });
+      expect(isSkillImportRequest('https://www.skills.sh/vercel-labs/skills/find-skills')).toBe(true);
+      expect(parseSkillImportRequest('https://www.skills.sh/vercel-labs/skills/find-skills')).toEqual({
+        source: 'vercel-labs/skills',
+        skillSlug: 'find-skills',
+        url: 'https://raw.githubusercontent.com/vercel-labs/skills/main/skills/find-skills/SKILL.md',
       });
     });
 
-    it('rejects unknown sources', () => {
-      const r = buildRawSkillUrl('random/repo', 'foo');
+    it('rejects invalid sources', () => {
+      const r = buildRawSkillUrl('!!!', 'foo');
       expect(r.ok).toBe(false);
-      if (!r.ok) {
-        expect(r.reason).toMatch(/Unknown skill source/);
-      }
+    });
+  });
+
+  describe('skill find', () => {
+    it('matches find-skills style requests and extracts query', () => {
+      expect(isSkillFindRequest('find a skill for code review')).toBe(true);
+      expect(extractSkillFindQuery('find a skill for code review')).toBe('code review');
+    });
+
+    it('picks a trusted curated skill for auto-import', () => {
+      const hits = searchCuratedSkills('find skill discovery');
+      expect(hits.some((h) => h.slug === 'find-skills')).toBe(true);
+      const best = pickBestImportableSkill(hits);
+      expect(best?.source).toBe('vercel-labs/skills');
+      expect(best?.slug).toBe('find-skills');
     });
   });
 

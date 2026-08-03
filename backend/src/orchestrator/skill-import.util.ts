@@ -5,19 +5,6 @@ export const TOP_BULLET_COUNT = 8;
 export const BODY_EXCERPT_CHARS = 3000;
 export const PERSONALITY_PATH = 'backend/src/orchestrator/personality.ts';
 
-const SOURCE_ALIASES: Record<string, string> = {
-  superpowers: 'obra/superpowers',
-  'obra/superpowers': 'obra/superpowers',
-  'anthropics/skills': 'anthropics/skills',
-};
-
-const RAW_URL_TEMPLATES: Record<string, (slug: string) => string> = {
-  'obra/superpowers': (slug) =>
-    `https://raw.githubusercontent.com/obra/superpowers/main/skills/${slug}/SKILL.md`,
-  'anthropics/skills': (slug) =>
-    `https://raw.githubusercontent.com/anthropics/skills/main/${slug}/SKILL.md`,
-};
-
 export interface SkillImportRef {
   source: string;
   skillSlug: string;
@@ -45,38 +32,113 @@ export function normalizeSkillSlug(raw: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
+const SOURCE_ALIASES: Record<string, string> = {
+  superpowers: 'obra/superpowers',
+  'obra/superpowers': 'obra/superpowers',
+  'anthropics/skills': 'anthropics/skills',
+  'vercel-labs/skills': 'vercel-labs/skills',
+  'vercel-labs/agent-skills': 'vercel-labs/agent-skills',
+  'vercel-labs': 'vercel-labs/skills',
+};
+
+const RAW_URL_TEMPLATES: Record<string, (slug: string) => string[]> = {
+  'obra/superpowers': (slug) => [
+    `https://raw.githubusercontent.com/obra/superpowers/main/skills/${slug}/SKILL.md`,
+  ],
+  'anthropics/skills': (slug) => [
+    `https://raw.githubusercontent.com/anthropics/skills/main/${slug}/SKILL.md`,
+    `https://raw.githubusercontent.com/anthropics/skills/main/skills/${slug}/SKILL.md`,
+  ],
+  'vercel-labs/skills': (slug) => [
+    `https://raw.githubusercontent.com/vercel-labs/skills/main/skills/${slug}/SKILL.md`,
+  ],
+  'vercel-labs/agent-skills': (slug) => [
+    `https://raw.githubusercontent.com/vercel-labs/agent-skills/main/skills/${slug}/SKILL.md`,
+    `https://raw.githubusercontent.com/vercel-labs/agent-skills/main/${slug}/SKILL.md`,
+  ],
+};
+
+const GITHUB_SOURCE_RE = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
+
 export function resolveKnownSource(raw: string): string | null {
-  const key = raw.trim().toLowerCase().replace(/^https?:\/\/github\.com\//, '');
+  const key = raw
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\/(www\.)?(github\.com|skills\.sh)\//, '')
+    .replace(/\/$/, '');
   if (SOURCE_ALIASES[key]) {
     return SOURCE_ALIASES[key];
   }
   if (RAW_URL_TEMPLATES[key]) {
     return key;
   }
+  // owner/repo or owner/repo/skill-slug from skills.sh
+  const parts = key.split('/').filter(Boolean);
+  if (parts.length >= 2 && GITHUB_SOURCE_RE.test(`${parts[0]}/${parts[1]}`)) {
+    return `${parts[0]}/${parts[1]}`;
+  }
   return null;
+}
+
+export function candidateRawSkillUrls(source: string, skillSlug: string): string[] {
+  const resolved = resolveKnownSource(source);
+  if (!resolved) {
+    return [];
+  }
+  const slug = normalizeSkillSlug(skillSlug);
+  if (!slug) {
+    return [];
+  }
+  const known = RAW_URL_TEMPLATES[resolved];
+  if (known) {
+    return known(slug);
+  }
+  // Generic GitHub skill layouts used across the ecosystem
+  return [
+    `https://raw.githubusercontent.com/${resolved}/main/skills/${slug}/SKILL.md`,
+    `https://raw.githubusercontent.com/${resolved}/main/${slug}/SKILL.md`,
+  ];
 }
 
 export function buildRawSkillUrl(
   source: string,
   skillSlug: string,
-): { ok: true; source: string; skillSlug: string; url: string } | { ok: false; reason: string } {
+): { ok: true; source: string; skillSlug: string; url: string; urls: string[] } | { ok: false; reason: string } {
   const resolved = resolveKnownSource(source);
   if (!resolved) {
     return {
       ok: false,
-      reason: `Unknown skill source "${source}". Allowed: obra/superpowers, anthropics/skills (alias: superpowers).`,
+      reason: `Unknown skill source "${source}". Use owner/repo (e.g. vercel-labs/skills, obra/superpowers, anthropics/skills).`,
     };
   }
   const slug = normalizeSkillSlug(skillSlug);
   if (!slug) {
     return { ok: false, reason: 'Skill slug is empty or invalid.' };
   }
-  const template = RAW_URL_TEMPLATES[resolved];
-  return { ok: true, source: resolved, skillSlug: slug, url: template(slug) };
+  const urls = candidateRawSkillUrls(resolved, slug);
+  if (!urls.length) {
+    return { ok: false, reason: `No raw URL candidates for ${resolved}/${slug}.` };
+  }
+  return { ok: true, source: resolved, skillSlug: slug, url: urls[0], urls };
+}
+
+/** Parse https://skills.sh/owner/repo/skill-slug or www variant. */
+export function parseSkillsShUrl(text: string): { source: string; skillSlug: string } | null {
+  const match =
+    /https?:\/\/(?:www\.)?skills\.sh\/([a-z0-9_.-]+)\/([a-z0-9_.-]+)\/([a-z0-9_.-]+)/i.exec(
+      text.trim(),
+    );
+  if (!match) {
+    return null;
+  }
+  return {
+    source: `${match[1]}/${match[2]}`,
+    skillSlug: normalizeSkillSlug(match[3]),
+  };
 }
 
 export function isSkillImportRequest(text: string): boolean {
-  return matchSkillImportPhrase(text) !== null;
+  return matchSkillImportPhrase(text) !== null || parseSkillsShUrl(text) !== null;
 }
 
 const SKILL_SLUG_TOKEN = String.raw`["'\`]?([a-z0-9][a-z0-9._/-]*)["'\`]?`;
@@ -84,6 +146,11 @@ const SOURCE_TOKEN = String.raw`([a-z0-9][a-z0-9._/-]*)`;
 
 /** Phrase match only — source may still be unknown (caller reports via buildRawSkillUrl). */
 export function matchSkillImportPhrase(text: string): { skillSlug: string; sourceRaw: string } | null {
+  const fromSkillsSh = parseSkillsShUrl(text);
+  if (fromSkillsSh) {
+    return { skillSlug: fromSkillsSh.skillSlug, sourceRaw: fromSkillsSh.source };
+  }
+
   const t = text.trim();
   if (!t) {
     return null;
@@ -169,7 +236,7 @@ export function parsePendingSkillImport(recentContext: string): {
   ];
   const fallbackUrls = [
     ...recentContext.matchAll(
-      /(https:\/\/raw\.githubusercontent\.com\/(?:obra\/superpowers|anthropics\/skills)\/[^\s]+SKILL\.md)/gi,
+      /(https:\/\/raw\.githubusercontent\.com\/[^\s]+SKILL\.md)/gi,
     ),
   ];
   const urlMatches = urls.length ? urls : fallbackUrls;
@@ -191,17 +258,26 @@ export function parsePendingSkillImport(recentContext: string): {
 }
 
 export function parseRawSkillUrl(url: string): { source: string; skillSlug: string } | null {
-  const obra = /^https:\/\/raw\.githubusercontent\.com\/obra\/superpowers\/[^/]+\/skills\/([^/]+)\/SKILL\.md$/i.exec(
-    url.trim(),
-  );
-  if (obra) {
-    return { source: 'obra/superpowers', skillSlug: normalizeSkillSlug(obra[1]) };
+  const trimmed = url.trim();
+  const skillsLayout =
+    /^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/[^/]+\/skills\/([^/]+)\/SKILL\.md$/i.exec(
+      trimmed,
+    );
+  if (skillsLayout) {
+    return {
+      source: `${skillsLayout[1]}/${skillsLayout[2]}`.toLowerCase(),
+      skillSlug: normalizeSkillSlug(skillsLayout[3]),
+    };
   }
-  const anth = /^https:\/\/raw\.githubusercontent\.com\/anthropics\/skills\/[^/]+\/([^/]+)\/SKILL\.md$/i.exec(
-    url.trim(),
-  );
-  if (anth) {
-    return { source: 'anthropics/skills', skillSlug: normalizeSkillSlug(anth[1]) };
+  const rootLayout =
+    /^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/[^/]+\/([^/]+)\/SKILL\.md$/i.exec(
+      trimmed,
+    );
+  if (rootLayout) {
+    return {
+      source: `${rootLayout[1]}/${rootLayout[2]}`.toLowerCase(),
+      skillSlug: normalizeSkillSlug(rootLayout[3]),
+    };
   }
   return null;
 }
