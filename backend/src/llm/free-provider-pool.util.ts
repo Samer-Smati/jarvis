@@ -95,7 +95,7 @@ export function providerCooldownMs(message: string): number {
     return 30 * 60 * 1000;
   }
   if (isRateLimitError(message)) {
-    return (parseRetryAfterMs(message) ?? 60_000) + 500;
+    return Math.min((parseRetryAfterMs(message) ?? 60_000) + 500, 15_000);
   }
   if (isTransientProviderError(message)) {
     return 15_000;

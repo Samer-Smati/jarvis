@@ -2,9 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LlmChatOptions, LlmChatResult, LlmProvider } from './llm.types';
 import {
+  cappedRetryAfterMs,
   isModelNotFoundError,
   isRateLimitError,
-  parseRetryAfterMs,
   sleep,
   streamOpenAiChat,
 } from './openai-stream.util';
@@ -73,7 +73,7 @@ export class GeminiProvider implements LlmProvider {
             this.logger.warn(`Gemini model unavailable: ${model}`);
             break;
           }
-          const retryMs = parseRetryAfterMs(lastError);
+          const retryMs = cappedRetryAfterMs(lastError);
           if (retryMs != null && attempt < 2) {
             await sleep(retryMs + 200);
             continue;

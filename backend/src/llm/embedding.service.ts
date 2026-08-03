@@ -89,7 +89,7 @@ export class EmbeddingService {
         body: JSON.stringify({
           content: { parts: [{ text: text.slice(0, 8000) }] },
         }),
-        signal: AbortSignal.timeout(12_000),
+        signal: AbortSignal.timeout(4_000),
       },
     );
     if (!response.ok) {
