@@ -35,6 +35,7 @@ import {
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
+import { extractRememberFactText } from './remember-fact.util';
 import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isBrainPlanOnlyRequest, isBrainOpsMetaQuestion, isBrainOpsPauseRequest, isBrainOpsResumeRequest, isBrainMutatingAction, BRAIN_OPS_BLOCKED_MESSAGE, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, buildAboutUserReply, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery, isWebSearchMetaQuestion, isCodeArchitectureQuestion, isPlanOnlyRequest, prefersStructuredMemoryOverBrain } from './fast-chat.util';
 import {
   buildWebSearchUnavailableMessage,
@@ -47,11 +48,13 @@ const SERVERLESS_DEADLINE_MS = 285_000;
 
 const REMEMBER_FACT_TOOL: ToolDefinition = {
   name: 'remember_fact',
-  description: 'Store a lasting fact or preference about the user in long-term memory.',
+  description:
+    'Store a lasting fact or preference about the user in long-term memory. Always pass a non-empty "fact" string.',
   parameters: {
     type: 'object',
     properties: {
       fact: { type: 'string', description: 'The fact to remember, phrased as a full sentence.' },
+      text: { type: 'string', description: 'Alias for fact if the model uses text instead.' },
     },
     required: ['fact'],
   },
@@ -308,12 +311,16 @@ export class OrchestratorService {
         message: `Routing to ${taskRoute.task} (${routeLabel})…`,
       });
 
-      const memoryContext = await this.memory.buildContext(userText, taskRoute.task);
+      const memoryContextPromise = this.memory.buildContext(userText, taskRoute.task);
+      const brainContextPromise = this.brain.getContextBlock(userText);
+      const [memoryContext, brainContext] = await Promise.all([
+        memoryContextPromise,
+        brainContextPromise,
+      ]);
       if (memoryContext.lessonIds?.length) {
         void this.lessons.recordRetrieval(memoryContext.lessonIds);
       }
       const facts = memoryContext.facts;
-      const brainContext = await this.brain.getContextBlock(userText);
       const now = new Date().toLocaleString('en-GB', {
         dateStyle: 'full',
         timeStyle: 'short',
@@ -734,12 +741,26 @@ export class OrchestratorService {
     }
 
     if (call.name === REMEMBER_FACT_TOOL.name) {
-      const fact = String(call.arguments?.fact ?? '');
-      await this.memory.rememberFact(fact);
-      void this.brain.remember(fact.slice(0, 80), fact, 'fact');
-      await this.guardrails.audit(call.name, trigger, fact, 'success');
-      emitter.onToolEnd(call.name, 'Fact stored.', true);
-      return 'Fact stored in long-term memory and JARVIS brain wiki.';
+      const fact = extractRememberFactText(call.arguments);
+      if (!fact) {
+        const msg =
+          'Error: remember_fact needs a non-empty fact string (argument "fact"). Nothing was stored.';
+        emitter.onToolEnd(call.name, msg, false);
+        await this.guardrails.audit(call.name, trigger, JSON.stringify(call.arguments ?? {}), 'failure');
+        return msg;
+      }
+      try {
+        await this.memory.rememberFact(fact);
+        void this.brain.remember(fact.slice(0, 80), fact, 'fact');
+        await this.guardrails.audit(call.name, trigger, fact, 'success');
+        emitter.onToolEnd(call.name, 'Fact stored.', true);
+        return 'Fact stored in long-term memory and JARVIS brain wiki.';
+      } catch (error) {
+        const msg = `Error: could not store fact — ${(error as Error).message}`;
+        emitter.onToolEnd(call.name, msg, false);
+        await this.guardrails.audit(call.name, trigger, msg, 'failure');
+        return msg;
+      }
     }
 
     const skill = this.skills.get(call.name);

@@ -280,6 +280,41 @@ describe('OrchestratorService', () => {
     expect(memory.rememberFact).toHaveBeenCalledWith('User likes tea.');
   });
 
+  it('accepts remember_fact text alias and does not abort the turn on empty fact', async () => {
+    llmService.chatWithRoute
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: '1', name: 'remember_fact', arguments: { text: 'User works in AdTech.' } }],
+      })
+      .mockResolvedValueOnce({ content: 'Stored.', toolCalls: [] });
+
+    const emitter = emitterMock();
+    await buildService().handleUserMessage('c1', 'I work in AdTech', emitter);
+
+    expect(memory.rememberFact).toHaveBeenCalledWith('User works in AdTech.');
+    expect(emitter.onError).not.toHaveBeenCalled();
+    expect(emitter.onDone).toHaveBeenCalled();
+  });
+
+  it('soft-fails empty remember_fact instead of surfacing Memory text is required', async () => {
+    llmService.chatWithRoute
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: '1', name: 'remember_fact', arguments: {} }],
+      })
+      .mockResolvedValueOnce({ content: 'Understood.', toolCalls: [] });
+
+    const emitter = emitterMock();
+    await buildService().handleUserMessage('c1', 'hello', emitter);
+
+    expect(memory.rememberFact).not.toHaveBeenCalled();
+    expect(emitter.onError).not.toHaveBeenCalledWith(
+      'Memory text is required.',
+      expect.anything(),
+    );
+    expect(emitter.onDone).toHaveBeenCalled();
+  });
+
   it('reports an error when the LLM fails', async () => {
     llmService.chatWithRoute.mockRejectedValue(new Error('boom'));
 
