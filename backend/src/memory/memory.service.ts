@@ -15,6 +15,12 @@ import { CreateProjectInput, MemoryContextBlock, RememberTypedInput } from './me
 import { LessonsService } from '../lessons/lessons.service';
 import { filterStaleMemoryHits } from './memory-hit-filter.util';
 
+export interface RememberFactResult {
+  preferenceRows: Array<{ id: string; key: string; value: string }>;
+  semanticRows: Array<{ id: string; text: string; memoryType: string }>;
+  brainPath?: string;
+}
+
 const MAX_LLM_HISTORY =
   process.env.VERCEL || process.env.JARVIS_SERVERLESS === '1' ? 30 : 200;
 const MAX_CONTEXT_CHUNKS = 8;
@@ -114,8 +120,72 @@ export class MemoryService {
     return this.events.find({ order: { createdAt: 'DESC' }, take: limit });
   }
 
-  async rememberFact(text: string): Promise<void> {
-    await this.rememberTyped({ text, memoryType: 'fact', source: 'remember_fact' });
+  async rememberFact(text: string): Promise<RememberFactResult> {
+    return this.rememberFactDetailed({ text });
+  }
+
+  async rememberFactDetailed(input: {
+    text: string;
+    key?: string;
+    preferences?: Array<{ key: string; value: string }>;
+    source?: string;
+  }): Promise<RememberFactResult> {
+    const trimmed = input.text.trim();
+    if (!trimmed) {
+      throw new Error('Memory text is required.');
+    }
+
+    const source = input.source ?? 'remember_fact';
+    const preferenceWrites =
+      input.preferences?.length
+        ? input.preferences
+        : input.key
+          ? [{ key: input.key, value: trimmed }]
+          : [];
+
+    const preferenceRows: RememberFactResult['preferenceRows'] = [];
+    const semanticRows: RememberFactResult['semanticRows'] = [];
+
+    if (preferenceWrites.length) {
+      for (const pref of preferenceWrites) {
+        const prefRow = await this.repository.upsertPreference(
+          pref.key,
+          pref.value,
+          source,
+          true,
+        );
+        preferenceRows.push({ id: prefRow.id, key: prefRow.key, value: prefRow.value });
+        const vector = await this.embeddings.tryEmbed(`${pref.key}: ${pref.value}`);
+        const factRow = await this.repository.createFact(
+          {
+            text: `${pref.key}: ${pref.value}`,
+            memoryType: 'preference',
+            source,
+            key: pref.key,
+            pinned: true,
+          },
+          vector ? JSON.stringify(vector) : undefined,
+        );
+        semanticRows.push({ id: factRow.id, text: factRow.text, memoryType: factRow.memoryType });
+        void this.brainPg.indexChunk(`${pref.key}: ${pref.value}`, 'preference');
+      }
+      this.logger.log(
+        `Remembered ${preferenceWrites.length} preference(s) via remember_fact`,
+      );
+      return { preferenceRows, semanticRows };
+    }
+
+    const vector = await this.embeddings.tryEmbed(trimmed);
+    const row = await this.repository.createFact(
+      { text: trimmed, memoryType: 'fact', source },
+      vector ? JSON.stringify(vector) : undefined,
+    );
+    void this.brainPg.indexChunk(trimmed, 'fact');
+    this.logger.log(`Remembered fact: ${trimmed.slice(0, 80)}`);
+    return {
+      preferenceRows: [],
+      semanticRows: [{ id: row.id, text: row.text, memoryType: row.memoryType }],
+    };
   }
 
   async rememberTyped(input: RememberTypedInput): Promise<SemanticMemoryEntity | UserProjectEntity> {

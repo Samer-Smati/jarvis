@@ -58,6 +58,7 @@ describe('OrchestratorService', () => {
       | 'loadConversation'
       | 'buildContext'
       | 'rememberFact'
+      | 'rememberFactDetailed'
       | 'logEvent'
       | 'indexConversationTurn'
       | 'recallFacts'
@@ -113,14 +114,21 @@ describe('OrchestratorService', () => {
         lessons: [],
         lessonIds: [],
       }),
-      rememberFact: jest.fn().mockResolvedValue(undefined),
+      rememberFact: jest.fn().mockResolvedValue({
+        preferenceRows: [],
+        semanticRows: [{ id: 'sem-1', text: 'User likes tea.', memoryType: 'fact' }],
+      }),
+      rememberFactDetailed: jest.fn().mockResolvedValue({
+        preferenceRows: [],
+        semanticRows: [{ id: 'sem-1', text: 'User likes tea.', memoryType: 'fact' }],
+      }),
       logEvent: jest.fn().mockResolvedValue(undefined),
       indexConversationTurn: jest.fn().mockResolvedValue(undefined),
       recallFacts: jest.fn().mockResolvedValue([]),
     };
     brain = {
       getContextBlock: jest.fn().mockResolvedValue(''),
-      remember: jest.fn().mockResolvedValue(undefined),
+      remember: jest.fn().mockResolvedValue('facts/example.md'),
       learnFromTurn: jest.fn().mockResolvedValue(undefined),
       findUserEntityPage: jest.fn().mockResolvedValue(null),
       query: jest.fn().mockResolvedValue({ hot: '', hits: [] }),
@@ -267,7 +275,7 @@ describe('OrchestratorService', () => {
     expect(calendarSkill.execute).not.toHaveBeenCalled();
   });
 
-  it('stores facts via the built-in remember_fact tool', async () => {
+  it('stores facts via the built-in remember_fact tool without writing the brain vault', async () => {
     llmService.chatWithRoute
       .mockResolvedValueOnce({
         content: '',
@@ -277,7 +285,10 @@ describe('OrchestratorService', () => {
 
     await buildService().handleUserMessage('c1', 'I like tea', emitterMock());
 
-    expect(memory.rememberFact).toHaveBeenCalledWith('User likes tea.');
+    expect(memory.rememberFactDetailed).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'User likes tea.', source: 'remember_fact' }),
+    );
+    expect(brain.remember).not.toHaveBeenCalled();
   });
 
   it('accepts remember_fact text alias and does not abort the turn on empty fact', async () => {
@@ -291,7 +302,9 @@ describe('OrchestratorService', () => {
     const emitter = emitterMock();
     await buildService().handleUserMessage('c1', 'I work in AdTech', emitter);
 
-    expect(memory.rememberFact).toHaveBeenCalledWith('User works in AdTech.');
+    expect(memory.rememberFactDetailed).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'User works in AdTech.' }),
+    );
     expect(emitter.onError).not.toHaveBeenCalled();
     expect(emitter.onDone).toHaveBeenCalled();
   });
