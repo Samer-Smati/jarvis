@@ -124,4 +124,15 @@ Test Driven Development — Use when implementing any feature or bugfix, before 
 - Throwaway prototypes
 - Generated code
 - Configuration files
-- Don't keep it as "reference"`;
+- Don't keep it as "reference"
+
+<!-- skill-import:executing-plans -->
+Executing Plans — Use when you have a written implementation plan to execute in a separate session with review checkpoints:
+- Ensure an isolated workspace: use superpowers:using-git-worktrees to create one or verify the existing one
+- Read plan file
+- Review critically - identify any questions or concerns about the plan
+- If concerns: Raise them with your human partner before starting
+- If no concerns: Create todos for the plan items and proceed
+- Mark as in_progress
+- Follow each step exactly (plan has bite-sized steps)
+- Run verifications as specified`;
