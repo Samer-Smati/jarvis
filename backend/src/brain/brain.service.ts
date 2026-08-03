@@ -843,6 +843,21 @@ ${content}`;
     };
   }
 
+  /** Replace the vault with the seed wiki and persist (blob + disk + PG). */
+  async resetToNewborn(): Promise<{ pageCount: number; updatedAt: string }> {
+    const seeded = createSeedVault();
+    this.vault = seeded;
+    this.vaultIsEphemeralSeed = false;
+    this.vaultRepaired = true;
+    await this.persist(seeded);
+    await this.pgStore.syncVault(seeded);
+    this.logger.warn(`Brain reset to newborn seed (${Object.keys(seeded.pages).length} pages).`);
+    return {
+      pageCount: Object.keys(seeded.pages).length,
+      updatedAt: seeded.updatedAt,
+    };
+  }
+
   async pruneMetaFactPages(confirm: string): Promise<{ removed: string[]; kept: number }> {
     if (confirm !== BRAIN_PRUNE_META_CONFIRM_PHRASE) {
       throw new Error(`Refused — confirm must be exactly "${BRAIN_PRUNE_META_CONFIRM_PHRASE}".`);

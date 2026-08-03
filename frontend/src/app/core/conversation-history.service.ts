@@ -29,6 +29,37 @@ export class ConversationHistoryService {
     localStorage.setItem(this.storageKey(conversationId), JSON.stringify(trimmed));
   }
 
+  /** Remove every jarvis.conversation.* entry and related recap flags from this browser. */
+  clearAllLocal(): number {
+    let removed = 0;
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith('jarvis.conversation.')) {
+        keys.push(key);
+      }
+    }
+    for (const key of keys) {
+      localStorage.removeItem(key);
+      removed += 1;
+    }
+    try {
+      const sessionKeys: string[] = [];
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const key = sessionStorage.key(i);
+        if (key?.startsWith('jarvis.recapDone.')) {
+          sessionKeys.push(key);
+        }
+      }
+      for (const key of sessionKeys) {
+        sessionStorage.removeItem(key);
+      }
+    } catch {
+      /* ignore */
+    }
+    return removed;
+  }
+
   mergeApiAndLocal(api: StoredMessage[], local: PersistedMessage[]): PersistedMessage[] {
     const apiMapped = api
       .filter((m) => m.role === 'user' || m.role === 'assistant')

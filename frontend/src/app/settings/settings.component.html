@@ -143,4 +143,33 @@
     <p class="hint">Immediately halt any in-progress autonomous action.</p>
     <p-button label="Kill switch" icon="pi pi-power-off" severity="danger" (onClick)="killSwitch()"></p-button>
   </p-card>
+
+  <p-card header="Newborn reset" styleClass="danger-card">
+    <p class="hint">
+      Wipe <strong>all</strong> durable JARVIS memory: brain vault, conversations, facts, preferences,
+      projects, lessons, reminders, calendar entries, crypto portfolio, audit log, and device permission grants.
+      The brain is reseeded to a blank wiki. Voice and UI settings on this device are kept.
+    </p>
+    <p class="hint warn-hint">
+      This cannot be undone. Type <code>NEWBORN</code> to enable the reset.
+    </p>
+    <input
+      class="confirm-input"
+      type="text"
+      [(ngModel)]="factoryResetConfirm"
+      placeholder="Type NEWBORN"
+      autocomplete="off"
+      spellcheck="false"
+    />
+    <div class="reset-actions">
+      <p-button
+        label="Reset JARVIS to newborn"
+        icon="pi pi-trash"
+        severity="danger"
+        [disabled]="factoryResetConfirm.trim() !== 'NEWBORN' || factoryResetBusy"
+        [loading]="factoryResetBusy"
+        (onClick)="runFactoryReset()">
+      </p-button>
+    </div>
+  </p-card>
 </div>

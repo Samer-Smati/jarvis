@@ -100,3 +100,29 @@
 .skill-info strong {
   margin-right: 0.5rem;
 }
+
+.warn-hint {
+  color: var(--p-red-400, #f87171);
+}
+
+.confirm-input {
+  display: block;
+  width: 100%;
+  max-width: 22rem;
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--p-content-border-color);
+  background: var(--p-content-background);
+  color: var(--jarvis-text, inherit);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.06em;
+}
+
+.reset-actions {
+  margin-top: 1rem;
+}
+
+:host ::ng-deep .danger-card .p-card-title {
+  color: var(--p-red-400, #f87171);
+}
