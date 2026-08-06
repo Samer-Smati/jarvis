@@ -74,6 +74,8 @@ import {
   isFailedWebSearchOutput,
 } from '../skills/impl/web-search.util';
 import { WebFetchService } from '../integrations/web-fetch.service';
+import { classifyGraphTask, isComplexGraphTask } from './graph/graph-classifier.util';
+import { runComplexGraphTask } from './graph/graph-router';
 const MAX_TOOL_ITERATIONS = 8;
 const SERVERLESS_MAX_TOOL_ITERATIONS = 6;
 const SERVERLESS_DEADLINE_MS = 285_000;
@@ -373,6 +375,79 @@ export class OrchestratorService {
         if (handled) {
           return;
         }
+      }
+
+      if (!images?.length && isComplexGraphTask(userText)) {
+        const classification = classifyGraphTask(userText);
+        await this.guardrails.audit(
+          'graph_classify',
+          trigger,
+          JSON.stringify({
+            route: classification.route,
+            reason: classification.reason,
+            userText: userText.slice(0, 240),
+          }),
+          'success',
+        );
+        const deadlineAt = Date.now() + SERVERLESS_DEADLINE_MS;
+        const allTools = [...this.skills.toolDefinitions(), REMEMBER_FACT_TOOL];
+        const graphText = await runComplexGraphTask({
+          goal: userText,
+          conversationId,
+          trigger,
+          deadlineAt,
+          emitter,
+          allTools,
+          chat: (messages, tools) =>
+            this.llmService.chatWithRoute(userText, {
+              messages,
+              tools,
+              signal: abort.signal,
+            }),
+          executeToolCall: async (call) => {
+            toolsUsed.push(call.name);
+            const output = await this.executeToolCall(
+              conversationId,
+              call,
+              emitter,
+              trigger,
+              clientPlatform,
+            );
+            toolRecords.push({
+              toolName: call.name,
+              action: String(call.arguments?.action ?? ''),
+              output,
+            });
+            return output;
+          },
+          audit: (action, auditTrigger, detail, outcome) =>
+            this.guardrails.audit(action, auditTrigger, detail, outcome),
+        });
+        const finalText = sanitizeUserFacingAssistantText(graphText) || EMPTY_TURN_FALLBACK;
+        await this.memory.appendMessage(conversationId, 'assistant', finalText);
+        this.persistTurnLearning(userText, finalText);
+        void this.memory.logEvent(trigger, `Graph handled: ${userText.slice(0, 120)}`);
+        emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+        await this.finishTurn(conversationId, userText, finalText, emitter, {
+          taskRoute: 'graph',
+          toolsUsed,
+          latencyMs: Date.now() - turnStarted,
+        });
+        return;
+      }
+
+      const flatClassify = classifyGraphTask(userText);
+      if (flatClassify.partialComplexSignals) {
+        await this.guardrails.audit(
+          'graph_classify',
+          trigger,
+          JSON.stringify({
+            route: 'flat',
+            reason: flatClassify.reason,
+            userText: userText.slice(0, 240),
+          }),
+          'success',
+        );
       }
 
       const contextChars =
