@@ -1,6 +1,13 @@
 import type { ChatMessage, LlmChatResult, ToolCall, ToolDefinition } from '../../llm/llm.types';
 
-const MAX_NODE_ITERATIONS = 3;
+/** Total LLM turns per node. Last turn is reserved for JSON (no tools). */
+export const MAX_NODE_ITERATIONS = 5;
+
+export const FINAL_JSON_USER_PROMPT = [
+  'FINAL ITERATION: Do not call any tools.',
+  'Using only the tool evidence already in this conversation, respond with ONLY the required JSON object.',
+  'No prose, no markdown fences if you can avoid them — a single JSON object.',
+].join(' ');
 
 export function extractJsonObject(text: string): unknown | null {
   const raw = text.trim();
@@ -26,6 +33,7 @@ export interface GraphMiniLoopDeps {
   userPrompt: string;
   tools: ToolDefinition[];
   deadlineAt: number;
+  maxIterations?: number;
   chat: (messages: ChatMessage[], tools: ToolDefinition[]) => Promise<LlmChatResult>;
   runTool: (call: ToolCall) => Promise<{ output: string; stopNode?: boolean; stopReason?: string }>;
 }
@@ -38,13 +46,14 @@ export interface GraphMiniLoopResult {
 }
 
 export async function runGraphMiniLoop(deps: GraphMiniLoopDeps): Promise<GraphMiniLoopResult> {
+  const maxIterations = Math.max(2, deps.maxIterations ?? MAX_NODE_ITERATIONS);
   const messages: ChatMessage[] = [
     { role: 'system', content: deps.systemPrompt },
     { role: 'user', content: deps.userPrompt },
   ];
   let lastContent = '';
 
-  for (let i = 0; i < MAX_NODE_ITERATIONS; i++) {
+  for (let i = 0; i < maxIterations; i++) {
     if (Date.now() > deps.deadlineAt) {
       return {
         ok: false,
@@ -54,7 +63,13 @@ export async function runGraphMiniLoop(deps: GraphMiniLoopDeps): Promise<GraphMi
       };
     }
 
-    const result = await deps.chat(messages, deps.tools);
+    const isFinalIteration = i === maxIterations - 1;
+    if (isFinalIteration) {
+      messages.push({ role: 'user', content: FINAL_JSON_USER_PROMPT });
+    }
+
+    const turnTools = isFinalIteration ? [] : deps.tools;
+    const result = await deps.chat(messages, turnTools);
     lastContent = result.content || '';
 
     if (!result.toolCalls.length) {
@@ -62,12 +77,23 @@ export async function runGraphMiniLoop(deps: GraphMiniLoopDeps): Promise<GraphMi
       if (!parsed || typeof parsed !== 'object') {
         return {
           ok: false,
-          reason: 'Node failed: assistant did not return valid structured JSON.',
+          reason: isFinalIteration
+            ? 'Node failed on final iteration: assistant did not return valid structured JSON.'
+            : 'Node failed: assistant did not return valid structured JSON.',
           assistantText: lastContent,
           parsed: null,
         };
       }
       return { ok: true, assistantText: lastContent, parsed };
+    }
+
+    if (isFinalIteration) {
+      return {
+        ok: false,
+        reason: 'Node failed on final iteration: tools were requested instead of JSON.',
+        assistantText: lastContent,
+        parsed: null,
+      };
     }
 
     messages.push({
@@ -101,7 +127,7 @@ export async function runGraphMiniLoop(deps: GraphMiniLoopDeps): Promise<GraphMi
   }
   return {
     ok: false,
-    reason: `Node exhausted ${MAX_NODE_ITERATIONS} iterations without valid JSON.`,
+    reason: `Node exhausted ${maxIterations} iterations without valid JSON.`,
     assistantText: lastContent,
     parsed: null,
   };
