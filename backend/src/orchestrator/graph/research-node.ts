@@ -67,7 +67,8 @@ export async function runResearchNode(ctx: ResearchNodeContext): Promise<GraphNo
     'You are the RESEARCH node of a multi-agent graph.',
     'Use only read-only tools: web_search; brain query|get_page|graph; self_improve inspect|status|verify_responsive.',
     'Do NOT write code, open PRs, remember_fact, or mutate brain.',
-    'After gathering evidence, respond with ONLY a JSON object matching:',
+    'Batch related inspects when possible. Leave room to synthesize — when you have enough evidence, stop calling tools and return JSON.',
+    'When you receive a FINAL ITERATION message, you MUST NOT call tools; reply with ONLY a JSON object matching:',
     '{"summary":string,"filePaths":string[],"facts":string[],"evidenceSnippets":[{"source":string,"excerpt":string}],"openQuestions":string[]}',
     'filePaths must only include paths you actually inspected or saw in tool output.',
   ].join(' ');

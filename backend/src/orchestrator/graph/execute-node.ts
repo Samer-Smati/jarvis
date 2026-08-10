@@ -75,7 +75,7 @@ export async function runExecuteNode(ctx: ExecuteNodeContext): Promise<GraphNode
     'Act only on ResearchFindings — do not invent file paths or facts not listed there.',
     'Allowed tools: self_improve write|pull_request|run_checks|apply_preset|commit|inspect|status; remember_fact.',
     'If you need to inspect a path not in research.filePaths, set needsMoreResearch=true and list researchQuestions — do not invent.',
-    'After tools, respond with ONLY JSON:',
+    'When you receive a FINAL ITERATION message, you MUST NOT call tools; reply with ONLY JSON:',
     '{"actions":[{"tool":string,"action":string,"path"?:string,"ok":boolean,"outputExcerpt":string}],"claimedDone":boolean,"needsMoreResearch"?:boolean,"researchQuestions"?:string[]}',
     'Set claimedDone=true only when mutation tools succeeded for the goal.',
   ].join(' ');
