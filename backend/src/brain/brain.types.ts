@@ -8,6 +8,8 @@ export interface BrainPage {
   links: string[];
   createdAt: string;
   updatedAt: string;
+  /** Best-effort semantic embedding of title+content, for similarity search/linking. */
+  embedding?: number[];
 }
 
 export interface BrainVault {

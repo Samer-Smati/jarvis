@@ -6,11 +6,16 @@ import { BrainBlobStore } from './brain-blob.store';
 import { BrainPgStore } from './brain-pg.store';
 import { createSeedVault } from './brain.seed';
 import { BrainCategory, BrainGraph, BrainGraphEdge, BrainPage, BrainQueryHit, BrainVault } from './brain.types';
+import { cosineSimilarity, EmbeddingService } from '../llm/embedding.service';
 
 const HOT_MAX_CHARS = 2400;
 const LOG_MAX_LINES = 200;
 const JOURNAL_MAX_CHARS = 14000;
 const JARVIS_ENTITY_PATH = 'entities/jarvis.md';
+/** Cosine similarity above which a page is considered semantically relevant to a query. */
+const EMBEDDING_SEARCH_THRESHOLD = 0.35;
+/** Cosine similarity above which two pages are considered related enough to auto-link. */
+const EMBEDDING_LINK_THRESHOLD = 0.82;
 
 export interface IngestUrlResult {
   sourcePath: string;
@@ -27,13 +32,20 @@ export class BrainService implements OnModuleInit {
   private readonly vaultPath: string;
   private vault: BrainVault | null = null;
   private vaultRepaired = false;
+  private readonly pendingEmbeds = new Set<string>();
 
   constructor(
     config: ConfigService,
     private readonly pgStore: BrainPgStore,
+    private readonly embeddings: EmbeddingService,
   ) {
     const dataRoot = config.get<string>('DATA_ROOT') ?? join(process.cwd(), 'data');
     this.vaultPath = join(dataRoot, 'brain', 'vault.json');
+  }
+
+  /** Queue a page for best-effort embedding on the next persist(). */
+  private markForEmbedding(path: string): void {
+    this.pendingEmbeds.add(path);
   }
 
   async onModuleInit(): Promise<void> {
@@ -71,11 +83,18 @@ export class BrainService implements OnModuleInit {
 
   async getContextBlock(query: string): Promise<string> {
     const vault = await this.ensureLoaded();
-    const hits = this.searchPages(vault, query, 3);
+    const hits = await this.searchPages(vault, query, 3);
     const parts: string[] = [];
 
     if (vault.hot.trim()) {
       parts.push('## Hot cache (recent context)\n' + vault.hot.trim());
+    }
+
+    const userPage = this.findUserEntityPageSync();
+    if (userPage && !hits.some((h) => h.path === userPage.path)) {
+      parts.push(
+        `## Who the user is\n### ${userPage.title} (${userPage.path})\n${userPage.content.replace(/^#.+$/m, '').trim().slice(0, 500)}`,
+      );
     }
 
     const vectorHits = await this.pgStore.searchSimilar(query, 3);
@@ -102,7 +121,7 @@ export class BrainService implements OnModuleInit {
     const vault = await this.ensureLoaded();
     return {
       hot: vault.hot,
-      hits: this.searchPages(vault, text, limit),
+      hits: await this.searchPages(vault, text, limit),
     };
   }
 
@@ -134,6 +153,7 @@ export class BrainService implements OnModuleInit {
       this.linkPagesInVault(vault, path, JARVIS_ENTITY_PATH, true);
     }
 
+    this.markForEmbedding(path);
     this.rebuildIndex(vault);
     this.appendLog(vault, `remember: ${title} → ${path}`);
     await this.persist(vault);
@@ -162,6 +182,7 @@ ${content}`;
       updatedAt: now,
     };
 
+    this.markForEmbedding(path);
     this.rebuildIndex(vault);
     this.appendLog(vault, `ingest: ${title} (${content.length} chars)`);
     await this.persist(vault);
@@ -207,6 +228,8 @@ ${content}`;
     this.linkPagesInVault(vault, entityPath, JARVIS_ENTITY_PATH, true);
     this.linkPagesInVault(vault, sourcePath, entityPath, true);
 
+    this.markForEmbedding(entityPath);
+    this.markForEmbedding(sourcePath);
     this.rebuildIndex(vault);
     this.appendLog(vault, `ingest_url entity: ${entityTitle} ← ${url}`);
     await this.persist(vault);
@@ -584,6 +607,7 @@ ${content}`;
       if (!existing.links.includes(JARVIS_ENTITY_PATH)) {
         this.linkPagesInVault(vault, journalPath, JARVIS_ENTITY_PATH, true);
       }
+      this.markForEmbedding(journalPath);
       return;
     }
 
@@ -597,6 +621,7 @@ ${content}`;
       updatedAt: now,
     };
     this.linkPagesInVault(vault, journalPath, JARVIS_ENTITY_PATH, true);
+    this.markForEmbedding(journalPath);
   }
 
   private fileExtractedFacts(vault: BrainVault, user: string): void {
@@ -632,6 +657,7 @@ ${content}`;
     };
 
     this.linkPagesInVault(vault, path, JARVIS_ENTITY_PATH, true);
+    this.markForEmbedding(path);
   }
 
   private appendTopicLearning(vault: BrainVault, user: string, assistant: string, now: string): void {
@@ -652,6 +678,7 @@ ${content}`;
       if (vault.pages[journalPath] && !existing.links.includes(journalPath)) {
         this.linkPagesInVault(vault, path, journalPath, true);
       }
+      this.markForEmbedding(path);
       return;
     }
 
@@ -668,6 +695,7 @@ ${content}`;
     if (vault.pages[journalPath]) {
       this.linkPagesInVault(vault, path, journalPath, true);
     }
+    this.markForEmbedding(path);
   }
 
   async listPages(): Promise<BrainPage[]> {
@@ -835,6 +863,23 @@ ${content}`;
     vault.updatedAt = new Date().toISOString();
     this.vault = vault;
 
+    if (this.pendingEmbeds.size) {
+      const paths = [...this.pendingEmbeds];
+      this.pendingEmbeds.clear();
+      await Promise.all(
+        paths.map(async (path) => {
+          const page = vault.pages[path];
+          if (!page) {
+            return;
+          }
+          const embedding = await this.embeddings.tryEmbed(`${page.title}\n${page.content}`.slice(0, 2000));
+          if (embedding) {
+            page.embedding = embedding;
+          }
+        }),
+      );
+    }
+
     if (this.blob.enabled()) {
       await this.blob.save(vault);
     }
@@ -847,9 +892,10 @@ ${content}`;
     void this.pgStore.syncVault(vault);
   }
 
-  private searchPages(vault: BrainVault, query: string, limit: number): BrainQueryHit[] {
+  private async searchPages(vault: BrainVault, query: string, limit: number): Promise<BrainQueryHit[]> {
     const terms = tokenize(query);
-    if (!terms.length) {
+    const queryEmbedding = await this.embeddings.tryEmbed(query);
+    if (!terms.length && !queryEmbedding) {
       return [];
     }
 
@@ -862,6 +908,12 @@ ${content}`;
           score += term.length > 4 ? 2 : 1;
           const count = corpus.split(term).length - 1;
           score += Math.min(count, 3);
+        }
+      }
+      if (queryEmbedding && page.embedding) {
+        const similarity = cosineSimilarity(queryEmbedding, page.embedding);
+        if (similarity > EMBEDDING_SEARCH_THRESHOLD) {
+          score += similarity * 6;
         }
       }
       if (score > 0) {
@@ -1226,6 +1278,10 @@ function pagesAreRelated(
   tokensA: Set<string>,
   tokensB: Set<string>,
 ): boolean {
+  if (a.embedding && b.embedding && cosineSimilarity(a.embedding, b.embedding) > EMBEDDING_LINK_THRESHOLD) {
+    return true;
+  }
+
   if (sameTopicHub(a.title, b.title) || sameTopicHub(a.title, b.content) || sameTopicHub(b.title, a.content)) {
     return true;
   }

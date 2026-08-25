@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BrainPgStore } from '../brain/brain-pg.store';
-import { EmbeddingService } from '../llm/embedding.service';
+import { cosineSimilarity, EmbeddingService } from '../llm/embedding.service';
 import { ChatMessage } from '../llm/llm.types';
 import { ConversationBlobStore } from './conversation-blob.store';
 import { ConversationMessageEntity } from './entities/conversation-message.entity';
@@ -12,6 +12,10 @@ import { SemanticMemoryEntity } from './entities/semantic-memory.entity';
 /** Max messages sent to the LLM per turn (full history stays in storage). */
 const MAX_LLM_HISTORY =
   process.env.VERCEL || process.env.JARVIS_SERVERLESS === '1' ? 30 : 200;
+
+/** Cosine similarity above which a new fact is treated as a near-duplicate of an existing one. */
+const FACT_DEDUP_THRESHOLD = 0.92;
+const FACT_DEDUP_SCAN_LIMIT = 50;
 
 @Injectable()
 export class MemoryService {
@@ -110,11 +114,25 @@ export class MemoryService {
 
   async rememberFact(text: string): Promise<void> {
     const vector = await this.embeddings.tryEmbed(text);
+    if (vector && (await this.isDuplicateFact(vector))) {
+      this.logger.log(`Skipped near-duplicate fact: ${text}`);
+      return;
+    }
     await this.semantic.save(
       this.semantic.create({ text, embedding: vector ? JSON.stringify(vector) : undefined }),
     );
     void this.brainPg.indexChunk(text, 'fact');
     this.logger.log(`Remembered fact: ${text}`);
+  }
+
+  private async isDuplicateFact(vector: number[]): Promise<boolean> {
+    const recent = await this.semantic.find({
+      order: { createdAt: 'DESC' },
+      take: FACT_DEDUP_SCAN_LIMIT,
+    });
+    return recent.some(
+      (f) => f.embedding && cosineSimilarity(vector, JSON.parse(f.embedding) as number[]) > FACT_DEDUP_THRESHOLD,
+    );
   }
 
   async recallFacts(query: string, limit = 5): Promise<string[]> {
@@ -154,20 +172,4 @@ function formatMessageTimestamp(date: Date): string {
     hour: '2-digit',
     minute: '2-digit',
   });
-}
-
-function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length) {
-    return 0;
-  }
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  const denominator = Math.sqrt(normA) * Math.sqrt(normB);
-  return denominator === 0 ? 0 : dot / denominator;
 }
