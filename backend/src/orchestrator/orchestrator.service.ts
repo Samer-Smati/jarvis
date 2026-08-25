@@ -4,8 +4,9 @@ import { GuardrailService } from '../guardrails/guardrail.service';
 import type { ChatMessage, LlmProvider, ToolCall, ToolDefinition, ChatImagePart } from '../llm/llm.types';
 import { LLM_PROVIDER } from '../llm/llm.types';
 import { MemoryService } from '../memory/memory.service';
-import { scopeForDeviceTarget } from '../permissions/permission.types';
+import { scopeForDeviceTarget, PermissionScope } from '../permissions/permission.types';
 import { PermissionsService } from '../permissions/permissions.service';
+import type { Skill, SkillRiskTier } from '../skills/skill.interface';
 import { SkillRegistry } from '../skills/skill.registry';
 import { OrchestratorEmitter } from './orchestrator.events';
 import { JARVIS_SYSTEM_PROMPT } from './personality';
@@ -419,26 +420,26 @@ export class OrchestratorService {
       return `Error: unknown skill "${call.name}".`;
     }
 
-    if (skill.name === 'device_control') {
-      const target = String(call.arguments?.target ?? '');
-      const scope = scopeForDeviceTarget(target);
+    const permissionScope = this.resolvePermissionScope(skill.name, call.arguments);
+    if (permissionScope) {
       const platform = clientPlatform;
-      if (scope && !(await this.permissions.isGranted(scope, platform))) {
+      if (!(await this.permissions.isGranted(permissionScope, platform))) {
         const approved = await this.permissions.requestGrant(
           conversationId,
-          scope,
+          permissionScope,
           platform,
           (request) => emitter.onPermissionRequest(request),
         );
         if (!approved) {
           await this.guardrails.audit(skill.name, trigger, JSON.stringify(call.arguments), 'permission_denied');
           emitter.onToolEnd(call.name, 'Permission denied by user.', false);
-          return 'The user denied device control permission. Do not retry without user consent.';
+          return 'The user denied permission for this action. Do not retry without user consent.';
         }
       }
     }
 
-    if (this.skillNeedsConfirmation(skill, call.arguments)) {
+    const riskTier = this.resolveRiskTier(skill, call.arguments);
+    if (riskTier === 'high') {
       const approved = await this.guardrails.requestConfirmation(
         conversationId,
         skill.name,
@@ -450,6 +451,13 @@ export class OrchestratorService {
         emitter.onToolEnd(call.name, 'Rejected by user.', false);
         return 'The user rejected this action. Do not retry it.';
       }
+    } else if (riskTier === 'medium') {
+      await this.guardrails.audit(skill.name, trigger, JSON.stringify(call.arguments), 'auto_trusted');
+      emitter.onProgress?.({
+        stage: 'auto_trusted',
+        message: `Auto-approved (trusted action): ${humanizeSkillName(skill.name)}`,
+        toolName: skill.name,
+      });
     }
 
     const execArgs =
@@ -491,18 +499,18 @@ export class OrchestratorService {
     void this.brain.learnFromTurn(userText, assistantText);
   }
 
-  private skillNeedsConfirmation(
-    skill: { name: string; requiresConfirmation: boolean },
-    args: Record<string, unknown>,
-  ): boolean {
-    if (skill.requiresConfirmation) {
-      return true;
+  private resolveRiskTier(skill: Skill, args: Record<string, unknown>): SkillRiskTier {
+    return skill.riskFor?.(args) ?? (skill.requiresConfirmation ? 'high' : 'low');
+  }
+
+  private resolvePermissionScope(skillName: string, args: Record<string, unknown>): PermissionScope | null {
+    if (skillName === 'device_control') {
+      return scopeForDeviceTarget(String(args?.target ?? ''));
     }
-    if (skill.name === 'manage_calendar') {
-      const action = String(args?.action ?? '');
-      return action === 'delete' || action === 'move';
+    if (skillName === 'smart_home') {
+      return 'smart_home';
     }
-    return false;
+    return null;
   }
 
   private async runResponsivePresetUpgrade(

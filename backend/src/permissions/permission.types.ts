@@ -1,4 +1,4 @@
-export type PermissionScope = 'browser' | 'pc_apps' | 'phone' | 'web_tab';
+export type PermissionScope = 'browser' | 'pc_apps' | 'phone' | 'web_tab' | 'smart_home';
 
 export interface PermissionGrant {
   scope: PermissionScope;
@@ -40,6 +40,11 @@ export const PERMISSION_META: Record<
     label: 'This browser tab only',
     description:
       'Limited automation inside the current JARVIS tab when using the web/PWA client. Cannot control other apps or the OS.',
+    desktopOnly: false,
+  },
+  smart_home: {
+    label: 'Smart home devices',
+    description: 'Control smart-home devices (lights, switches, climate) via Home Assistant.',
     desktopOnly: false,
   },
 };

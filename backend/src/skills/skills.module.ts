@@ -10,7 +10,7 @@ import { EmailSkill } from './impl/email.skill';
 import { FilesystemSkill } from './impl/filesystem.skill';
 import { RemindersSkill } from './impl/reminders.skill';
 import { SmartHomeSkill } from './impl/smart-home.skill';
-import { MediaSkill } from './impl/stub.skills';
+import { MediaSkill } from './impl/media.skill';
 import { BrainSkill } from './impl/brain.skill';
 import { SelfImproveSkill } from './impl/self-improve.skill';
 import { WeatherSkill } from './impl/weather.skill';

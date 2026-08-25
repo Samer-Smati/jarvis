@@ -129,12 +129,13 @@ describe('OrchestratorService', () => {
     expect(emitter.onToolEnd).toHaveBeenCalledWith('test_skill', 'Rejected by user.', false);
   });
 
-  it('requires confirmation for calendar delete even when skill flag is false', async () => {
+  it('requires confirmation for a high-risk action even when skill flag is false', async () => {
     const calendarSkill: Skill = {
       name: 'manage_calendar',
       description: 'calendar',
       parameters: { type: 'object', properties: {} },
       requiresConfirmation: false,
+      riskFor: (args) => (String(args?.action ?? '') === 'delete' ? 'high' : 'low'),
       execute: jest.fn().mockResolvedValue({ success: true, output: 'deleted' }),
     };
     const calRegistry = new SkillRegistry([calendarSkill]);
@@ -196,6 +197,34 @@ describe('OrchestratorService', () => {
 
     expect(emitter.onProgress).toHaveBeenCalledWith(
       expect.objectContaining({ stage: 'test_skill', toolName: 'test_skill' }),
+    );
+  });
+
+  it('auto-approves a medium-risk action without blocking, but tags the audit trail', async () => {
+    const mediumSkill: Skill = {
+      name: 'trusted_skill',
+      description: 'trusted',
+      parameters: { type: 'object', properties: {} },
+      requiresConfirmation: false,
+      riskFor: () => 'medium',
+      execute: jest.fn().mockResolvedValue({ success: true, output: 'done' }),
+    };
+    registry = new SkillRegistry([mediumSkill]);
+    llm.chat
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: '1', name: 'trusted_skill', arguments: {} }],
+      })
+      .mockResolvedValueOnce({ content: 'Done, sir.', toolCalls: [] });
+
+    const emitter = emitterMock();
+    await buildService().handleUserMessage('c1', 'do the trusted thing', emitter);
+
+    expect(guardrails.requestConfirmation).not.toHaveBeenCalled();
+    expect(mediumSkill.execute).toHaveBeenCalled();
+    expect(guardrails.audit).toHaveBeenCalledWith('trusted_skill', 'chat', '{}', 'auto_trusted');
+    expect(emitter.onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'auto_trusted', toolName: 'trusted_skill' }),
     );
   });
 

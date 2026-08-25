@@ -6,7 +6,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GitHubService } from '../../integrations/github.service';
 import { VercelDeployService } from '../../integrations/vercel-deploy.service';
-import { Skill, SkillContext, SkillProgress, SkillResult } from '../skill.interface';
+import { Skill, SkillContext, SkillProgress, SkillResult, SkillRiskTier } from '../skill.interface';
 import {
   applyPatch,
   RESPONSIVE_MARKER,
@@ -105,6 +105,21 @@ export class SelfImproveSkill implements Skill {
     private readonly vercel: VercelDeployService,
   ) {
     this.projectRoot = resolveJarvisProjectRoot(config);
+  }
+
+  riskFor(args: Record<string, unknown>): SkillRiskTier {
+    const action = String(args?.action ?? '');
+    switch (action) {
+      case 'status':
+      case 'inspect':
+      case 'verify_responsive':
+        return 'low';
+      case 'pull_request':
+        return 'high';
+      default:
+        // apply_preset, write, run_checks, commit: local/reversible via git, but not nothing.
+        return 'medium';
+    }
   }
 
   async execute(args: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {

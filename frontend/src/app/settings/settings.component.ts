@@ -166,8 +166,10 @@ export class SettingsComponent implements OnInit {
     });
   }
 
+  private readonly nonDesktopOnlyScopes = new Set(['web_tab', 'phone', 'smart_home']);
+
   permissionDisabled(grant: PermissionGrant): boolean {
-    return !this.isDesktop && grant.scope !== 'web_tab' && grant.scope !== 'phone';
+    return !this.isDesktop && !this.nonDesktopOnlyScopes.has(grant.scope);
   }
 
   togglePermission(grant: PermissionGrant): void {
