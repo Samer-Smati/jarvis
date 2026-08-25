@@ -25,7 +25,6 @@ import {
   isUserProfileVaultHit,
   prefersStructuredMemoryOverBrain,
   isUrlIngestTurn,
-  isSaveToBrainRequest,
 } from './fast-chat.util';
 
 const META_SENTENCE =

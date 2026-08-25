@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PermissionsService } from '../../permissions/permissions.service';
 import { scopeForDeviceTarget } from '../../permissions/permission.types';
-import { Skill, SkillContext, SkillResult } from '../skill.interface';
+import { Skill, SkillContext, SkillResult, SkillRiskTier } from '../skill.interface';
 
 @Injectable()
 export class DeviceControlSkill implements Skill {
@@ -10,7 +11,14 @@ export class DeviceControlSkill implements Skill {
   readonly description =
     'Control the browser, desktop applications, or paired phone. Requires explicit user permission for each category. ' +
     'On web/PWA only web_tab targets are allowed (current tab only).';
-  readonly requiresConfirmation = true;
+  // The orchestrator already gates every call behind a per-target permission scope
+  // (asked once, remembered) before this tier is consulted -- a second blocking
+  // confirmation on top of that would just be double-gating an already-trusted action.
+  readonly requiresConfirmation = false;
+
+  riskFor(): SkillRiskTier {
+    return 'medium';
+  }
   readonly parameters = {
     type: 'object',
     properties: {
@@ -35,7 +43,10 @@ export class DeviceControlSkill implements Skill {
     required: ['target', 'action'],
   };
 
-  constructor(private readonly permissions: PermissionsService) {}
+  constructor(
+    private readonly permissions: PermissionsService,
+    private readonly config: ConfigService,
+  ) {}
 
   async execute(args: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
     const target = String(args?.target ?? '');
@@ -91,17 +102,44 @@ export class DeviceControlSkill implements Skill {
           spawn('cmd', ['/c', 'start', '', appName], { detached: true, stdio: 'ignore', windowsHide: true });
           return { success: true, output: `Launched/focused application: ${appName}` };
         }
-        return { success: true, output: `Requested app: ${appName} (platform launcher invoked).` };
+        if (process.platform === 'darwin') {
+          return macOpenApp(appName);
+        }
+        return action === 'launch_app' ? launchLinuxApp(appName) : focusLinuxApp(appName);
       }
       case 'notify_phone': {
         const message = asString(args.message) ?? 'Notification from JARVIS.';
-        return {
-          success: true,
-          output: `Phone notification queued: "${message}". (Requires paired mobile app when available.)`,
-        };
+        return this.notifyPhone(message);
       }
       default:
         return { success: false, output: `Unknown action "${action}".` };
+    }
+  }
+
+  private async notifyPhone(message: string): Promise<SkillResult> {
+    const topic = this.config.get<string>('NTFY_TOPIC');
+    if (!topic) {
+      return {
+        success: false,
+        output:
+          'Phone notifications are not configured. Set NTFY_TOPIC (and optionally NTFY_URL for a self-hosted ' +
+          `server) in backend/.env, then install the ntfy app and subscribe to that topic. Draft: "${message}"`,
+      };
+    }
+    const baseUrl = (this.config.get<string>('NTFY_URL') ?? 'https://ntfy.sh').replace(/\/$/, '');
+    try {
+      const res = await fetch(`${baseUrl}/${topic}`, {
+        method: 'POST',
+        body: message,
+        headers: { Title: 'JARVIS' },
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        return { success: false, output: `Phone notification failed (${res.status}): ${text.slice(0, 300)}` };
+      }
+      return { success: true, output: `Phone notification sent: "${message}".` };
+    } catch (error) {
+      return { success: false, output: `Phone notification failed: ${(error as Error).message}` };
     }
   }
 }
@@ -115,4 +153,66 @@ async function openExternal(url: string): Promise<void> {
   const args =
     process.platform === 'win32' ? ['/c', 'start', '', url] : process.platform === 'darwin' ? [url] : [url];
   spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true });
+}
+
+function runCommand(command: string, args: string[]): Promise<void> {
+  return new Promise((resolvePromise, reject) => {
+    const proc = spawn(command, args, { windowsHide: true, timeout: 4000 });
+    let stderr = '';
+    proc.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+    proc.on('error', reject);
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolvePromise();
+      } else {
+        reject(new Error(stderr.trim() || `exit code ${code}`));
+      }
+    });
+  });
+}
+
+function macOpenApp(appName: string): Promise<SkillResult> {
+  return runCommand('open', ['-a', appName])
+    .then<SkillResult>(() => ({ success: true, output: `Launched/focused application: ${appName}` }))
+    .catch<SkillResult>((error: Error) => ({ success: false, output: `Could not open "${appName}": ${error.message}` }));
+}
+
+function launchLinuxApp(appName: string): Promise<SkillResult> {
+  return new Promise((resolvePromise) => {
+    const proc = spawn(appName, [], { detached: true, stdio: 'ignore' });
+    const timer = setTimeout(() => {
+      proc.unref();
+      resolvePromise({ success: true, output: `Launched application: ${appName}` });
+    }, 300);
+    proc.once('error', (error: Error) => {
+      clearTimeout(timer);
+      resolvePromise({
+        success: false,
+        output: `Could not launch "${appName}": ${error.message}. Check the binary name is correct and on PATH.`,
+      });
+    });
+  });
+}
+
+function focusLinuxApp(appName: string): Promise<SkillResult> {
+  return runCommand('wmctrl', ['-a', appName])
+    .then<SkillResult>(() => ({ success: true, output: `Focused window matching "${appName}".` }))
+    .catch<SkillResult>((wmctrlError: Error) => {
+      if (!wmctrlError.message.includes('ENOENT')) {
+        return { success: false, output: `Could not focus "${appName}": ${wmctrlError.message}` };
+      }
+      return runCommand('xdotool', ['search', '--name', appName, 'windowactivate'])
+        .then<SkillResult>(() => ({ success: true, output: `Focused window matching "${appName}".` }))
+        .catch<SkillResult>((xdotoolError: Error) => {
+          if (xdotoolError.message.includes('ENOENT')) {
+            return {
+              success: false,
+              output:
+                "Neither wmctrl nor xdotool is installed, so I can't focus windows. " +
+                'Install one (e.g. `sudo apt install wmctrl`) and try again.',
+            };
+          }
+          return { success: false, output: `Could not focus "${appName}": ${xdotoolError.message}` };
+        });
+    });
 }

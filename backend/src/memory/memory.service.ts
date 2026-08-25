@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { BrainPgStore } from '../brain/brain-pg.store';
-import { EmbeddingService } from '../llm/embedding.service';
+import { cosineSimilarity, EmbeddingService } from '../llm/embedding.service';
 import { ChatMessage } from '../llm/llm.types';
 import { ConversationBlobStore } from './conversation-blob.store';
 import { ConversationMessageEntity } from './entities/conversation-message.entity';
@@ -24,6 +24,10 @@ export interface RememberFactResult {
 const MAX_LLM_HISTORY =
   process.env.VERCEL || process.env.JARVIS_SERVERLESS === '1' ? 30 : 200;
 const MAX_CONTEXT_CHUNKS = 8;
+
+/** Cosine similarity above which a new fact is treated as a near-duplicate of an existing one. */
+const FACT_DEDUP_THRESHOLD = 0.92;
+const FACT_DEDUP_SCAN_LIMIT = 50;
 
 @Injectable()
 export class MemoryService {
@@ -176,6 +180,10 @@ export class MemoryService {
     }
 
     const vector = await this.embeddings.tryEmbed(trimmed);
+    if (vector && (await this.isDuplicateFact(vector))) {
+      this.logger.log(`Skipped near-duplicate fact: ${trimmed.slice(0, 80)}`);
+      return { preferenceRows: [], semanticRows: [] };
+    }
     const row = await this.repository.createFact(
       { text: trimmed, memoryType: 'fact', source },
       vector ? JSON.stringify(vector) : undefined,
@@ -271,6 +279,16 @@ export class MemoryService {
     await this.brainPg.indexTurn(userText, assistantText, journalPath);
   }
 
+  private async isDuplicateFact(vector: number[]): Promise<boolean> {
+    const recent = await this.semantic.find({
+      order: { createdAt: 'DESC' },
+      take: FACT_DEDUP_SCAN_LIMIT,
+    });
+    return recent.some(
+      (f) => f.embedding && cosineSimilarity(vector, JSON.parse(f.embedding) as number[]) > FACT_DEDUP_THRESHOLD,
+    );
+  }
+
   async recallFacts(query: string, limit = 5): Promise<string[]> {
     const forgotten = await this.repository.listForgottenFactTexts();
     const filterForgotten = (items: string[]) =>
@@ -339,22 +357,6 @@ function formatMessageTimestamp(date: Date): string {
     hour: '2-digit',
     minute: '2-digit',
   });
-}
-
-function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length) {
-    return 0;
-  }
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  const denominator = Math.sqrt(normA) * Math.sqrt(normB);
-  return denominator === 0 ? 0 : dot / denominator;
 }
 
 function dedupeStrings(items: string[]): string[] {

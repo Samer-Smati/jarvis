@@ -17,6 +17,7 @@ import { OrchestratorService } from './orchestrator.service';
 function emitterMock(): jest.Mocked<OrchestratorEmitter> {
   return {
     onToken: jest.fn(),
+    onProgress: jest.fn(),
     onToolStart: jest.fn(),
     onToolEnd: jest.fn(),
     onConfirmationRequest: jest.fn(),
@@ -246,12 +247,13 @@ describe('OrchestratorService', () => {
     expect(emitter.onToolEnd).toHaveBeenCalledWith('test_skill', 'Rejected by user.', false);
   });
 
-  it('requires confirmation for calendar delete even when skill flag is false', async () => {
+  it('requires confirmation for a high-risk action even when skill flag is false', async () => {
     const calendarSkill: Skill = {
       name: 'manage_calendar',
       description: 'calendar',
       parameters: { type: 'object', properties: {} },
       requiresConfirmation: false,
+      riskFor: (args) => (String(args?.action ?? '') === 'delete' ? 'high' : 'low'),
       execute: jest.fn().mockResolvedValue({ success: true, output: 'deleted' }),
     };
     const calRegistry = new SkillRegistry([calendarSkill]);
@@ -429,6 +431,7 @@ describe('OrchestratorService', () => {
         {
           title: 'Hugging Face Models',
           path: 'sources/huggingface-models.md',
+          category: 'source',
           excerpt: 'Catalog of open LLM weights on the Hub.',
           score: 99,
         },
@@ -498,5 +501,69 @@ describe('OrchestratorService', () => {
     );
     expect(memory.appendMessage).toHaveBeenCalledWith('c1', 'assistant', 'Second answer.');
     expect(memory.appendMessage).not.toHaveBeenCalledWith('c1', 'assistant', 'First answer.');
+  });
+
+  it('emits generic progress for skills without bespoke progress handling', async () => {
+    llmService.chatWithRoute
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: '1', name: 'test_skill', arguments: { a: 1 } }],
+      })
+      .mockResolvedValueOnce({ content: 'Done, sir.', toolCalls: [] });
+
+    const emitter = emitterMock();
+    await buildService().handleUserMessage('c1', 'run the skill', emitter);
+
+    expect(emitter.onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'test_skill', toolName: 'test_skill' }),
+    );
+  });
+
+  it('auto-approves a medium-risk action without blocking, but tags the audit trail', async () => {
+    const mediumSkill: Skill = {
+      name: 'trusted_skill',
+      description: 'trusted',
+      parameters: { type: 'object', properties: {} },
+      requiresConfirmation: false,
+      riskFor: () => 'medium',
+      execute: jest.fn().mockResolvedValue({ success: true, output: 'done' }),
+    };
+    registry = new SkillRegistry([mediumSkill]);
+    llmService.chatWithRoute
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: '1', name: 'trusted_skill', arguments: {} }],
+      })
+      .mockResolvedValueOnce({ content: 'Done, sir.', toolCalls: [] });
+
+    const emitter = emitterMock();
+    await buildService().handleUserMessage('c1', 'do the trusted thing', emitter);
+
+    expect(guardrails.requestConfirmation).not.toHaveBeenCalled();
+    expect(mediumSkill.execute).toHaveBeenCalled();
+    expect(guardrails.audit).toHaveBeenCalledWith('trusted_skill', 'chat', '{}', 'auto_trusted');
+    expect(emitter.onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'auto_trusted', toolName: 'trusted_skill' }),
+    );
+  });
+
+  it('appends a repeated-failure nudge after the same call fails twice', async () => {
+    (skill.execute as jest.Mock).mockResolvedValue({ success: false, output: 'Error: still broken' });
+    llmService.chatWithRoute
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: '1', name: 'test_skill', arguments: { a: 1 } }],
+      })
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: '2', name: 'test_skill', arguments: { a: 1 } }],
+      })
+      .mockResolvedValueOnce({ content: 'Gave up.', toolCalls: [] });
+
+    await buildService().handleUserMessage('c1', 'retry the broken thing', emitterMock());
+
+    const thirdCall = llmService.chatWithRoute.mock.calls[2][1];
+    const toolMessages = thirdCall.messages.filter((m) => m.role === 'tool');
+    expect(toolMessages[toolMessages.length - 1].content).toContain('failed 2 times');
   });
 });

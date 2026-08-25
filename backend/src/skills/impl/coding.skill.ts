@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Skill, SkillContext, SkillResult } from '../skill.interface';
+import { Skill, SkillContext, SkillResult, SkillRiskTier } from '../skill.interface';
 
 const RUNTIME_MS = 15000;
 const MAX_OUTPUT = 8000;
@@ -32,6 +32,13 @@ export class CodingSkill implements Skill {
   constructor(config: ConfigService) {
     this.root = resolve(config.get<string>('SANDBOX_ROOT') ?? config.get<string>('FILES_ROOT') ?? 'data/sandbox');
     this.enabled = config.get<string>('SANDBOX_ENABLED') !== 'false';
+  }
+
+  riskFor(args: Record<string, unknown>): SkillRiskTier {
+    const task = String(args?.task ?? '');
+    // Sandboxed and reversible (runs in SANDBOX_ROOT, never the real project) --
+    // trusted enough to auto-approve rather than block on every single call.
+    return task === 'run' || task === 'debug' || task === 'review' || task === 'explain' ? 'medium' : 'low';
   }
 
   async execute(args: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {

@@ -1,13 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Skill, SkillContext, SkillResult } from '../skill.interface';
+import { Skill, SkillContext, SkillResult, SkillRiskTier } from '../skill.interface';
 
 @Injectable()
 export class SmartHomeSkill implements Skill {
   readonly name = 'smart_home';
   readonly description =
     'Control smart-home devices via Home Assistant (lights, switches, climate, scripts).';
-  readonly requiresConfirmation = true;
+  // The orchestrator gates this behind the "smart_home" permission scope, which asks
+  // once and is remembered -- so once granted, calls are trusted (medium), not blocked.
+  readonly requiresConfirmation = false;
+
+  riskFor(): SkillRiskTier {
+    return 'medium';
+  }
   readonly parameters = {
     type: 'object',
     properties: {

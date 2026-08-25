@@ -10,8 +10,9 @@ import { sanitizeUserFacingAssistantText, ToolMarkupStreamFilter } from '../llm/
 import { MemoryService } from '../memory/memory.service';
 import { FeedbackService } from '../feedback/feedback.service';
 import { LessonsService } from '../lessons/lessons.service';
-import { scopeForDeviceTarget } from '../permissions/permission.types';
+import { scopeForDeviceTarget, PermissionScope } from '../permissions/permission.types';
 import { PermissionsService } from '../permissions/permissions.service';
+import type { Skill, SkillRiskTier } from '../skills/skill.interface';
 import { SkillRegistry } from '../skills/skill.registry';
 import { isSkillAllowedOnRuntime, missingEnvForSkill, runtimeProfile, permissionForSkill, maxSkillTier, isTierGranted, tierDenialMessage, runtimeDenialMessage } from '../skills/permissions';
 import { emitTurnStatus, OrchestratorEmitter } from './orchestrator.events';
@@ -76,9 +77,11 @@ import {
 import { WebFetchService } from '../integrations/web-fetch.service';
 import { classifyGraphTask, isComplexGraphTask } from './graph/graph-classifier.util';
 import { runComplexGraphTask } from './graph/graph-router';
-const MAX_TOOL_ITERATIONS = 8;
+
+const MAX_TOOL_ITERATIONS = 16;
 const SERVERLESS_MAX_TOOL_ITERATIONS = 6;
 const SERVERLESS_DEADLINE_MS = 285_000;
+const REPEATED_FAILURE_NUDGE_THRESHOLD = 2;
 
 const REMEMBER_FACT_TOOL: ToolDefinition = {
   name: 'remember_fact',
@@ -597,6 +600,7 @@ export class OrchestratorService {
       const toolFailures: Array<{ toolName: string; output: string }> = [];
       const deadline = isServerlessRuntime() ? Date.now() + SERVERLESS_DEADLINE_MS : Infinity;
       const maxIterations = isServerlessRuntime() ? SERVERLESS_MAX_TOOL_ITERATIONS : MAX_TOOL_ITERATIONS;
+      const toolFailureCounts = new Map<string, number>();
 
       for (let iteration = 0; iteration < maxIterations; iteration++) {
         if (this.isSuperseded(conversationId, runRequestId, abort)) {
@@ -738,7 +742,14 @@ export class OrchestratorService {
 
         for (const call of result.toolCalls) {
           toolsUsed.push(call.name);
-          const output = await this.executeToolCall(conversationId, call, emitter, trigger, clientPlatform);
+          const output = await this.executeToolCall(
+            conversationId,
+            call,
+            emitter,
+            trigger,
+            clientPlatform,
+            { failureCounts: toolFailureCounts, iteration, maxIterations },
+          );
           lastToolOutput = output;
           toolRecords.push({
             toolName: call.name,
@@ -872,6 +883,7 @@ export class OrchestratorService {
     emitter: OrchestratorEmitter,
     trigger: string,
     clientPlatform: 'desktop' | 'web',
+    runState?: { failureCounts: Map<string, number>; iteration: number; maxIterations: number },
   ): Promise<string> {
     if (call.name === 'self_improve') {
       call = {
@@ -898,6 +910,16 @@ export class OrchestratorService {
         percent: selfImproveProgressPercent(action),
         detail: typeof call.arguments?.path === 'string' ? call.arguments.path : undefined,
         toolName: 'self_improve',
+      });
+    } else if (call.name !== REMEMBER_FACT_TOOL.name && call.name !== 'brain') {
+      // 'brain' already gets bespoke progress from the runX helpers that call it
+      // (runUrlIngest, runBrainGraphOpen, etc.) — a generic message here would
+      // immediately overwrite that richer status with a less useful one.
+      emitter.onProgress?.({
+        stage: call.name,
+        message: `Running ${humanizeSkillName(call.name)}…`,
+        percent: genericProgressPercent(runState?.iteration, runState?.maxIterations),
+        toolName: call.name,
       });
     }
 
@@ -973,30 +995,30 @@ export class OrchestratorService {
       return msg;
     }
 
-    if (skill.name === 'device_control') {
-      const target = String(call.arguments?.target ?? '');
-      const scope = scopeForDeviceTarget(target);
+    const permissionScope = this.resolvePermissionScope(skill.name, call.arguments);
+    if (permissionScope) {
       const platform = clientPlatform;
-      if (scope && !(await this.permissions.isGranted(scope, platform))) {
+      if (!(await this.permissions.isGranted(permissionScope, platform))) {
         emitTurnStatus(emitter, {
           stage: 'waiting_user',
           message: 'Waiting for your permission…',
         });
         const approved = await this.permissions.requestGrant(
           conversationId,
-          scope,
+          permissionScope,
           platform,
           (request) => emitter.onPermissionRequest(request),
         );
         if (!approved) {
           await this.guardrails.audit(skill.name, trigger, JSON.stringify(call.arguments), 'permission_denied');
           emitter.onToolEnd(call.name, 'Permission denied by user.', false);
-          return 'The user denied device control permission. Do not retry without user consent.';
+          return 'The user denied permission for this action. Do not retry without user consent.';
         }
       }
     }
 
-    if (this.skillNeedsConfirmation(skill, call.arguments)) {
+    const riskTier = this.resolveRiskTier(skill, call.arguments);
+    if (riskTier === 'high') {
       emitTurnStatus(emitter, {
         stage: 'waiting_user',
         message: 'Waiting for your confirmation…',
@@ -1012,6 +1034,13 @@ export class OrchestratorService {
         emitter.onToolEnd(call.name, 'Rejected by user.', false);
         return 'The user rejected this action. Do not retry it.';
       }
+    } else if (riskTier === 'medium') {
+      await this.guardrails.audit(skill.name, trigger, JSON.stringify(call.arguments), 'auto_trusted');
+      emitter.onProgress?.({
+        stage: 'auto_trusted',
+        message: `Auto-approved (trusted action): ${humanizeSkillName(skill.name)}`,
+        toolName: skill.name,
+      });
     }
 
     if (skill.name === 'brain') {
@@ -1062,7 +1091,17 @@ export class OrchestratorService {
       );
     }
     emitter.onToolEnd(call.name, result.output, result.success);
-    return result.output;
+
+    let output = result.output;
+    if (runState && !result.success) {
+      const failureKey = `${skill.name}:${JSON.stringify(execArgs)}`;
+      const failureCount = (runState.failureCounts.get(failureKey) ?? 0) + 1;
+      runState.failureCounts.set(failureKey, failureCount);
+      if (failureCount >= REPEATED_FAILURE_NUDGE_THRESHOLD) {
+        output += `\n\n[This exact action has now failed ${failureCount} times — do not retry it verbatim. Try a different skill/approach, or tell the user what's blocking you.]`;
+      }
+    }
+    return output;
   }
 
   private async finishTurn(
@@ -1093,18 +1132,18 @@ export class OrchestratorService {
     void this.memory.indexConversationTurn(userText, assistantText);
   }
 
-  private skillNeedsConfirmation(
-    skill: { name: string; requiresConfirmation: boolean },
-    args: Record<string, unknown>,
-  ): boolean {
-    if (skill.requiresConfirmation) {
-      return true;
+  private resolveRiskTier(skill: Skill, args: Record<string, unknown>): SkillRiskTier {
+    return skill.riskFor?.(args) ?? (skill.requiresConfirmation ? 'high' : 'low');
+  }
+
+  private resolvePermissionScope(skillName: string, args: Record<string, unknown>): PermissionScope | null {
+    if (skillName === 'device_control') {
+      return scopeForDeviceTarget(String(args?.target ?? ''));
     }
-    if (skill.name === 'manage_calendar') {
-      const action = String(args?.action ?? '');
-      return action === 'delete' || action === 'move';
+    if (skillName === 'smart_home') {
+      return 'smart_home';
     }
-    return false;
+    return null;
   }
 
   private async runSkillImport(
@@ -2329,6 +2368,17 @@ function sanitizeSelfImproveDenial(text: string, userText: string): string {
     return 'Sir, I misspoke — the self_improve skill is editable source at backend/src/skills/impl/self-improve.skill.ts in your GitHub repo. Tell me what to change and I will inspect that file, write the update, and open a pull request.';
   }
   return text;
+}
+
+function humanizeSkillName(name: string): string {
+  return name.replace(/_/g, ' ');
+}
+
+function genericProgressPercent(iteration?: number, maxIterations?: number): number {
+  if (iteration === undefined || !maxIterations) {
+    return 20;
+  }
+  return Math.min(85, 15 + Math.round((iteration / maxIterations) * 70));
 }
 
 function selfImproveProgressPercent(action: string): number {

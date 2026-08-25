@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Between, MoreThanOrEqual, Repository } from 'typeorm';
 import { GoogleCalendarService } from '../../integrations/google-calendar.service';
 import { CalendarEventEntity } from '../entities/calendar-event.entity';
-import { Skill, SkillResult } from '../skill.interface';
+import { Skill, SkillResult, SkillRiskTier } from '../skill.interface';
 
 @Injectable()
 export class CalendarSkill implements Skill {
@@ -38,6 +38,11 @@ export class CalendarSkill implements Skill {
     private readonly events: Repository<CalendarEventEntity>,
     private readonly googleCalendar: GoogleCalendarService,
   ) {}
+
+  riskFor(args: Record<string, unknown>): SkillRiskTier {
+    const action = String(args?.action ?? '');
+    return action === 'delete' || action === 'move' ? 'high' : 'low';
+  }
 
   async execute(args: Record<string, unknown>): Promise<SkillResult> {
     const source = String(args?.source ?? 'auto');

@@ -19,7 +19,7 @@ describe('FeedbackService', () => {
   });
 
   it('triggers async lesson extraction on low rating', async () => {
-    const row = { id: 'i1', rating: 2, correction: null } as InteractionLogEntity;
+    const row = { id: 'i1', rating: 2, correction: null } as unknown as InteractionLogEntity;
     logs.findOne.mockResolvedValue(row);
     logs.save.mockResolvedValue({ ...row, rating: 2 });
 
@@ -29,7 +29,7 @@ describe('FeedbackService', () => {
   });
 
   it('triggers extraction when correction is present', async () => {
-    const row = { id: 'i2', rating: 4, correction: null } as InteractionLogEntity;
+    const row = { id: 'i2', rating: 4, correction: null } as unknown as InteractionLogEntity;
     logs.findOne.mockResolvedValue(row);
     logs.save.mockResolvedValue({ ...row, rating: 4, correction: 'Use weekly report' });
 
@@ -39,7 +39,7 @@ describe('FeedbackService', () => {
   });
 
   it('does not block save when extraction throws', async () => {
-    const row = { id: 'i3', rating: 1 } as InteractionLogEntity;
+    const row = { id: 'i3', rating: 1 } as unknown as InteractionLogEntity;
     logs.findOne.mockResolvedValue(row);
     logs.save.mockResolvedValue(row);
     lessons.extractFromInteraction.mockRejectedValue(new Error('boom'));
