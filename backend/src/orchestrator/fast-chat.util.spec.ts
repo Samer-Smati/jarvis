@@ -25,6 +25,8 @@ import {
   isUserProfileVaultHit,
   prefersStructuredMemoryOverBrain,
   isUrlIngestTurn,
+  isWeatherRequest,
+  extractWeatherLocation,
 } from './fast-chat.util';
 
 const META_SENTENCE =
@@ -282,5 +284,46 @@ describe('about-user routing', () => {
     expect(text).toBeTruthy();
     expect(text).not.toContain('Hugging Face Models');
     expect(text).toMatch(/don't have a dedicated user profile|no dedicated user profile/i);
+  });
+});
+
+describe('weather location extraction', () => {
+  it('detects weather requests', () => {
+    expect(isWeatherRequest("what's the weather in Tunis")).toBe(true);
+    expect(isWeatherRequest('chnawa el ta9es fi tunis')).toBe(true);
+    expect(isWeatherRequest('tell me a joke')).toBe(false);
+  });
+
+  it('stops the location at trailing filler words instead of swallowing them', () => {
+    expect(extractWeatherLocation("what's the weather in Tunis right now?")).toBe('Tunis');
+    expect(extractWeatherLocation('weather in Tunis today please')).toBe('Tunis');
+  });
+
+  it('does not swallow a second clause of a compound request', () => {
+    expect(
+      extractWeatherLocation(
+        "What's the weather in Tunis right now, and also search the web for today's top tech news headline?",
+      ),
+    ).toBe('Tunis');
+    expect(extractWeatherLocation('weather in Paris and also tell me a joke')).toBe('Paris');
+  });
+
+  it('extracts multi-word city names', () => {
+    expect(extractWeatherLocation('weather in New York right now')).toBe('New York');
+  });
+
+  it('returns null when there is no location', () => {
+    expect(extractWeatherLocation('what is the weather')).toBeNull();
+  });
+
+  it('flags a compound weather+search request as also requiring web search', () => {
+    // orchestrator.service.ts guards the weather fast-path with `&& !requiresWebSearch(userText)`
+    // so a message like this falls through to the normal tool-calling loop (which can call both
+    // get_weather and web_search) instead of the fast path answering only the weather half.
+    expect(
+      requiresWebSearch(
+        "What's the weather in Tunis right now, and also search the web for today's top tech news headline?",
+      ),
+    ).toBe(true);
   });
 });

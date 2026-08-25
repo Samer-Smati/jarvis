@@ -232,7 +232,10 @@ export class OrchestratorService {
         }
       }
 
-      if (isWeatherRequest(userText) && !images?.length) {
+      // A weather keyword doesn't mean the turn is weather-only: skip this fast path when the
+      // message also needs a web search, so that half of a compound request isn't dropped —
+      // the normal tool-calling loop below can call both get_weather and web_search itself.
+      if (isWeatherRequest(userText) && !requiresWebSearch(userText) && !images?.length) {
         const handled = await this.runWeatherLookup(
           conversationId,
           userText,
