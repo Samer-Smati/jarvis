@@ -506,15 +506,36 @@ export function isWeatherRequest(text: string): boolean {
   return /\b(weather|forecast|temperature|rain|météo|meteo|température|ta9es|t9es|t9os|jaw|الطقس|الجو|chnawa)\b/i.test(t);
 }
 
+/** Boundary for a captured place name: punctuation, end of string, or a filler/conjunction word
+ * that signals the location phrase is over (e.g. "Tunis right now, and also ..."). Without this,
+ * a greedy capture that only stops at punctuation swallows trailing words like "right now". */
+const WEATHER_LOCATION_STOP =
+  '(?=[?.!,\\n]|\\s+(?:and|also|then|but|or|right|now|today|please|sir|monsieur|siidi|tawa|lyoum)\\b|$)';
+
 export function extractWeatherLocation(text: string): string | null {
   const t = text.trim();
   const patterns = [
-    /\b(?:weather|forecast|temperature|météo|meteo|ta9es|t9es|jaw)\s+(?:in|for|at|à|a|fi|f|en)\s+([^?.!,\n]+)/i,
+    new RegExp(
+      `\\b(?:weather|forecast|temperature|météo|meteo|ta9es|t9es|jaw)\\s+(?:in|for|at|à|a|fi|f|en)\\s+([^?.!,\\n]+?)${WEATHER_LOCATION_STOP}`,
+      'i',
+    ),
     /\b(?:in|for|at|à|a|fi|f|en)\s+([^?.!,\n]+?)\s+(?:weather|forecast|météo|meteo|ta9es|jaw)\b/i,
-    /\bwhat(?:'s| is|s)\s+(?:the\s+)?weather\s+(?:in|for|at|à|fi)\s+([^?.!,\n]+)/i,
-    /\bhow(?:'s| is)\s+(?:the\s+)?weather\s+(?:in|for|at|à|fi)\s+([^?.!,\n]+)/i,
-    /\bchnawa\s+(?:el\s+)?(?:ta9es|jaw|t9es)\s+(?:fi|f)\s+([^?.!,\n]+)/i,
-    /\b(?:ta9es|jaw|t9es)\s+(?:fi|f)\s+([^?.!,\n]+)/i,
+    new RegExp(
+      `\\bwhat(?:'s| is|s)\\s+(?:the\\s+)?weather\\s+(?:in|for|at|à|fi)\\s+([^?.!,\\n]+?)${WEATHER_LOCATION_STOP}`,
+      'i',
+    ),
+    new RegExp(
+      `\\bhow(?:'s| is)\\s+(?:the\\s+)?weather\\s+(?:in|for|at|à|fi)\\s+([^?.!,\\n]+?)${WEATHER_LOCATION_STOP}`,
+      'i',
+    ),
+    new RegExp(
+      `\\bchnawa\\s+(?:el\\s+)?(?:ta9es|jaw|t9es)\\s+(?:fi|f)\\s+([^?.!,\\n]+?)${WEATHER_LOCATION_STOP}`,
+      'i',
+    ),
+    new RegExp(
+      `\\b(?:ta9es|jaw|t9es)\\s+(?:fi|f)\\s+([^?.!,\\n]+?)${WEATHER_LOCATION_STOP}`,
+      'i',
+    ),
   ];
   for (const pattern of patterns) {
     const match = t.match(pattern);
@@ -531,11 +552,20 @@ export function extractWeatherLocation(text: string): string | null {
   return null;
 }
 
+const WEATHER_PLACE_TRAILING_FILLER =
+  /\s*(?:today|now|right|tawa|lyoum|please|sir|monsieur|siidi|and|also|then|but|or|\?|!)$/i;
+
+/** Belt-and-suspenders cleanup: strip trailing filler words one at a time (not just once) in
+ * case a pattern above still over-captures, e.g. "Tunis right now" -> "Tunis right" -> "Tunis". */
 function cleanWeatherPlace(raw: string): string {
-  return raw
-    .trim()
-    .replace(/\s*(today|now|tawa|lyoum|please|sir|monsieur|siidi|\?|!)+$/i, '')
-    .trim();
+  let cleaned = raw.trim();
+  for (;;) {
+    const next = cleaned.replace(WEATHER_PLACE_TRAILING_FILLER, '').trim();
+    if (next === cleaned) {
+      return next;
+    }
+    cleaned = next;
+  }
 }
 
 /** Skip filing raw upgrade/tool turns into the brain wiki. */
