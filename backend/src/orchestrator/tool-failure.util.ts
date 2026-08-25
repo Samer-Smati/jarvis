@@ -55,6 +55,14 @@ export function buildSuccessfulToolReply(
 
   const toolLabel = (primary?.toolName ?? 'tool').replace(/_/g, ' ');
   const action = primary?.action?.trim();
+
+  // self_improve inspect returns raw source code — dumping it as if it were the answer to the
+  // user's question (which is what this fallback does for every other tool) reads as a
+  // non-answer. Say plainly that the model ran out of steps instead of presenting code as prose.
+  if (primary?.toolName === 'self_improve' && action === 'inspect') {
+    return "Sir, I gathered the relevant code but ran out of steps before I could summarize it — could you ask again, a bit more specifically?";
+  }
+
   const clipped = raw.length > 1200 ? `${raw.slice(0, 1200).trimEnd()}…` : raw;
   const header = action
     ? `Sir, here is what ${toolLabel} (${action}) returned:`
