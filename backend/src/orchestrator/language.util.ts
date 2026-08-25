@@ -1,5 +1,8 @@
+/** Deliberately excludes words/patterns that collide with plain English: "tunis"/"tuns" (the
+ * city name, e.g. "weather in Tunis"), "jaw"/"safi"/"kif" (common English words/names), and a
+ * bare [3597] digit (matched almost any message containing a phone number, price, or time). */
 const DERJA_LATIN =
-  /\b(chno|chnawa|chnou|chnowa|kifech|kifeh|ta9|ta9es|9a9|9es|9ra9|3and|m3a|barcha|barsha|tawa|yosor|yesser|moch|mch|bch|behi|nheb|n7eb|s7i7|siidi|siidii|derja|tounes|tunis|tuns|lyoum|jaw|skhoun|safi|daraja|rtouba|i7ses|kif)\b|[3597]/i;
+  /\b(chno|chnawa|chnou|chnowa|kifech|kifeh|ta9|ta9es|9a9|9es|9ra9|3and|m3a|barcha|barsha|tawa|yosor|yesser|moch|mch|bch|behi|nheb|n7eb|s7i7|siidi|siidii|derja|tounes|lyoum|skhoun|daraja|rtouba|i7ses)\b/i;
 
 const DERJA_ARABIC = /(?:برشا|باش|شنو|شنوة|توة|تونس|سيدي|كيفاش|بالحق|ماشي|ياسر|تو|هكا|برك|الجو)/;
 

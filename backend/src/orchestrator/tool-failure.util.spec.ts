@@ -36,6 +36,22 @@ describe('tool-failure.util', () => {
     expect(text).not.toMatch(/without a visible reply/i);
   });
 
+  it('does not dump raw source code as the answer when self_improve inspect exhausts the loop', () => {
+    const text = buildSuccessfulToolReply(
+      [
+        {
+          toolName: 'self_improve',
+          action: 'inspect',
+          output: "import { Injectable } from '@nestjs/common';\n// ...lots of source code...",
+        },
+      ],
+      "import { Injectable } from '@nestjs/common';\n// ...lots of source code...",
+    );
+    expect(text).toBeTruthy();
+    expect(text).not.toContain('@nestjs/common');
+    expect(text).toMatch(/ran out of steps/i);
+  });
+
   it('returns null when there is no usable successful tool output', () => {
     expect(buildSuccessfulToolReply([], '')).toBeNull();
     expect(
