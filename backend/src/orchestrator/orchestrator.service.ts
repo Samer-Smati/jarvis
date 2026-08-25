@@ -911,16 +911,6 @@ export class OrchestratorService {
         detail: typeof call.arguments?.path === 'string' ? call.arguments.path : undefined,
         toolName: 'self_improve',
       });
-    } else if (call.name !== REMEMBER_FACT_TOOL.name && call.name !== 'brain') {
-      // 'brain' already gets bespoke progress from the runX helpers that call it
-      // (runUrlIngest, runBrainGraphOpen, etc.) — a generic message here would
-      // immediately overwrite that richer status with a less useful one.
-      emitter.onProgress?.({
-        stage: call.name,
-        message: `Running ${humanizeSkillName(call.name)}…`,
-        percent: genericProgressPercent(runState?.iteration, runState?.maxIterations),
-        toolName: call.name,
-      });
     }
 
     if (call.name === REMEMBER_FACT_TOOL.name) {
@@ -2372,13 +2362,6 @@ function sanitizeSelfImproveDenial(text: string, userText: string): string {
 
 function humanizeSkillName(name: string): string {
   return name.replace(/_/g, ' ');
-}
-
-function genericProgressPercent(iteration?: number, maxIterations?: number): number {
-  if (iteration === undefined || !maxIterations) {
-    return 20;
-  }
-  return Math.min(85, 15 + Math.round((iteration / maxIterations) * 70));
 }
 
 function selfImproveProgressPercent(action: string): number {

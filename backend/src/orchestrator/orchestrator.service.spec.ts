@@ -515,7 +515,7 @@ describe('OrchestratorService', () => {
     await buildService().handleUserMessage('c1', 'run the skill', emitter);
 
     expect(emitter.onProgress).toHaveBeenCalledWith(
-      expect.objectContaining({ stage: 'test_skill', toolName: 'test_skill' }),
+      expect.objectContaining({ stage: 'tool', toolName: 'test_skill' }),
     );
   });
 
