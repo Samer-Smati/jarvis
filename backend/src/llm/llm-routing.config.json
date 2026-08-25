@@ -1,7 +1,7 @@
 {
   "default": {
     "provider": "gemini",
-    "model": "gemini-2.0-flash",
+    "model": "gemini-flash-latest",
     "maxTokens": 4096,
     "timeoutMs": 120000
   },
@@ -9,7 +9,7 @@
     "quick_qa": {
       "vercel": {
         "provider": "groq",
-        "model": "llama-3.3-70b-versatile",
+        "model": "openai/gpt-oss-120b",
         "maxTokens": 1024,
         "maxInputChars": 12000,
         "timeoutMs": 30000
@@ -25,7 +25,7 @@
     "coding": {
       "vercel": {
         "provider": "gemini",
-        "model": "gemini-2.0-flash",
+        "model": "gemini-flash-latest",
         "maxTokens": 8192,
         "timeoutMs": 180000
       },
@@ -39,7 +39,7 @@
     "reasoning": {
       "vercel": {
         "provider": "gemini",
-        "model": "gemini-2.0-flash",
+        "model": "gemini-flash-latest",
         "maxTokens": 4096,
         "timeoutMs": 120000
       },
@@ -53,7 +53,7 @@
     "creative": {
       "vercel": {
         "provider": "gemini",
-        "model": "gemini-2.0-flash",
+        "model": "gemini-flash-latest",
         "maxTokens": 4096,
         "timeoutMs": 90000
       },
@@ -67,13 +67,13 @@
     "tool_heavy": {
       "vercel": {
         "provider": "gemini",
-        "model": "gemini-2.0-flash",
+        "model": "gemini-flash-latest",
         "maxTokens": 8192,
         "timeoutMs": 285000
       },
       "desktop": {
         "provider": "gemini",
-        "model": "gemini-2.0-flash",
+        "model": "gemini-flash-latest",
         "maxTokens": 8192,
         "timeoutMs": 285000
       }
@@ -81,7 +81,7 @@
     "personal": {
       "vercel": {
         "provider": "gemini",
-        "model": "gemini-2.0-flash",
+        "model": "gemini-flash-latest",
         "maxTokens": 4096,
         "timeoutMs": 120000
       },

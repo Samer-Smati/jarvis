@@ -11,7 +11,7 @@ import {
 
 /** Verified working on Google AI Studio free tier — do not auto-pick from /models list. */
 const DEFAULT_MODEL = 'gemini-flash-latest';
-const DEFAULT_FALLBACK_MODELS = ['gemini-2.0-flash', 'gemini-2.0-flash-lite'];
+const DEFAULT_FALLBACK_MODELS = ['gemini-flash-lite-latest', 'gemini-2.5-flash'];
 
 /** Google Gemini — generous free tier via OpenAI-compatible API. https://aistudio.google.com */
 @Injectable()
