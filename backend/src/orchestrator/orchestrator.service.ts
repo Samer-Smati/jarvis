@@ -17,9 +17,10 @@ import {
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
 import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning } from './fast-chat.util';
 
-const MAX_TOOL_ITERATIONS = 8;
+const MAX_TOOL_ITERATIONS = 16;
 const SERVERLESS_MAX_TOOL_ITERATIONS = 6;
 const SERVERLESS_DEADLINE_MS = 285_000;
+const REPEATED_FAILURE_NUDGE_THRESHOLD = 2;
 
 const REMEMBER_FACT_TOOL: ToolDefinition = {
   name: 'remember_fact',
@@ -265,6 +266,7 @@ export class OrchestratorService {
       let lastToolOutput = '';
       const deadline = isServerlessRuntime() ? Date.now() + SERVERLESS_DEADLINE_MS : Infinity;
       const maxIterations = isServerlessRuntime() ? SERVERLESS_MAX_TOOL_ITERATIONS : MAX_TOOL_ITERATIONS;
+      const toolFailureCounts = new Map<string, number>();
 
       for (let iteration = 0; iteration < maxIterations; iteration++) {
         const prDone = lastToolOutput.includes('Pull request #');
@@ -314,7 +316,14 @@ export class OrchestratorService {
         });
 
         for (const call of result.toolCalls) {
-          const output = await this.executeToolCall(conversationId, call, emitter, trigger, clientPlatform);
+          const output = await this.executeToolCall(
+            conversationId,
+            call,
+            emitter,
+            trigger,
+            clientPlatform,
+            { failureCounts: toolFailureCounts, iteration, maxIterations },
+          );
           lastToolOutput = output;
           messages.push({
             role: 'tool',
@@ -370,6 +379,7 @@ export class OrchestratorService {
     emitter: OrchestratorEmitter,
     trigger: string,
     clientPlatform: 'desktop' | 'web',
+    runState?: { failureCounts: Map<string, number>; iteration: number; maxIterations: number },
   ): Promise<string> {
     emitter.onToolStart(call.name, call.arguments);
 
@@ -381,6 +391,16 @@ export class OrchestratorService {
         percent: selfImproveProgressPercent(action),
         detail: typeof call.arguments?.path === 'string' ? call.arguments.path : undefined,
         toolName: 'self_improve',
+      });
+    } else if (call.name !== REMEMBER_FACT_TOOL.name && call.name !== 'brain') {
+      // 'brain' already gets bespoke progress from the runX helpers that call it
+      // (runUrlIngest, runBrainGraphOpen, etc.) — a generic message here would
+      // immediately overwrite that richer status with a less useful one.
+      emitter.onProgress?.({
+        stage: call.name,
+        message: `Running ${humanizeSkillName(call.name)}…`,
+        percent: genericProgressPercent(runState?.iteration, runState?.maxIterations),
+        toolName: call.name,
       });
     }
 
@@ -451,7 +471,17 @@ export class OrchestratorService {
       result.success ? 'success' : 'failure',
     );
     emitter.onToolEnd(call.name, result.output, result.success);
-    return result.output;
+
+    let output = result.output;
+    if (runState && !result.success) {
+      const failureKey = `${skill.name}:${JSON.stringify(execArgs)}`;
+      const failureCount = (runState.failureCounts.get(failureKey) ?? 0) + 1;
+      runState.failureCounts.set(failureKey, failureCount);
+      if (failureCount >= REPEATED_FAILURE_NUDGE_THRESHOLD) {
+        output += `\n\n[This exact action has now failed ${failureCount} times — do not retry it verbatim. Try a different skill/approach, or tell the user what's blocking you.]`;
+      }
+    }
+    return output;
   }
 
   private persistTurnLearning(userText: string, assistantText: string): void {
@@ -968,6 +998,17 @@ function sanitizeSelfImproveDenial(text: string, userText: string): string {
     return 'Sir, I misspoke — the self_improve skill is editable source at backend/src/skills/impl/self-improve.skill.ts in your GitHub repo. Tell me what to change and I will inspect that file, write the update, and open a pull request.';
   }
   return text;
+}
+
+function humanizeSkillName(name: string): string {
+  return name.replace(/_/g, ' ');
+}
+
+function genericProgressPercent(iteration?: number, maxIterations?: number): number {
+  if (iteration === undefined || !maxIterations) {
+    return 20;
+  }
+  return Math.min(85, 15 + Math.round((iteration / maxIterations) * 70));
 }
 
 function selfImproveProgressPercent(action: string): number {

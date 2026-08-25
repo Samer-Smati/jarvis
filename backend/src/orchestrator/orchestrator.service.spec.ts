@@ -2,6 +2,7 @@ import { PermissionsService } from '../permissions/permissions.service';
 import { GuardrailService } from '../guardrails/guardrail.service';
 import { LlmChatResult, LlmProvider } from '../llm/llm.types';
 import { MemoryService } from '../memory/memory.service';
+import { BrainService } from '../brain/brain.service';
 import { Skill } from '../skills/skill.interface';
 import { SkillRegistry } from '../skills/skill.registry';
 import { OrchestratorEmitter } from './orchestrator.events';
@@ -10,6 +11,7 @@ import { OrchestratorService } from './orchestrator.service';
 function emitterMock(): jest.Mocked<OrchestratorEmitter> {
   return {
     onToken: jest.fn(),
+    onProgress: jest.fn(),
     onToolStart: jest.fn(),
     onToolEnd: jest.fn(),
     onConfirmationRequest: jest.fn(),
@@ -22,6 +24,7 @@ function emitterMock(): jest.Mocked<OrchestratorEmitter> {
 describe('OrchestratorService', () => {
   let llm: jest.Mocked<LlmProvider>;
   let memory: jest.Mocked<Pick<MemoryService, 'appendMessage' | 'loadConversation' | 'recallFacts' | 'rememberFact' | 'logEvent'>>;
+  let brain: jest.Mocked<Pick<BrainService, 'getContextBlock' | 'learnFromTurn' | 'remember'>>;
   let guardrails: jest.Mocked<Pick<GuardrailService, 'requestConfirmation' | 'audit'>>;
   let permissions: jest.Mocked<Pick<PermissionsService, 'isGranted' | 'requestGrant'>>;
   let skill: Skill;
@@ -32,6 +35,7 @@ describe('OrchestratorService', () => {
       llm,
       registry,
       memory as unknown as MemoryService,
+      brain as unknown as BrainService,
       guardrails as unknown as GuardrailService,
       permissions as unknown as PermissionsService,
     );
@@ -44,6 +48,11 @@ describe('OrchestratorService', () => {
       recallFacts: jest.fn().mockResolvedValue([]),
       rememberFact: jest.fn().mockResolvedValue(undefined),
       logEvent: jest.fn().mockResolvedValue(undefined),
+    };
+    brain = {
+      getContextBlock: jest.fn().mockResolvedValue(''),
+      learnFromTurn: jest.fn().mockResolvedValue(undefined),
+      remember: jest.fn().mockResolvedValue(undefined),
     };
     guardrails = {
       requestConfirmation: jest.fn(),
@@ -89,7 +98,10 @@ describe('OrchestratorService', () => {
     const emitter = emitterMock();
     await buildService().handleUserMessage('c1', 'run the skill', emitter);
 
-    expect(skill.execute).toHaveBeenCalledWith({ a: 1 }, { conversationId: 'c1' });
+    expect(skill.execute).toHaveBeenCalledWith(
+      { a: 1 },
+      { conversationId: 'c1', onProgress: expect.any(Function) },
+    );
     expect(emitter.onToolStart).toHaveBeenCalledWith('test_skill', { a: 1 });
     expect(emitter.onToolEnd).toHaveBeenCalledWith('test_skill', 'skill output', true);
     expect(emitter.onDone).toHaveBeenCalledWith('Done, sir.');
@@ -139,7 +151,9 @@ describe('OrchestratorService', () => {
       llm,
       calRegistry,
       memory as unknown as MemoryService,
+      brain as unknown as BrainService,
       guardrails as unknown as GuardrailService,
+      permissions as unknown as PermissionsService,
     ).handleUserMessage('c1', 'delete my meeting', emitter);
 
     expect(guardrails.requestConfirmation).toHaveBeenCalled();
@@ -167,5 +181,41 @@ describe('OrchestratorService', () => {
 
     expect(emitter.onError).toHaveBeenCalledWith('boom');
     expect(emitter.onDone).not.toHaveBeenCalled();
+  });
+
+  it('emits generic progress for skills without bespoke progress handling', async () => {
+    llm.chat
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: '1', name: 'test_skill', arguments: { a: 1 } }],
+      })
+      .mockResolvedValueOnce({ content: 'Done, sir.', toolCalls: [] });
+
+    const emitter = emitterMock();
+    await buildService().handleUserMessage('c1', 'run the skill', emitter);
+
+    expect(emitter.onProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'test_skill', toolName: 'test_skill' }),
+    );
+  });
+
+  it('appends a repeated-failure nudge after the same call fails twice', async () => {
+    (skill.execute as jest.Mock).mockResolvedValue({ success: false, output: 'Error: still broken' });
+    llm.chat
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: '1', name: 'test_skill', arguments: { a: 1 } }],
+      })
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: '2', name: 'test_skill', arguments: { a: 1 } }],
+      })
+      .mockResolvedValueOnce({ content: 'Gave up.', toolCalls: [] });
+
+    await buildService().handleUserMessage('c1', 'retry the broken thing', emitterMock());
+
+    const thirdCall = llm.chat.mock.calls[2][0];
+    const toolMessages = thirdCall.messages.filter((m) => m.role === 'tool');
+    expect(toolMessages[toolMessages.length - 1].content).toContain('failed 2 times');
   });
 });
