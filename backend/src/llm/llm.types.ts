@@ -24,6 +24,9 @@ export interface ToolCall {
   id: string;
   name: string;
   arguments: Record<string, unknown>;
+  /** Gemini-only: encrypted reasoning signature that must be echoed back on replay or the
+   * OpenAI-compatible endpoint rejects the next turn with "missing a thought_signature". */
+  thoughtSignature?: string;
 }
 
 export interface LlmChatOptions {

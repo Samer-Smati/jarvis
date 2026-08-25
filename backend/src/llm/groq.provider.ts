@@ -39,13 +39,10 @@ interface StreamChunk {
   }[];
 }
 
-/** Verified Groq free models — llama-4-scout is not universally available. */
-const DEFAULT_MODEL = 'llama-3.1-8b-instant';
-const DEFAULT_FALLBACK_MODELS = [
-  'llama-3.3-70b-versatile',
-  'openai/gpt-oss-20b',
-  'llama-3.1-70b-versatile',
-];
+/** Groq retired the Llama 3.x free-tier models on 2026-06-17; migrated to their recommended
+ * replacements (console.groq.com/docs/deprecations). */
+const DEFAULT_MODEL = 'openai/gpt-oss-20b';
+const DEFAULT_FALLBACK_MODELS = ['openai/gpt-oss-120b', 'qwen/qwen3.6-27b'];
 
 /** Groq — free-tier cloud LLM (OpenAI-compatible). https://console.groq.com */
 @Injectable()

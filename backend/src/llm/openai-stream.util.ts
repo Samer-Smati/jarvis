@@ -15,6 +15,10 @@ interface OpenAiContentPart {
   image_url?: { url: string };
 }
 
+interface OpenAiToolCallExtraContent {
+  google?: { thought_signature?: string };
+}
+
 interface OpenAiMessage {
   role: string;
   content: string | OpenAiContentPart[] | null;
@@ -23,6 +27,7 @@ interface OpenAiMessage {
     id: string;
     type: 'function';
     function: { name: string; arguments: string };
+    extra_content?: OpenAiToolCallExtraContent;
   }[];
 }
 
@@ -35,6 +40,7 @@ interface StreamChunk {
         index: number;
         id?: string;
         function?: { name?: string; arguments?: string };
+        extra_content?: OpenAiToolCallExtraContent;
       }>;
     };
   }[];
@@ -79,7 +85,10 @@ export async function streamOpenAiChat(
 
   let content = '';
   const toolCalls: ToolCall[] = [];
-  const toolDrafts = new Map<number, { id: string; name: string; args: string }>();
+  const toolDrafts = new Map<
+    number,
+    { id: string; name: string; args: string; signature?: string }
+  >();
   const markupFilter = new ToolMarkupStreamFilter();
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -124,6 +133,9 @@ export async function streamOpenAiChat(
         if (tc.function?.arguments) {
           draft.args += tc.function.arguments;
         }
+        if (tc.extra_content?.google?.thought_signature) {
+          draft.signature = tc.extra_content.google.thought_signature;
+        }
         toolDrafts.set(tc.index, draft);
       }
     }
@@ -140,6 +152,7 @@ export async function streamOpenAiChat(
       id: draft.id || `call_${toolCalls.length}_${Date.now()}`,
       name: draft.name,
       arguments: args,
+      thoughtSignature: draft.signature,
     });
   }
 
@@ -269,6 +282,9 @@ function toOpenAiMessage(message: ChatMessage): OpenAiMessage {
         id: c.id,
         type: 'function' as const,
         function: { name: c.name, arguments: JSON.stringify(c.arguments ?? {}) },
+        ...(c.thoughtSignature
+          ? { extra_content: { google: { thought_signature: c.thoughtSignature } } }
+          : {}),
       })),
     };
   }
