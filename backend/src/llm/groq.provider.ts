@@ -7,6 +7,13 @@ import {
   LlmProvider,
   ToolCall,
 } from './llm.types';
+import { parseTextToolCallsFromContent, ToolMarkupStreamFilter } from './text-tool-call.util';
+import {
+  cappedRetryAfterMs,
+  isModelNotFoundError,
+  isRateLimitError,
+  sleep,
+} from './openai-stream.util';
 
 interface OpenAiMessage {
   role: string;
@@ -50,6 +57,7 @@ export class GroqProvider implements LlmProvider {
   private readonly fallbackModels: string[];
   private readonly baseUrl: string;
   private resolvedModels: string[] | null = null;
+  private readyCache: { at: number; value: { ok: boolean; model?: string; error?: string } } | null = null;
 
   constructor(config: ConfigService) {
     this.apiKey = config.get<string>('GROQ_API_KEY') ?? '';
@@ -62,22 +70,31 @@ export class GroqProvider implements LlmProvider {
   }
 
   async isReady(): Promise<{ ok: boolean; model?: string; error?: string }> {
+    if (this.readyCache && Date.now() - this.readyCache.at < 60_000) {
+      return this.readyCache.value;
+    }
     if (!this.apiKey) {
       return { ok: false, error: 'Set GROQ_API_KEY (free at console.groq.com)' };
     }
     try {
       const response = await fetch(`${this.baseUrl}/models`, {
         headers: { Authorization: `Bearer ${this.apiKey}` },
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(4000),
       });
       if (!response.ok) {
-        return { ok: false, error: `Groq returned ${response.status}` };
+        const value = { ok: false as const, error: `Groq returned ${response.status}` };
+        this.readyCache = { at: Date.now(), value };
+        return value;
       }
       const chain = await this.resolveModelChain();
       if (!chain.length) {
-        return { ok: false, error: 'No supported Groq models available for this API key' };
+        const value = { ok: false as const, error: 'No supported Groq models available for this API key' };
+        this.readyCache = { at: Date.now(), value };
+        return value;
       }
-      return { ok: true, model: chain[0] };
+      const value = { ok: true as const, model: chain[0] };
+      this.readyCache = { at: Date.now(), value };
+      return value;
     } catch (error) {
       return { ok: false, error: (error as Error).message };
     }
@@ -105,9 +122,9 @@ export class GroqProvider implements LlmProvider {
             this.resolvedModels = null;
             break;
           }
-          const retryMs = parseRetryAfterMs(lastError);
+          const retryMs = cappedRetryAfterMs(lastError);
           if (retryMs != null && attempt < 2) {
-            this.logger.warn(`Groq ${model} rate limited — retry in ${retryMs}ms`);
+            this.logger.warn(`Groq ${model} rate limited — brief wait ${retryMs}ms then retry/rotate`);
             await sleep(retryMs + 200);
             continue;
           }
@@ -209,8 +226,7 @@ export class GroqProvider implements LlmProvider {
     let content = '';
     const toolCalls: ToolCall[] = [];
     const toolDrafts = new Map<number, { id: string; name: string; args: string }>();
-    let suppressToolText = false;
-    let toolTextBuffer = '';
+    const markupFilter = new ToolMarkupStreamFilter();
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -238,26 +254,7 @@ export class GroqProvider implements LlmProvider {
         }
         if (delta.content) {
           content += delta.content;
-          if (suppressToolText) {
-            toolTextBuffer += delta.content;
-            if (toolTextBuffer.includes('</function>')) {
-              suppressToolText = false;
-              toolTextBuffer = '';
-            }
-          } else if (delta.content.includes('<function')) {
-            const before = delta.content.split('<function')[0];
-            if (before) {
-              options.onToken?.(before);
-            }
-            suppressToolText = true;
-            toolTextBuffer = delta.content.slice(delta.content.indexOf('<function'));
-            if (toolTextBuffer.includes('</function>')) {
-              suppressToolText = false;
-              toolTextBuffer = '';
-            }
-          } else {
-            options.onToken?.(delta.content);
-          }
+          markupFilter.feed(delta.content, (safe) => options.onToken?.(safe));
         }
         for (const tc of delta.tool_calls ?? []) {
           const draft = toolDrafts.get(tc.index) ?? { id: '', name: '', args: '' };
@@ -289,7 +286,7 @@ export class GroqProvider implements LlmProvider {
       });
     }
 
-    const parsed = parseTextToolCalls(content);
+    const parsed = parseTextToolCallsFromContent(content);
     content = parsed.content;
     for (const call of parsed.toolCalls) {
       if (!toolCalls.some((t) => t.name === call.name)) {
@@ -322,50 +319,4 @@ export class GroqProvider implements LlmProvider {
     }
     return { role: message.role, content: message.content };
   }
-}
-
-function parseTextToolCalls(content: string): { content: string; toolCalls: ToolCall[] } {
-  const toolCalls: ToolCall[] = [];
-  const cleaned = content
-    .replace(/<function=([^>]+)>([\s\S]*?)<\/function>/gi, (_, name: string, argsRaw: string) => {
-      let args: Record<string, unknown> = {};
-      try {
-        args = argsRaw?.trim() ? (JSON.parse(argsRaw.trim()) as Record<string, unknown>) : {};
-      } catch {
-        args = {};
-      }
-      toolCalls.push({
-        id: `text_call_${toolCalls.length}_${Date.now()}`,
-        name: name.trim(),
-        arguments: args,
-      });
-      return '';
-    })
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-  return { content: cleaned, toolCalls };
-}
-
-function isRateLimitError(message: string): boolean {
-  return message.includes('429') || message.includes('rate_limit');
-}
-
-function isModelNotFoundError(message: string): boolean {
-  return message.includes('404') || message.includes('model_not_found') || message.includes('does not exist');
-}
-
-function parseRetryAfterMs(message: string): number | null {
-  const secMatch = message.match(/try again in (\d+(?:\.\d+)?)s/i);
-  if (secMatch?.[1]) {
-    return Math.ceil(parseFloat(secMatch[1]) * 1000);
-  }
-  const retryMatch = message.match(/"retry-after"\s*:\s*(\d+)/i);
-  if (retryMatch?.[1]) {
-    return parseInt(retryMatch[1], 10) * 1000;
-  }
-  return null;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

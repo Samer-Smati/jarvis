@@ -1,4 +1,5 @@
 import { ChatMessage, LlmChatOptions, LlmChatResult, ToolCall } from './llm.types';
+import { parseTextToolCallsFromContent, ToolMarkupStreamFilter } from './text-tool-call.util';
 
 export interface OpenAiStreamConfig {
   apiKey: string;
@@ -79,8 +80,7 @@ export async function streamOpenAiChat(
   let content = '';
   const toolCalls: ToolCall[] = [];
   const toolDrafts = new Map<number, { id: string; name: string; args: string }>();
-  let suppressToolText = false;
-  let toolTextBuffer = '';
+  const markupFilter = new ToolMarkupStreamFilter();
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -111,26 +111,7 @@ export async function streamOpenAiChat(
       }
       if (delta.content) {
         content += delta.content;
-        if (suppressToolText) {
-          toolTextBuffer += delta.content;
-          if (toolTextBuffer.includes('</function>')) {
-            suppressToolText = false;
-            toolTextBuffer = '';
-          }
-        } else if (delta.content.includes('<function')) {
-          const before = delta.content.split('<function')[0];
-          if (before) {
-            options.onToken?.(before);
-          }
-          suppressToolText = true;
-          toolTextBuffer = delta.content.slice(delta.content.indexOf('<function'));
-          if (toolTextBuffer.includes('</function>')) {
-            suppressToolText = false;
-            toolTextBuffer = '';
-          }
-        } else {
-          options.onToken?.(delta.content);
-        }
+        markupFilter.feed(delta.content, (safe) => options.onToken?.(safe));
       }
       for (const tc of delta.tool_calls ?? []) {
         const draft = toolDrafts.get(tc.index) ?? { id: '', name: '', args: '' };
@@ -162,7 +143,7 @@ export async function streamOpenAiChat(
     });
   }
 
-  const parsed = parseTextToolCalls(content);
+  const parsed = parseTextToolCallsFromContent(content);
   content = parsed.content;
   for (const call of parsed.toolCalls) {
     if (!toolCalls.some((t) => t.name === call.name)) {
@@ -225,6 +206,17 @@ export function isRateLimitError(message: string): boolean {
   return message.includes('429') || message.includes('rate_limit');
 }
 
+/** Account-wide daily caps (OpenRouter free tier, etc.) — retries and model fallbacks won't help. */
+export function isDailyQuotaExhaustedError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('free-models-per-day') ||
+    lower.includes('free model requests per day') ||
+    lower.includes('daily quota') ||
+    (lower.includes('429') && lower.includes('per-day'))
+  );
+}
+
 export function isModelNotFoundError(message: string): boolean {
   return (
     message.includes('404') ||
@@ -244,6 +236,17 @@ export function parseRetryAfterMs(message: string): number | null {
     return parseInt(retryMatch[1], 10) * 1000;
   }
   return null;
+}
+
+/** Cap provider rate-limit waits so we rotate to the next free LLM instead of stalling the chat turn. */
+export const MAX_PROVIDER_RETRY_SLEEP_MS = 1_500;
+
+export function cappedRetryAfterMs(message: string, maxMs = MAX_PROVIDER_RETRY_SLEEP_MS): number | null {
+  const raw = parseRetryAfterMs(message);
+  if (raw == null) {
+    return null;
+  }
+  return Math.min(raw, maxMs);
 }
 
 export function sleep(ms: number): Promise<void> {
@@ -295,24 +298,3 @@ function buildOpenAiContent(
   return parts;
 }
 
-function parseTextToolCalls(content: string): { content: string; toolCalls: ToolCall[] } {
-  const toolCalls: ToolCall[] = [];
-  const cleaned = content
-    .replace(/<function=([^>]+)>([\s\S]*?)<\/function>/gi, (_, name: string, argsRaw: string) => {
-      let args: Record<string, unknown> = {};
-      try {
-        args = argsRaw?.trim() ? (JSON.parse(argsRaw.trim()) as Record<string, unknown>) : {};
-      } catch {
-        args = {};
-      }
-      toolCalls.push({
-        id: `text_call_${toolCalls.length}_${Date.now()}`,
-        name: name.trim(),
-        arguments: args,
-      });
-      return '';
-    })
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-  return { content: cleaned, toolCalls };
-}

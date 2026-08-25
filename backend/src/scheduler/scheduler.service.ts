@@ -5,8 +5,10 @@ import { Between, LessThanOrEqual, Repository } from 'typeorm';
 import { ChatGateway } from '../chat/chat.gateway';
 import { GoogleCalendarService } from '../integrations/google-calendar.service';
 import { MemoryService } from '../memory/memory.service';
+import { LessonsService } from '../lessons/lessons.service';
 import { CalendarEventEntity } from '../skills/entities/calendar-event.entity';
 import { ReminderEntity } from '../skills/entities/reminder.entity';
+import { CryptoMonitorSkill } from '../skills/impl/crypto-monitor.skill';
 
 @Injectable()
 export class SchedulerService {
@@ -19,7 +21,9 @@ export class SchedulerService {
     private readonly calendarEvents: Repository<CalendarEventEntity>,
     private readonly gateway: ChatGateway,
     private readonly memory: MemoryService,
+    private readonly lessons: LessonsService,
     private readonly googleCalendar: GoogleCalendarService,
+    private readonly cryptoMonitor: CryptoMonitorSkill,
   ) {}
 
   @Cron(CronExpression.EVERY_MINUTE)
@@ -77,5 +81,27 @@ export class SchedulerService {
     this.gateway.notifyMorningBriefing(text);
     await this.memory.logEvent('briefing', text);
     this.logger.log(`Morning briefing: ${text}`);
+  }
+
+  @Cron(CronExpression.EVERY_DAY_AT_7AM)
+  async runCryptoPortfolioCheck(): Promise<void> {
+    try {
+      await this.cryptoMonitor.runDailyCheck();
+    } catch (error) {
+      this.logger.warn(`Crypto portfolio check failed: ${(error as Error).message}`);
+    }
+  }
+
+  @Cron(CronExpression.EVERY_WEEK)
+  async pruneStaleMemory(): Promise<void> {
+    const factsArchived = await this.memory.pruneStaleMemories(90);
+    const lessonsArchived = await this.lessons.archiveStale(30);
+    if (factsArchived > 0 || lessonsArchived > 0) {
+      await this.memory.logEvent(
+        'memory_prune',
+        `Pruned ${factsArchived} stale facts and archived ${lessonsArchived} stale lessons (pinned untouched).`,
+      );
+      this.logger.log(`Weekly prune: ${factsArchived} facts, ${lessonsArchived} lessons archived.`);
+    }
   }
 }

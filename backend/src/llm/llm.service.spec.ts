@@ -7,6 +7,7 @@ import { OpenRouterProvider } from './openrouter.provider';
 import { XaiProvider } from './xai.provider';
 import { LmStudioProvider } from './lmstudio.provider';
 import { OllamaProvider } from './ollama.provider';
+import { resetProviderCooldowns } from './free-provider-pool.util';
 
 describe('LlmService ensureLocalRuntime', () => {
   let ensureLlm: jest.Mocked<Pick<EnsureLlmService, 'ensureReady'>>;
@@ -23,6 +24,7 @@ describe('LlmService ensureLocalRuntime', () => {
     delete process.env.VERCEL;
     delete process.env.JARVIS_SERVERLESS;
     process.env.JARVIS_LLM_ENSURE = 'full';
+    resetProviderCooldowns();
     ensureLlm = { ensureReady: jest.fn() };
     lmstudio = {
       name: 'lmstudio',
@@ -105,5 +107,54 @@ describe('LlmService ensureLocalRuntime', () => {
     await expect(service.chat({ messages: [{ role: 'user', content: 'hi' }] })).rejects.toThrow(
       /No local LLM/,
     );
+  });
+
+  it('falls back from groq to gemini on rate limit', async () => {
+    process.env.VERCEL = '1';
+    process.env.JARVIS_SERVERLESS = '1';
+    process.env.GEMINI_API_KEY = 'g';
+    process.env.GROQ_API_KEY = 'q';
+    service.setProvider('groq');
+    groq.chat.mockRejectedValue(
+      new Error('Groq request failed (429): tokens per minute (TPM): Limit 8000'),
+    );
+
+    await service.chat({ messages: [{ role: 'user', content: 'hi' }] });
+
+    expect(gemini.chat).toHaveBeenCalled();
+  });
+
+  it('falls back from groq to gemini when groq returns an empty reply', async () => {
+    process.env.VERCEL = '1';
+    process.env.JARVIS_SERVERLESS = '1';
+    process.env.GEMINI_API_KEY = 'g';
+    process.env.GROQ_API_KEY = 'q';
+    service.setProvider('groq');
+    groq.chat.mockResolvedValue({ content: '', toolCalls: [] });
+    gemini.chat.mockResolvedValue({ content: 'At your service, sir.', toolCalls: [] });
+
+    const result = await service.chat({ messages: [{ role: 'user', content: 'hi' }] });
+
+    expect(groq.chat).toHaveBeenCalled();
+    expect(gemini.chat).toHaveBeenCalled();
+    expect(result.content).toContain('At your service');
+  });
+
+  it('falls back from openrouter to gemini when daily free quota is exhausted', async () => {
+    process.env.VERCEL = '1';
+    process.env.JARVIS_SERVERLESS = '1';
+    process.env.GEMINI_API_KEY = 'g';
+    process.env.OPENROUTER_API_KEY = 'o';
+    delete process.env.GROQ_API_KEY;
+    service.setProvider('openrouter');
+    openrouter.chat.mockRejectedValue(
+      new Error(
+        'OpenRouter request failed (429): {"error":{"message":"Rate limit exceeded: free-models-per-day"}}',
+      ),
+    );
+
+    await service.chat({ messages: [{ role: 'user', content: 'hi' }] });
+
+    expect(gemini.chat).toHaveBeenCalled();
   });
 });

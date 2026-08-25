@@ -1,0 +1,103 @@
+{
+  "default": {
+    "provider": "gemini",
+    "model": "gemini-2.0-flash",
+    "maxTokens": 4096,
+    "timeoutMs": 120000
+  },
+  "routes": {
+    "quick_qa": {
+      "vercel": {
+        "provider": "groq",
+        "model": "llama-3.3-70b-versatile",
+        "maxTokens": 1024,
+        "maxInputChars": 12000,
+        "timeoutMs": 30000
+      },
+      "desktop": {
+        "provider": "ollama",
+        "model": "llama3.2",
+        "maxTokens": 1024,
+        "maxInputChars": 12000,
+        "timeoutMs": 60000
+      }
+    },
+    "coding": {
+      "vercel": {
+        "provider": "gemini",
+        "model": "gemini-2.0-flash",
+        "maxTokens": 8192,
+        "timeoutMs": 180000
+      },
+      "desktop": {
+        "provider": "lmstudio",
+        "model": "local-model",
+        "maxTokens": 8192,
+        "timeoutMs": 180000
+      }
+    },
+    "reasoning": {
+      "vercel": {
+        "provider": "gemini",
+        "model": "gemini-2.0-flash",
+        "maxTokens": 4096,
+        "timeoutMs": 120000
+      },
+      "desktop": {
+        "provider": "ollama",
+        "model": "llama3.2",
+        "maxTokens": 4096,
+        "timeoutMs": 120000
+      }
+    },
+    "creative": {
+      "vercel": {
+        "provider": "gemini",
+        "model": "gemini-2.0-flash",
+        "maxTokens": 4096,
+        "timeoutMs": 90000
+      },
+      "desktop": {
+        "provider": "ollama",
+        "model": "llama3.2",
+        "maxTokens": 4096,
+        "timeoutMs": 90000
+      }
+    },
+    "tool_heavy": {
+      "vercel": {
+        "provider": "gemini",
+        "model": "gemini-2.0-flash",
+        "maxTokens": 8192,
+        "timeoutMs": 285000
+      },
+      "desktop": {
+        "provider": "gemini",
+        "model": "gemini-2.0-flash",
+        "maxTokens": 8192,
+        "timeoutMs": 285000
+      }
+    },
+    "personal": {
+      "vercel": {
+        "provider": "gemini",
+        "model": "gemini-2.0-flash",
+        "maxTokens": 4096,
+        "timeoutMs": 120000
+      },
+      "desktop": {
+        "provider": "ollama",
+        "model": "jarvis-personal",
+        "maxTokens": 4096,
+        "timeoutMs": 120000
+      }
+    }
+  },
+  "budget": {
+    "dailyTokenCap": 500000,
+    "dailyCostCapUsd": 5
+  },
+  "routeLimits": {
+    "note": "maxInputChars on quick_qa triggers context downgrade to reasoning"
+  }
+}

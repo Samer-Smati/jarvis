@@ -21,7 +21,10 @@ function bootstrap(): Promise<express.Express> {
         const { existsSync } = await import('node:fs');
         const { join } = await import('node:path');
         for (const root of [join(process.cwd(), 'backend'), join(__dirname, '..')]) {
-          if (existsSync(join(root, 'dist', 'serverless.js'))) {
+          if (
+            existsSync(join(root, 'dist', 'serverless.js')) ||
+            existsSync(join(root, 'dist', 'src', 'serverless.js'))
+          ) {
             process.env.JARVIS_BACKEND_ROOT = root;
             break;
           }

@@ -46,4 +46,7 @@ export interface BrainGraph {
   nodes: BrainGraphNode[];
   edges: BrainGraphEdge[];
   updatedAt: string;
+  source?: 'vault' | 'pg' | 'seed';
+  pageCount?: number;
+  edgeCount?: number;
 }

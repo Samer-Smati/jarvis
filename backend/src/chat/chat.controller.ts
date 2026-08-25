@@ -4,11 +4,14 @@ import { Repository } from 'typeorm';
 import { GuardrailService } from '../guardrails/guardrail.service';
 import { LlmService } from '../llm/llm.service';
 import { ConversationMessageEntity } from '../memory/entities/conversation-message.entity';
-import { BrainService } from '../brain/brain.service';
+import { BrainOpsPauseService } from '../brain/brain-ops-pause.service';
+import { BrainService, BRAIN_PRUNE_META_CONFIRM_PHRASE, BRAIN_REHYDRATE_CONFIRM_PHRASE } from '../brain/brain.service';
+import { FACTORY_RESET_CONFIRM_PHRASE, FactoryResetService } from '../memory/factory-reset.service';
 import { MemoryService } from '../memory/memory.service';
 import { OrchestratorService } from '../orchestrator/orchestrator.service';
 import { ReminderEntity } from '../skills/entities/reminder.entity';
 import { SkillRegistry } from '../skills/skill.registry';
+import { assertValidConversationId } from './conversation-id.util';
 
 const RECAP_PROMPT = `You are J.A.R.V.I.S. The user is reopening the assistant. Briefly recap the last exchange in 2-3 short speakable sentences as a status update. Mention when things were discussed if timestamps are provided. Address them as "sir". Warm Iron Man butler tone. No markdown or bullet points. Use the same language as the conversation.`;
 
@@ -23,6 +26,8 @@ export class ChatController {
     private readonly skills: SkillRegistry,
     private readonly memory: MemoryService,
     private readonly brain: BrainService,
+    private readonly brainOpsPause: BrainOpsPauseService,
+    private readonly factoryReset: FactoryResetService,
     private readonly guardrails: GuardrailService,
     private readonly llm: LlmService,
     @InjectRepository(ReminderEntity)
@@ -42,11 +47,23 @@ export class ChatController {
   @Get('status')
   async status() {
     const llmReady = await this.llm.isReady();
+    const configuredProvider = this.llm.name;
+    const readyProvider = llmReady.provider ?? configuredProvider;
+    const servingProvider = this.llm.servingProvider;
+    const servingModel = this.llm.servingModel;
     return {
-      provider: this.orchestrator.providerName,
+      provider: configuredProvider,
+      configuredProvider,
+      readyProvider,
+      servingProvider: servingProvider ?? readyProvider,
+      servingModel,
       llmReady: llmReady.ok,
       llmModel: llmReady.model,
       llmError: llmReady.error,
+      providerMismatch:
+        !!servingProvider &&
+        servingProvider !== configuredProvider &&
+        `Last response used ${servingProvider}${servingModel ? ` (${servingModel})` : ''}, not configured ${configuredProvider}.`,
       activeRuns: this.orchestrator.activeRunCount(),
       pendingConfirmations: this.guardrails.pendingRequests(),
     };
@@ -70,7 +87,7 @@ export class ChatController {
 
   @Get('conversations/:id/messages')
   conversationMessages(@Param('id') id: string) {
-    return this.memory.listConversationMessages(id);
+    return this.memory.listConversationMessages(assertValidConversationId(id));
   }
 
   @Post('conversations/:id/sync')
@@ -78,13 +95,15 @@ export class ChatController {
     @Param('id') id: string,
     @Body() body: { messages?: Array<{ role: string; content: string; createdAt?: string }> },
   ) {
-    const count = await this.memory.replaceConversation(id, body?.messages ?? []);
+    const conversationId = assertValidConversationId(id);
+    const count = await this.memory.replaceConversation(conversationId, body?.messages ?? []);
     return { ok: true, count };
   }
 
   @Get('conversations/:id/recap')
   async conversationRecap(@Param('id') id: string) {
-    const all = await this.memory.listConversationMessages(id);
+    const conversationId = assertValidConversationId(id);
+    const all = await this.memory.listConversationMessages(conversationId);
     const last3 = all
       .filter((m) => m.role === 'user' || m.role === 'assistant')
       .slice(-3);
@@ -142,21 +161,85 @@ export class ChatController {
     return this.memory.recentEvents();
   }
 
-  @Get('memory/facts')
-  facts() {
-    return this.memory.listFacts();
-  }
-
   @Get('brain/status')
   async brainStatus() {
     const status = await this.brain.status();
+    const stats = await this.brain.getVaultStats();
     const pages = await this.brain.listPages();
-    return { status, pageCount: pages.length, pages: pages.slice(0, 50) };
+    return {
+      status,
+      pageCount: stats.pageCount,
+      edgeCount: stats.edgeCount,
+      source: stats.source,
+      pages: pages.slice(0, 50),
+    };
+  }
+
+  @Get('brain/cleanup-history')
+  brainCleanupHistory() {
+    return this.brain.getCleanupHistory();
+  }
+
+  @Get('brain/ops-status')
+  brainOpsStatus() {
+    return this.brainOpsPause.status();
+  }
+
+  @Post('brain/ops-pause')
+  async pauseBrainOps(@Body() body: { reason?: string }) {
+    return this.brainOpsPause.pause(body?.reason);
+  }
+
+  @Post('brain/ops-resume')
+  async brainOpsResume() {
+    return this.brainOpsPause.resume();
+  }
+
+  @Post('brain/prune-meta-facts')
+  async brainPruneMetaFacts(@Body() body: { confirm?: string }) {
+    const confirm = body?.confirm?.trim();
+    if (confirm !== BRAIN_PRUNE_META_CONFIRM_PHRASE) {
+      throw new BadRequestException(
+        `Refused — send { "confirm": "${BRAIN_PRUNE_META_CONFIRM_PHRASE}" } to remove meta-complaint fact pages.`,
+      );
+    }
+    try {
+      const result = await this.brain.pruneMetaFactPages(confirm);
+      return { ok: true, ...result };
+    } catch (error) {
+      throw new BadRequestException((error as Error).message);
+    }
   }
 
   @Get('brain/graph')
   brainGraph() {
     return this.brain.getGraph();
+  }
+
+  @Get('brain/rehydrate/preview')
+  async brainRehydratePreview() {
+    return this.brain.previewRehydrateFromPg();
+  }
+
+  @Post('brain/rehydrate')
+  async brainRehydrate(
+    @Body() body: { confirm?: string; expectedMinPages?: number },
+  ) {
+    const confirm = body?.confirm?.trim();
+    if (confirm !== BRAIN_REHYDRATE_CONFIRM_PHRASE) {
+      throw new BadRequestException(
+        `Refused — send { "confirm": "${BRAIN_REHYDRATE_CONFIRM_PHRASE}", "expectedMinPages": 30 } after reviewing GET /api/brain/rehydrate/preview.`,
+      );
+    }
+    try {
+      const result = await this.brain.rehydrateFromPg({
+        confirm,
+        expectedMinPages: body?.expectedMinPages,
+      });
+      return { ok: true, ...result };
+    } catch (error) {
+      throw new BadRequestException((error as Error).message);
+    }
   }
 
   @Get('brain/query')
@@ -175,8 +258,28 @@ export class ChatController {
 
   @Post('kill-switch')
   killSwitch(@Body() body: { conversationId?: string }) {
-    const aborted = this.orchestrator.killSwitch(body?.conversationId);
+    const conversationId = body?.conversationId?.trim();
+    if (conversationId) {
+      assertValidConversationId(conversationId);
+    }
+    const aborted = this.orchestrator.killSwitch(conversationId);
     return { aborted };
+  }
+
+  @Post('factory-reset')
+  async factoryResetEndpoint(@Body() body: { confirm?: string }) {
+    const confirm = body?.confirm?.trim();
+    if (confirm !== FACTORY_RESET_CONFIRM_PHRASE) {
+      throw new BadRequestException(
+        `Refused — send { "confirm": "${FACTORY_RESET_CONFIRM_PHRASE}" } to wipe all memories, conversations, and brain data. This cannot be undone.`,
+      );
+    }
+    this.orchestrator.killSwitch();
+    try {
+      return await this.factoryReset.resetToNewborn(confirm);
+    } catch (error) {
+      throw new BadRequestException((error as Error).message);
+    }
   }
 }
 

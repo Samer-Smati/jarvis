@@ -1,22 +1,82 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { BrainService } from '../brain/brain.service';
+import { BrainOpsPauseService } from '../brain/brain-ops-pause.service';
 import { GuardrailService } from '../guardrails/guardrail.service';
 import type { ChatMessage, LlmProvider, ToolCall, ToolDefinition, ChatImagePart } from '../llm/llm.types';
 import { LLM_PROVIDER } from '../llm/llm.types';
+import { LlmService } from '../llm/llm.service';
+import { TaskRouterService } from '../llm/task-router.service';
+import { sanitizeUserFacingAssistantText, ToolMarkupStreamFilter } from '../llm/text-tool-call.util';
 import { MemoryService } from '../memory/memory.service';
+import { FeedbackService } from '../feedback/feedback.service';
+import { LessonsService } from '../lessons/lessons.service';
 import { scopeForDeviceTarget, PermissionScope } from '../permissions/permission.types';
 import { PermissionsService } from '../permissions/permissions.service';
 import type { Skill, SkillRiskTier } from '../skills/skill.interface';
 import { SkillRegistry } from '../skills/skill.registry';
-import { OrchestratorEmitter } from './orchestrator.events';
-import { JARVIS_SYSTEM_PROMPT } from './personality';
+import { isSkillAllowedOnRuntime, missingEnvForSkill, runtimeProfile, permissionForSkill, maxSkillTier, isTierGranted, tierDenialMessage, runtimeDenialMessage } from '../skills/permissions';
+import { emitTurnStatus, OrchestratorEmitter } from './orchestrator.events';
+import { toolStatusLabel } from './tool-status-label.util';
+import {
+  buildSuccessfulToolReply,
+  buildToolFailureReply,
+  EMPTY_TURN_FALLBACK,
+  isToolFailureOutput,
+} from './tool-failure.util';
+import {
+  applyPrClaimGuard,
+  buildPrGuardRetrySystemPrompt,
+  hasPullRequestEvidence,
+  ToolTurnRecord,
+} from './pr-claim-guard.util';
+import { normalizeSelfImproveArgs } from '../skills/self-improve-args.util';
+import { PersonalityService } from './personality.service';
 import {
   buildLanguageHint,
   buildToolResultLanguageReminder,
   resolveLanguageMode,
 } from './language.util';
 import { ClientHistoryMessage, mergeClientHistory } from './client-history.util';
-import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isAboutUserQuery, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning } from './fast-chat.util';
+import {
+  extractAlsoBrainFlag,
+  extractRememberFactText,
+  formatRememberFactReply,
+  resolvePreferenceWrites,
+} from './remember-fact.util';
+import {
+  appendPersonalitySection,
+  buildPersonalityAppendSection,
+  buildRawSkillUrl,
+  buildSkillImportFailureReply,
+  buildSkillImportSuccessReply,
+  buildSkillIntegrateAlreadyPresentReply,
+  buildSkillIntegrateFailureReply,
+  buildSkillIntegrateSuccessReply,
+  extractTopBullets,
+  hashSkillContent,
+  isSkillImportRequest,
+  isSkillIntegrateApproval,
+  matchSkillImportPhrase,
+  parsePendingSkillImport,
+  PERSONALITY_PATH,
+  stripInspectFileOutput,
+  validateSkillMarkdown,
+} from './skill-import.util';
+import {
+  buildSkillFindListReply,
+  extractSkillFindQuery,
+  findSkillsForQuery,
+  isSkillFindRequest,
+  pickBestImportableSkill,
+} from './skills-find.util';
+import { isFastChatTurn, isBrainGraphRequest, isBrainConsolidateRequest, isBrainCleanupRequest, isBrainPlanOnlyRequest, isBrainOpsMetaQuestion, isBrainOpsPauseRequest, isBrainOpsResumeRequest, isBrainMutatingAction, BRAIN_OPS_BLOCKED_MESSAGE, isConcreteSelfImproveRequest, isResponsiveUpgradeRequest, isSelfImproveInfoQuery, isSelfImproveSkillSourceRequest, isServerlessRuntime, isUrlIngestTurn, extractUrls, isSaveToBrainRequest, isExplicitLessonRequest, extractExplicitLessonText, isAboutUserQuery, buildAboutUserReply, isLinkProfileRequest, isShowBrainPageRequest, isAffirmativeLinkProfile, shouldSkipBrainLearning, isWeatherRequest, extractWeatherLocation, requiresWebSearch, extractWebSearchQuery, isWebSearchMetaQuestion, isCodeArchitectureQuestion, isPlanOnlyRequest, prefersStructuredMemoryOverBrain } from './fast-chat.util';
+import {
+  buildWebSearchUnavailableMessage,
+  isFailedWebSearchOutput,
+} from '../skills/impl/web-search.util';
+import { WebFetchService } from '../integrations/web-fetch.service';
+import { classifyGraphTask, isComplexGraphTask } from './graph/graph-classifier.util';
+import { runComplexGraphTask } from './graph/graph-router';
 
 const MAX_TOOL_ITERATIONS = 16;
 const SERVERLESS_MAX_TOOL_ITERATIONS = 6;
@@ -25,11 +85,27 @@ const REPEATED_FAILURE_NUDGE_THRESHOLD = 2;
 
 const REMEMBER_FACT_TOOL: ToolDefinition = {
   name: 'remember_fact',
-  description: 'Store a lasting fact or preference about the user in long-term memory.',
+  description:
+    'Store a lasting fact or preference about the user. For identity fields (name, role, employer, industry, region) pass key=user.name (etc.) or a preferences map — those write user_preferences rows. Does NOT write the brain vault unless also_brain=true.',
   parameters: {
     type: 'object',
     properties: {
-      fact: { type: 'string', description: 'The fact to remember, phrased as a full sentence.' },
+      fact: { type: 'string', description: 'The fact or preference value, phrased clearly.' },
+      text: { type: 'string', description: 'Alias for fact if the model uses text instead.' },
+      key: {
+        type: 'string',
+        description:
+          'Optional preference key (e.g. user.name, user.role, user.former_employer, user.industry, user.region).',
+      },
+      preferences: {
+        type: 'object',
+        description:
+          'Optional map of preference keys to values for structured user_preferences writes in one call.',
+      },
+      also_brain: {
+        type: 'boolean',
+        description: 'If true, also duplicate into the brain vault wiki. Default false.',
+      },
     },
     required: ['fact'],
   },
@@ -38,15 +114,22 @@ const REMEMBER_FACT_TOOL: ToolDefinition = {
 @Injectable()
 export class OrchestratorService {
   private readonly logger = new Logger(OrchestratorService.name);
-  private readonly activeRuns = new Map<string, AbortController>();
+  private readonly activeRuns = new Map<string, { controller: AbortController; requestId: string }>();
 
   constructor(
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
+    private readonly llmService: LlmService,
+    private readonly taskRouter: TaskRouterService,
     private readonly skills: SkillRegistry,
     private readonly memory: MemoryService,
     private readonly brain: BrainService,
+    private readonly brainOpsPause: BrainOpsPauseService,
     private readonly guardrails: GuardrailService,
     private readonly permissions: PermissionsService,
+    private readonly personality: PersonalityService,
+    private readonly feedback: FeedbackService,
+    private readonly lessons: LessonsService,
+    private readonly webFetch: WebFetchService,
   ) {}
 
   get providerName(): string {
@@ -57,8 +140,8 @@ export class OrchestratorService {
     const targets = conversationId
       ? [this.activeRuns.get(conversationId)].filter(Boolean)
       : [...this.activeRuns.values()];
-    for (const controller of targets) {
-      controller?.abort();
+    for (const entry of targets) {
+      entry?.controller.abort();
     }
     this.logger.warn(`Kill switch triggered (${targets.length} run(s) aborted).`);
     return targets.length;
@@ -76,11 +159,23 @@ export class OrchestratorService {
     clientPlatform: 'desktop' | 'web' = 'desktop',
     clientHistory?: ClientHistoryMessage[],
     images?: ChatImagePart[],
+    requestId?: string,
   ): Promise<void> {
+    const runRequestId = requestId?.trim() || conversationId;
+    const previous = this.activeRuns.get(conversationId);
+    if (previous) {
+      previous.controller.abort();
+    }
     const abort = new AbortController();
-    this.activeRuns.set(conversationId, abort);
+    this.activeRuns.set(conversationId, { controller: abort, requestId: runRequestId });
+    const turnStarted = Date.now();
+    const toolsUsed: string[] = [];
+    const toolRecords: ToolTurnRecord[] = [];
+    let prGuardRetried = false;
 
     try {
+      emitTurnStatus(emitter, { stage: 'accepted', message: 'Request received, sir…' });
+
       const storedText =
         images?.length && !userText.trim()
           ? `[${images.length} image(s) attached]`
@@ -96,6 +191,34 @@ export class OrchestratorService {
         .map((m) => String(m.content ?? ''))
         .join('\n');
 
+      if (isSkillImportRequest(userText) && !images?.length) {
+        const handled = await this.runSkillImport(conversationId, userText, emitter, trigger);
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isSkillFindRequest(userText) && !images?.length) {
+        const handled = await this.runSkillFind(conversationId, userText, emitter, trigger);
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isSkillIntegrateApproval(userText, recentContext) && !images?.length) {
+        const handled = await this.runSkillIntegrate(
+          conversationId,
+          userText,
+          emitter,
+          trigger,
+          clientPlatform,
+          recentContext,
+        );
+        if (handled) {
+          return;
+        }
+      }
+
       if (isResponsiveUpgradeRequest(userText) && !images?.length) {
         const handled = await this.runResponsivePresetUpgrade(
           conversationId,
@@ -109,7 +232,68 @@ export class OrchestratorService {
         }
       }
 
-      if (isBrainCleanupRequest(userText)) {
+      if (isWeatherRequest(userText) && !images?.length) {
+        const handled = await this.runWeatherLookup(
+          conversationId,
+          userText,
+          emitter,
+          trigger,
+          clientPlatform,
+        );
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isWebSearchMetaQuestion(userText) && !images?.length) {
+        const handled = await this.runWebSearchMetaAnswer(
+          conversationId,
+          userText,
+          emitter,
+          trigger,
+        );
+        if (handled) {
+          return;
+        }
+      }
+
+      if (requiresWebSearch(userText) && !images?.length) {
+        const handled = await this.runWebSearchLookup(
+          conversationId,
+          userText,
+          emitter,
+          trigger,
+          clientPlatform,
+        );
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isBrainOpsMetaQuestion(userText) && !images?.length) {
+        const handled = await this.runBrainOpsMetaAnswer(conversationId, userText, emitter, trigger);
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isBrainOpsPauseRequest(userText) && !images?.length) {
+        const handled = await this.runBrainOpsPause(conversationId, userText, emitter, trigger);
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isBrainOpsResumeRequest(userText) && !images?.length) {
+        const handled = await this.runBrainOpsResume(conversationId, userText, emitter, trigger);
+        if (handled) {
+          return;
+        }
+      }
+
+      const brainOpsPaused = await this.brainOpsPause.isPaused();
+
+      if (!brainOpsPaused && !isBrainPlanOnlyRequest(userText) && isBrainCleanupRequest(userText)) {
         const handled = await this.runBrainCleanup(
           conversationId,
           userText,
@@ -122,7 +306,7 @@ export class OrchestratorService {
         }
       }
 
-      if (isBrainConsolidateRequest(userText)) {
+      if (!brainOpsPaused && !isBrainPlanOnlyRequest(userText) && isBrainConsolidateRequest(userText)) {
         const handled = await this.runBrainConsolidate(
           conversationId,
           userText,
@@ -150,6 +334,13 @@ export class OrchestratorService {
 
       if (isUrlIngestTurn(userText)) {
         const handled = await this.runUrlIngest(conversationId, userText, emitter, trigger, clientPlatform);
+        if (handled) {
+          return;
+        }
+      }
+
+      if (isExplicitLessonRequest(userText) && !images?.length) {
+        const handled = await this.runExplicitLessonSave(conversationId, userText, history, emitter, trigger);
         if (handled) {
           return;
         }
@@ -189,8 +380,100 @@ export class OrchestratorService {
         }
       }
 
-      const facts = await this.memory.recallFacts(userText);
-      const brainContext = await this.brain.getContextBlock(userText);
+      if (!images?.length && isComplexGraphTask(userText)) {
+        const classification = classifyGraphTask(userText);
+        await this.guardrails.audit(
+          'graph_classify',
+          trigger,
+          JSON.stringify({
+            route: classification.route,
+            reason: classification.reason,
+            userText: userText.slice(0, 240),
+          }),
+          'success',
+        );
+        const deadlineAt = Date.now() + SERVERLESS_DEADLINE_MS;
+        const allTools = [...this.skills.toolDefinitions(), REMEMBER_FACT_TOOL];
+        const graphText = await runComplexGraphTask({
+          goal: userText,
+          conversationId,
+          trigger,
+          deadlineAt,
+          emitter,
+          allTools,
+          chat: (messages, tools) =>
+            this.llmService.chatWithRoute(userText, {
+              messages,
+              tools,
+              signal: abort.signal,
+            }),
+          executeToolCall: async (call) => {
+            toolsUsed.push(call.name);
+            const output = await this.executeToolCall(
+              conversationId,
+              call,
+              emitter,
+              trigger,
+              clientPlatform,
+            );
+            toolRecords.push({
+              toolName: call.name,
+              action: String(call.arguments?.action ?? ''),
+              output,
+            });
+            return output;
+          },
+          audit: (action, auditTrigger, detail, outcome) =>
+            this.guardrails.audit(action, auditTrigger, detail, outcome),
+        });
+        const finalText = sanitizeUserFacingAssistantText(graphText) || EMPTY_TURN_FALLBACK;
+        await this.memory.appendMessage(conversationId, 'assistant', finalText);
+        this.persistTurnLearning(userText, finalText);
+        void this.memory.logEvent(trigger, `Graph handled: ${userText.slice(0, 120)}`);
+        emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+        await this.finishTurn(conversationId, userText, finalText, emitter, {
+          taskRoute: 'graph',
+          toolsUsed,
+          latencyMs: Date.now() - turnStarted,
+        });
+        return;
+      }
+
+      const flatClassify = classifyGraphTask(userText);
+      if (flatClassify.partialComplexSignals) {
+        await this.guardrails.audit(
+          'graph_classify',
+          trigger,
+          JSON.stringify({
+            route: 'flat',
+            reason: flatClassify.reason,
+            userText: userText.slice(0, 240),
+          }),
+          'success',
+        );
+      }
+
+      const contextChars =
+        history.reduce((sum, m) => sum + String(m.content ?? '').length, 0) + userText.length;
+      const taskRoute = this.taskRouter.resolve(userText, images, contextChars);
+      const routeLabel = taskRoute.route.model
+        ? `${taskRoute.route.provider}/${taskRoute.route.model}`
+        : taskRoute.route.provider;
+      emitTurnStatus(emitter, {
+        stage: 'routing',
+        message: `Routing to ${taskRoute.task} (${routeLabel})…`,
+      });
+
+      const memoryContextPromise = this.memory.buildContext(userText, taskRoute.task);
+      const brainContextPromise = this.brain.getContextBlock(userText);
+      const [memoryContext, brainContext] = await Promise.all([
+        memoryContextPromise,
+        brainContextPromise,
+      ]);
+      if (memoryContext.lessonIds?.length) {
+        void this.lessons.recordRetrieval(memoryContext.lessonIds);
+      }
+      const facts = memoryContext.facts;
       const now = new Date().toLocaleString('en-GB', {
         dateStyle: 'full',
         timeStyle: 'short',
@@ -201,10 +484,22 @@ export class OrchestratorService {
         .map((m) => String(m.content ?? '').replace(/^\[[^\]]+\]\s*/, ''));
       const languageMode = resolveLanguageMode(userText, recentUserTexts);
 
-      let systemPrompt = `${JARVIS_SYSTEM_PROMPT}\n\nCurrent date and time: ${now}. Use this when interpreting relative dates like "tomorrow" or "next week".`;
+      let systemPrompt = `${this.personality.getActivePrompt()}\n\nCurrent date and time: ${now}. Use this when interpreting relative dates like "tomorrow" or "next week".`;
       systemPrompt += buildLanguageHint(userText, recentUserTexts);
       if (facts.length) {
         systemPrompt += `\n\nKnown facts about the user:\n${facts.map((f) => `- ${f}`).join('\n')}`;
+      }
+      if (memoryContext.preferences.length) {
+        systemPrompt += `\n\nUser preferences:\n${memoryContext.preferences.map((p) => `- ${p}`).join('\n')}`;
+      }
+      if (memoryContext.projects.length) {
+        systemPrompt += `\n\nActive projects:\n${memoryContext.projects.map((p) => `- ${p}`).join('\n')}`;
+      }
+      if (memoryContext.conversationHits.length) {
+        systemPrompt += `\n\nRelevant past conversations:\n${memoryContext.conversationHits.map((h) => `- ${h}`).join('\n')}`;
+      }
+      if (memoryContext.lessons?.length) {
+        systemPrompt += `\n\nThings I've learned:\n${memoryContext.lessons.map((l) => `- ${l}`).join('\n')}`;
       }
       if (brainContext.trim()) {
         systemPrompt += `\n\nJARVIS Brain (persistent wiki — hot cache + linked pages, claude-obsidian pattern):\n${brainContext}`;
@@ -225,26 +520,62 @@ export class OrchestratorService {
         systemPrompt += `\n\nThe user is asking what you CAN upgrade — call self_improve with action=status ONCE, then answer in plain language from that output. Do NOT call inspect, write, commit, or pull_request in this turn. Offer 2–3 concrete upgrade ideas (UI, skills, voice, speed) and wait for their pick.`;
       }
       if (isConcreteSelfImproveRequest(userText) && !isResponsiveUpgradeRequest(userText)) {
-        systemPrompt += `\n\nThe user wants a REAL code upgrade on cloud. Use at most: one inspect with paths for needed files → one write (prefer small targeted edits, not rewriting entire large files) → pull_request. Skip redundant inspects and status calls. After pull_request succeeds, stop — do not call more tools. Never say sandbox is unmounted.`;
+        const planOnly = isPlanOnlyRequest(userText) || isCodeArchitectureQuestion(userText);
+        systemPrompt += planOnly
+          ? `\n\nThe user wants architecture/plan honesty from inspected files — call self_improve inspect on cited paths. Do NOT write or open a pull_request until they explicitly say to proceed.`
+          : `\n\nThe user wants a REAL code upgrade on cloud. Use at most: one inspect with paths for needed files → one write (prefer small targeted edits, not rewriting entire large files) → pull_request. Skip redundant inspects and status calls. After pull_request succeeds, stop — do not call more tools. Never merge unless the user explicitly asks. Never say sandbox is unmounted.`;
       }
       if (isResponsiveUpgradeRequest(userText)) {
         systemPrompt += `\n\nThe user wants responsive/mobile UI. Prefer self_improve action=apply_preset preset=responsive_chat then pull_request on the same branch. Do NOT read entire SCSS files first.`;
       }
-      if (isBrainGraphRequest(userText)) {
+      if (isBrainPlanOnlyRequest(userText)) {
+        systemPrompt +=
+          `\n\nThe user wants a PLAN or recommendations about the brain/wiki — do NOT call brain cleanup, consolidate, or graph this turn. ` +
+          `Do NOT repeat prior fast-path confirmation messages verbatim (e.g. "Relational mapping complete…"). ` +
+          `Call brain action=status or action=query if you need live page/link counts, then propose steps only.`;
+      }
+      if (await this.brainOpsPause.isPaused()) {
+        systemPrompt +=
+          `\n\nBrain operations are PAUSED — do NOT call brain cleanup, consolidate, or rehydrate. ` +
+          `You may still use brain status, query, graph (read-only), remember, and ingest. ` +
+          `If the user asks to run mutating brain ops, explain they are paused and suggest resume via Settings or "resume brain operations".`;
+      }
+      if (isBrainGraphRequest(userText) && !isBrainPlanOnlyRequest(userText)) {
         systemPrompt += `\n\nThe user wants to SEE the brain link graph. Call brain with action=graph ONCE — that opens the live graph UI. Briefly describe node/link counts from the tool output. Do not only describe links in prose.`;
       }
-      if (isBrainConsolidateRequest(userText)) {
+      if (isBrainConsolidateRequest(userText) && !isBrainPlanOnlyRequest(userText)) {
         systemPrompt += `\n\nThe user wants brain pages LINKED for real. Call brain action=consolidate ONCE (writes [[wiki]] edges), then briefly report how many new links were created from the tool output. Do not only describe linking in prose.`;
       }
       if (isSelfImproveSkillSourceRequest(userText)) {
         systemPrompt += `\n\nThe user wants to upgrade the self_improve SKILL SOURCE FILE. It IS in the repo at backend/src/skills/impl/self-improve.skill.ts — NOT a hidden runtime tool. Workflow: self_improve inspect path=backend/src/skills/impl/self-improve.skill.ts mode=read → write that path → pull_request. Do NOT inspect "." or scripts/ instead. NEVER say the skill is built-in or unmodifiable.`;
       }
+      if (isCodeArchitectureQuestion(userText)) {
+        systemPrompt +=
+          `\n\nThis turn asks how repo code, skills, schedulers, or PR deploys work. ` +
+          `You MUST call self_improve inspect on every file path you cite BEFORE describing contents. ` +
+          `Paste verbatim lines from inspect when quoting code — never fabricate module definitions or imports. ` +
+          `Vercel/serverless: scheduleModules is empty in app.module.ts — @Cron does not run on production. ` +
+          `New skills need skills.module.ts; entities under skills/entities/. No skill.yaml or backend/src/shared/.`;
+        if (isPlanOnlyRequest(userText)) {
+          systemPrompt += ` The user asked for plan/answers only — do NOT call self_improve write or pull_request this turn.`;
+        }
+      }
+      if (requiresWebSearch(userText)) {
+        systemPrompt += `\n\nThis turn REQUIRES live web data. You MUST call web_search with a focused query before answering. Do not answer from training data or memory alone — search first, then synthesize from results with source links.`;
+      }
       const urls = extractUrls(userText);
-      if (urls.length && !isUrlIngestTurn(userText)) {
+      if (prefersStructuredMemoryOverBrain(userText)) {
+        systemPrompt += `\n\nThe user wants STRUCTURED long-term memory via remember_fact (writes semantic_memories / user_preferences). Do NOT call brain, ingest_url, or graph this turn unless they also explicitly ask to open the graph. Call remember_fact once per lasting fact/preference.`;
+      } else if (urls.length && !isUrlIngestTurn(userText)) {
         systemPrompt += `\n\nThe user mentioned a URL (${urls[0]}). You CAN fetch it with brain action=ingest_url. Never refuse link access.`;
       }
       if (images?.length) {
         systemPrompt += `\n\nThe user attached ${images.length} image(s) this turn. Describe what you see in the image(s) and answer their question.`;
+      }
+
+      systemPrompt += `\n\nLLM route: ${taskRoute.task} (${taskRoute.reason}).`;
+      if (taskRoute.userNotice) {
+        systemPrompt += `\n\nBriefly mention to the user (one short sentence): ${taskRoute.userNotice}`;
       }
 
       const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }, ...history];
@@ -265,11 +596,17 @@ export class OrchestratorService {
 
       let finalText = '';
       let lastToolOutput = '';
+      let emptyProseRetried = false;
+      const toolFailures: Array<{ toolName: string; output: string }> = [];
       const deadline = isServerlessRuntime() ? Date.now() + SERVERLESS_DEADLINE_MS : Infinity;
       const maxIterations = isServerlessRuntime() ? SERVERLESS_MAX_TOOL_ITERATIONS : MAX_TOOL_ITERATIONS;
       const toolFailureCounts = new Map<string, number>();
 
       for (let iteration = 0; iteration < maxIterations; iteration++) {
+        if (this.isSuperseded(conversationId, runRequestId, abort)) {
+          emitter.onDone('', { superseded: true });
+          return;
+        }
         const prDone = lastToolOutput.includes('Pull request #');
         if (prDone) {
           finalText = finalText || `Done, sir. ${lastToolOutput.split('\n')[0]}`;
@@ -286,27 +623,114 @@ export class OrchestratorService {
           break;
         }
 
-        if (iteration > 0) {
-          emitter.onProgress?.({
-            stage: 'reply',
+        if (iteration === 0) {
+          emitTurnStatus(emitter, { stage: 'thinking', message: 'Thinking…' });
+        } else {
+          emitTurnStatus(emitter, {
+            stage: 'thinking',
             message: 'Preparing your answer…',
             percent: Math.min(40 + iteration * 8, 88),
           });
         }
         let streamedContent = '';
-        const result = await this.llm.chat({
+        let writingEmitted = false;
+        const tokenFilter = new ToolMarkupStreamFilter();
+        const turnTools = emptyProseRetried ? [] : tools;
+        const result = await this.llmService.chatWithRoute(userText, {
           messages,
-          tools,
+          tools: turnTools,
           signal: abort.signal,
+          route: taskRoute.route,
           onToken: (token) => {
-            streamedContent += token;
-            emitter.onToken(token);
+            tokenFilter.feed(token, (safe) => {
+              streamedContent += safe;
+              if (safe) {
+                if (!writingEmitted) {
+                  writingEmitted = true;
+                  emitTurnStatus(emitter, { stage: 'writing', message: 'Writing response…' });
+                }
+                emitter.onToken(safe);
+              }
+            });
           },
           onThinking: (token) => emitter.onThinking?.(token),
         });
+        this.taskRouter.recordUsage(
+          estimateTurnTokens(messages, result.content),
+        );
 
         if (!result.toolCalls.length) {
-          finalText = (result.content || streamedContent).trim();
+          if (requiresWebSearch(userText) && !toolsUsed.includes('web_search')) {
+            const query = extractWebSearchQuery(userText);
+            emitter.onProgress?.({
+              stage: 'web_search',
+              message: 'Searching the web (required)…',
+              percent: Math.min(35 + iteration * 8, 80),
+              toolName: 'web_search',
+            });
+            toolsUsed.push('web_search');
+            const searchOutput = await this.executeToolCall(
+              conversationId,
+              { id: `web-search-required-${iteration}`, name: 'web_search', arguments: { query } },
+              emitter,
+              trigger,
+              clientPlatform,
+            );
+            if (isFailedWebSearchOutput(searchOutput)) {
+              finalText = buildWebSearchUnavailableMessage(searchOutput);
+              break;
+            }
+            messages.push({
+              role: 'assistant',
+              content: result.content || 'Searching the web for current information…',
+              toolCalls: [
+                {
+                  id: `web-search-required-${iteration}`,
+                  name: 'web_search',
+                  arguments: { query },
+                },
+              ],
+            });
+            messages.push({
+              role: 'tool',
+              content: searchOutput + buildToolResultLanguageReminder(languageMode),
+              toolCallId: `web-search-required-${iteration}`,
+              toolName: 'web_search',
+            });
+            lastToolOutput = searchOutput;
+            continue;
+          }
+          if (
+            requiresWebSearch(userText) &&
+            toolsUsed.includes('web_search') &&
+            isFailedWebSearchOutput(lastToolOutput)
+          ) {
+            finalText = buildWebSearchUnavailableMessage(lastToolOutput);
+            break;
+          }
+          const proseCandidate = sanitizeUserFacingAssistantText((result.content || streamedContent).trim());
+          if (!proseCandidate && !toolsUsed.length && !emptyProseRetried) {
+            emptyProseRetried = true;
+            messages.push({
+              role: 'user',
+              content:
+                'Your previous response was empty. Answer the user now in one to three short spoken sentences. Do not call tools.',
+            });
+            continue;
+          }
+          const guarded = this.resolveFinalTextWithPrGuard(
+            userText,
+            proseCandidate,
+            toolRecords,
+            messages,
+            tools,
+            prGuardRetried,
+          );
+          if (guarded.retry) {
+            prGuardRetried = true;
+            continue;
+          }
+          finalText = guarded.finalText;
           break;
         }
 
@@ -317,6 +741,7 @@ export class OrchestratorService {
         });
 
         for (const call of result.toolCalls) {
+          toolsUsed.push(call.name);
           const output = await this.executeToolCall(
             conversationId,
             call,
@@ -326,6 +751,14 @@ export class OrchestratorService {
             { failureCounts: toolFailureCounts, iteration, maxIterations },
           );
           lastToolOutput = output;
+          toolRecords.push({
+            toolName: call.name,
+            action: String(call.arguments?.action ?? ''),
+            output,
+          });
+          if (isToolFailureOutput(output)) {
+            toolFailures.push({ toolName: call.name, output });
+          }
           messages.push({
             role: 'tool',
             content: output + buildToolResultLanguageReminder(languageMode),
@@ -347,31 +780,101 @@ export class OrchestratorService {
       }
 
       if (!finalText) {
-        finalText = lastToolOutput.includes('Updated ')
-          ? `Changes are on GitHub, sir. ${lastToolOutput.split('\n')[0]} Say "open PR" if you need the pull request.`
-          : '';
+        if (toolFailures.length) {
+          finalText = buildToolFailureReply(toolFailures);
+        } else if (lastToolOutput.includes('Updated ')) {
+          finalText = `Changes are on GitHub, sir. ${lastToolOutput.split('\n')[0]} Say "open PR" if you need the pull request.`;
+        } else {
+          finalText = buildSuccessfulToolReply(toolRecords, lastToolOutput) ?? EMPTY_TURN_FALLBACK;
+        }
+      }
+
+      if (this.isSuperseded(conversationId, runRequestId, abort)) {
+        emitter.onDone('', { superseded: true });
+        return;
       }
 
       if (finalText) {
+        const postGuard = applyPrClaimGuard({
+          userText,
+          candidate: finalText,
+          toolRecords,
+        });
+        if (postGuard.blocked) {
+          finalText = postGuard.text;
+        }
+        finalText = sanitizeUserFacingAssistantText(finalText) || EMPTY_TURN_FALLBACK;
         finalText = sanitizeSelfImproveDenial(finalText, userText);
         finalText = sanitizeLinkDenial(finalText, userText);
         finalText = sanitizeBrainDenial(finalText, userText);
+        finalText = sanitizeWeatherDenial(finalText, userText);
+        if (taskRoute.userNotice && !finalText.includes(taskRoute.userNotice.slice(0, 24))) {
+          finalText = `${taskRoute.userNotice} ${finalText}`;
+        }
         await this.memory.appendMessage(conversationId, 'assistant', finalText);
         this.persistTurnLearning(userText, finalText);
       }
-      void this.memory.logEvent(trigger, `Handled: ${userText.slice(0, 120)}`);
+      void this.memory.logEvent(
+        trigger,
+        finalText?.trim()
+          ? `Handled: ${userText.slice(0, 120)}`
+          : `Failed (no response): ${userText.slice(0, 120)}`,
+      );
       emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
-      emitter.onDone(finalText);
+      await this.finishTurn(conversationId, userText, finalText, emitter, {
+        taskRoute: taskRoute.task,
+        toolsUsed,
+        latencyMs: Date.now() - turnStarted,
+      });
     } catch (error) {
+      const stillActive = this.activeRuns.get(conversationId);
+      if (abort.signal.aborted && stillActive?.requestId !== runRequestId) {
+        this.logger.log(`Run superseded for ${conversationId} (${runRequestId})`);
+        emitter.onDone('', { superseded: true });
+        return;
+      }
       const message = abort.signal.aborted
         ? 'Action halted by kill switch.'
         : (error as Error).message;
       this.logger.error(`Run failed: ${message}`);
       await this.guardrails.audit('run_error', trigger, message, 'error');
-      emitter.onError(message);
+      emitter.onError(message, { retryable: !abort.signal.aborted });
     } finally {
-      this.activeRuns.delete(conversationId);
+      const stillActive = this.activeRuns.get(conversationId);
+      if (stillActive?.controller === abort) {
+        this.activeRuns.delete(conversationId);
+      }
     }
+  }
+
+  private resolveFinalTextWithPrGuard(
+    userText: string,
+    candidate: string,
+    toolRecords: ToolTurnRecord[],
+    messages: ChatMessage[],
+    tools: ToolDefinition[],
+    prGuardRetried: boolean,
+  ): { finalText: string; retry: boolean } {
+    const guard = applyPrClaimGuard({ userText, candidate, toolRecords });
+    if (!guard.blocked) {
+      return { finalText: guard.text, retry: false };
+    }
+    if (guard.shouldRetryWithTools && !prGuardRetried && tools.length > 0) {
+      messages.push({
+        role: 'system',
+        content: buildPrGuardRetrySystemPrompt(),
+      });
+      return { finalText: '', retry: true };
+    }
+    return { finalText: guard.text, retry: false };
+  }
+
+  private isSuperseded(conversationId: string, runRequestId: string, abort: AbortController): boolean {
+    if (!abort.signal.aborted) {
+      return false;
+    }
+    const stillActive = this.activeRuns.get(conversationId);
+    return stillActive?.requestId !== runRequestId;
   }
 
   private async executeToolCall(
@@ -382,7 +885,22 @@ export class OrchestratorService {
     clientPlatform: 'desktop' | 'web',
     runState?: { failureCounts: Map<string, number>; iteration: number; maxIterations: number },
   ): Promise<string> {
+    if (call.name === 'self_improve') {
+      call = {
+        ...call,
+        arguments: normalizeSelfImproveArgs(call.arguments ?? {}),
+      };
+    }
+
     emitter.onToolStart(call.name, call.arguments);
+
+    if (call.name !== 'self_improve') {
+      emitTurnStatus(emitter, {
+        stage: 'tool',
+        message: toolStatusLabel(call.name, call.arguments),
+        toolName: call.name,
+      });
+    }
 
     if (call.name === 'self_improve') {
       const action = String(call.arguments?.action ?? '');
@@ -406,12 +924,37 @@ export class OrchestratorService {
     }
 
     if (call.name === REMEMBER_FACT_TOOL.name) {
-      const fact = String(call.arguments?.fact ?? '');
-      await this.memory.rememberFact(fact);
-      void this.brain.remember(fact.slice(0, 80), fact, 'fact');
-      await this.guardrails.audit(call.name, trigger, fact, 'success');
-      emitter.onToolEnd(call.name, 'Fact stored.', true);
-      return 'Fact stored in long-term memory and JARVIS brain wiki.';
+      const fact = extractRememberFactText(call.arguments);
+      if (!fact) {
+        const msg =
+          'Error: remember_fact needs a non-empty fact string (argument "fact"). Nothing was stored.';
+        emitter.onToolEnd(call.name, msg, false);
+        await this.guardrails.audit(call.name, trigger, JSON.stringify(call.arguments ?? {}), 'failure');
+        return msg;
+      }
+      try {
+        const preferenceWrites = resolvePreferenceWrites(call.arguments, fact);
+        const alsoBrain = extractAlsoBrainFlag(call.arguments);
+        const stored = await this.memory.rememberFactDetailed({
+          text: fact,
+          preferences: preferenceWrites.length ? preferenceWrites : undefined,
+          source: 'remember_fact',
+        });
+        if (alsoBrain) {
+          const brainMsg = await this.brain.remember(fact.slice(0, 80), fact, 'fact');
+          const pathMatch = /at\s+(\S+\.md)/i.exec(brainMsg);
+          stored.brainPath = pathMatch?.[1] ?? brainMsg;
+        }
+        const reply = formatRememberFactReply(stored);
+        await this.guardrails.audit(call.name, trigger, reply, 'success');
+        emitter.onToolEnd(call.name, reply, true);
+        return reply;
+      } catch (error) {
+        const msg = `Error: could not store fact — ${(error as Error).message}`;
+        emitter.onToolEnd(call.name, msg, false);
+        await this.guardrails.audit(call.name, trigger, msg, 'failure');
+        return msg;
+      }
     }
 
     const skill = this.skills.get(call.name);
@@ -420,10 +963,46 @@ export class OrchestratorService {
       return `Error: unknown skill "${call.name}".`;
     }
 
+    if (call.name === 'self_improve' && !String(call.arguments?.action ?? '').trim()) {
+      const msg =
+        'Error: self_improve requires action (e.g. pull_request, write, inspect). The model sent an empty action — please retry.';
+      emitter.onToolEnd(call.name, msg, false);
+      await this.guardrails.audit(call.name, trigger, JSON.stringify(call.arguments), 'failure');
+      return msg;
+    }
+
+    const profile = runtimeProfile();
+    if (!isSkillAllowedOnRuntime(skill.name, profile)) {
+      const msg = runtimeDenialMessage(skill.name, profile);
+      emitter.onToolEnd(call.name, msg, false);
+      await this.guardrails.audit(call.name, trigger, msg, 'permission_denied');
+      return msg;
+    }
+
+    const perm = permissionForSkill(skill.name);
+    const grantedTier = maxSkillTier();
+    if (perm && !isTierGranted(perm.tier, grantedTier)) {
+      const msg = tierDenialMessage(skill.name, perm.tier, grantedTier);
+      emitter.onToolEnd(call.name, msg, false);
+      await this.guardrails.audit(call.name, trigger, msg, 'permission_denied');
+      return msg;
+    }
+
+    const missingEnv = missingEnvForSkill(skill.name);
+    if (missingEnv.length) {
+      const msg = `Skill "${skill.name}" is not configured. Missing env: ${missingEnv.join(', ')}.`;
+      emitter.onToolEnd(call.name, msg, false);
+      return msg;
+    }
+
     const permissionScope = this.resolvePermissionScope(skill.name, call.arguments);
     if (permissionScope) {
       const platform = clientPlatform;
       if (!(await this.permissions.isGranted(permissionScope, platform))) {
+        emitTurnStatus(emitter, {
+          stage: 'waiting_user',
+          message: 'Waiting for your permission…',
+        });
         const approved = await this.permissions.requestGrant(
           conversationId,
           permissionScope,
@@ -440,6 +1019,10 @@ export class OrchestratorService {
 
     const riskTier = this.resolveRiskTier(skill, call.arguments);
     if (riskTier === 'high') {
+      emitTurnStatus(emitter, {
+        stage: 'waiting_user',
+        message: 'Waiting for your confirmation…',
+      });
       const approved = await this.guardrails.requestConfirmation(
         conversationId,
         skill.name,
@@ -460,6 +1043,18 @@ export class OrchestratorService {
       });
     }
 
+    if (skill.name === 'brain') {
+      const action = String(call.arguments?.action ?? '');
+      if (isBrainMutatingAction(action)) {
+        if (await this.brainOpsPause.isPaused()) {
+          const msg = BRAIN_OPS_BLOCKED_MESSAGE;
+          emitter.onToolEnd(call.name, msg, false);
+          await this.guardrails.audit(call.name, trigger, JSON.stringify(call.arguments), 'permission_denied');
+          return msg;
+        }
+      }
+    }
+
     const execArgs =
       skill.name === 'device_control'
         ? { ...call.arguments, platform: clientPlatform }
@@ -472,12 +1067,29 @@ export class OrchestratorService {
           toolName: skill.name,
         }),
     });
+    const brainCleanup =
+      skill.name === 'brain' && String(call.arguments?.action ?? '') === 'cleanup' && result.success;
     await this.guardrails.audit(
       skill.name,
       trigger,
-      JSON.stringify(call.arguments),
+      brainCleanup
+        ? JSON.stringify({
+            ...call.arguments,
+            outputSnippet: result.output.slice(0, 800),
+          })
+        : result.success
+          ? JSON.stringify(call.arguments)
+          : JSON.stringify({
+              ...call.arguments,
+              error: result.output.slice(0, 800),
+            }),
       result.success ? 'success' : 'failure',
     );
+    if (!result.success) {
+      this.logger.warn(
+        `Skill ${skill.name} failed: ${result.output.slice(0, 300)} (args=${JSON.stringify(call.arguments).slice(0, 200)})`,
+      );
+    }
     emitter.onToolEnd(call.name, result.output, result.success);
 
     let output = result.output;
@@ -492,11 +1104,32 @@ export class OrchestratorService {
     return output;
   }
 
+  private async finishTurn(
+    conversationId: string,
+    userText: string,
+    finalText: string,
+    emitter: OrchestratorEmitter,
+    meta?: { taskRoute?: string; toolsUsed?: string[]; latencyMs?: number },
+  ): Promise<void> {
+    const text = finalText?.trim() || EMPTY_TURN_FALLBACK;
+    const logged = await this.feedback.logInteraction({
+      conversationId,
+      prompt: userText,
+      response: text,
+      taskRoute: meta?.taskRoute,
+      provider: this.llm.name,
+      toolsUsed: meta?.toolsUsed,
+      latencyMs: meta?.latencyMs,
+    });
+    emitter.onDone(text, { interactionId: logged.id, taskRoute: meta?.taskRoute });
+  }
+
   private persistTurnLearning(userText: string, assistantText: string): void {
     if (shouldSkipBrainLearning(userText, assistantText)) {
       return;
     }
     void this.brain.learnFromTurn(userText, assistantText);
+    void this.memory.indexConversationTurn(userText, assistantText);
   }
 
   private resolveRiskTier(skill: Skill, args: Record<string, unknown>): SkillRiskTier {
@@ -511,6 +1144,359 @@ export class OrchestratorService {
       return 'smart_home';
     }
     return null;
+  }
+
+  private async runSkillImport(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+  ): Promise<boolean> {
+    const phrase = matchSkillImportPhrase(userText);
+    if (!phrase) {
+      return false;
+    }
+
+    const result = await this.fetchAndPreviewSkillImport(
+      phrase.sourceRaw,
+      phrase.skillSlug,
+      emitter,
+    );
+    const finalText = result.ok
+      ? result.reply
+      : buildSkillImportFailureReply(result.reason);
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    void this.memory.logEvent(
+      trigger,
+      result.ok
+        ? `Skill import ready: ${phrase.skillSlug}`
+        : `Skill import failed: ${result.reason.slice(0, 120)}`,
+    );
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runSkillFind(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+  ): Promise<boolean> {
+    const query = extractSkillFindQuery(userText) || userText.trim();
+    emitter.onProgress?.({
+      stage: 'skill_find',
+      message: `Searching skills for "${query.slice(0, 60)}"…`,
+      percent: 25,
+    });
+
+    const found = await findSkillsForQuery(query);
+    const best = pickBestImportableSkill(found.hits);
+    const list = buildSkillFindListReply({
+      query,
+      hits: found.hits,
+      source: found.source,
+      notice: found.notice,
+      autoImport: best ? { slug: best.slug, source: best.source } : undefined,
+    });
+
+    if (!best) {
+      await this.memory.appendMessage(conversationId, 'assistant', list);
+      void this.memory.logEvent(trigger, `Skill find: no importable hit for ${query.slice(0, 80)}`);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(list);
+      return true;
+    }
+
+    const preview = await this.fetchAndPreviewSkillImport(best.source, best.slug, emitter);
+    const finalText = preview.ok
+      ? `${list}\n\n${preview.reply}`
+      : `${list}\n\nAuto-import failed: ${preview.reason}`;
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    void this.memory.logEvent(
+      trigger,
+      preview.ok
+        ? `Skill find+import ready: ${best.slug} from ${best.source}`
+        : `Skill find ok, import failed: ${best.slug}`,
+    );
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async fetchAndPreviewSkillImport(
+    sourceRaw: string,
+    skillSlug: string,
+    emitter: OrchestratorEmitter,
+  ): Promise<{ ok: true; reply: string } | { ok: false; reason: string }> {
+    const built = buildRawSkillUrl(sourceRaw, skillSlug);
+    if (!built.ok) {
+      return { ok: false, reason: built.reason };
+    }
+
+    emitter.onProgress?.({
+      stage: 'skill_import',
+      message: `Fetching ${built.skillSlug}…`,
+      percent: 40,
+      detail: built.url,
+    });
+
+    let fetchedText = '';
+    let fetchedUrl = built.url;
+    const errors: string[] = [];
+    for (const url of built.urls) {
+      try {
+        const fetched = await this.webFetch.fetchRawText(url);
+        fetchedText = fetched.text;
+        fetchedUrl = url;
+        break;
+      } catch (error) {
+        errors.push(`${url} → ${(error as Error).message}`);
+      }
+    }
+    if (!fetchedText) {
+      return {
+        ok: false,
+        reason: errors.join(' | ') || `Could not fetch SKILL.md for ${built.source}/${built.skillSlug}`,
+      };
+    }
+
+    const validated = validateSkillMarkdown(fetchedText, built.skillSlug);
+    if (!validated.ok) {
+      return { ok: false, reason: validated.reason };
+    }
+
+    const hash = hashSkillContent(validated.skill.raw);
+    const proposedSection = buildPersonalityAppendSection({
+      name: validated.skill.name,
+      description: validated.skill.description,
+      bullets: extractTopBullets(validated.skill.body),
+      slug: built.skillSlug,
+    });
+
+    return {
+      ok: true,
+      reply: buildSkillImportSuccessReply({
+        url: fetchedUrl,
+        hash,
+        skill: validated.skill,
+        proposedSection,
+      }),
+    };
+  }
+
+  private async runSkillIntegrate(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+    clientPlatform: 'desktop' | 'web',
+    recentContext: string,
+  ): Promise<boolean> {
+    const pending = parsePendingSkillImport(recentContext);
+    if (!pending) {
+      const finalText = buildSkillIntegrateFailureReply(
+        'No pending skill import found in recent context. Import a skill first (e.g. "import skill executing-plans from obra/superpowers").',
+      );
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    if (!this.skills.get('self_improve')) {
+      const finalText = buildSkillIntegrateFailureReply('self_improve skill is not registered.');
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    emitter.onProgress?.({
+      stage: 'skill_integrate',
+      message: `Re-fetching ${pending.skillSlug}…`,
+      percent: 20,
+      detail: pending.url,
+    });
+
+    let fetchedText: string;
+    try {
+      const fetched = await this.webFetch.fetchRawText(pending.url);
+      fetchedText = fetched.text;
+    } catch (error) {
+      const finalText = buildSkillIntegrateFailureReply((error as Error).message);
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    const validated = validateSkillMarkdown(fetchedText, pending.skillSlug);
+    if (!validated.ok) {
+      const finalText = buildSkillIntegrateFailureReply(validated.reason);
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    const hash = hashSkillContent(validated.skill.raw);
+    if (hash !== pending.hash) {
+      const finalText = buildSkillIntegrateFailureReply(
+        `Content hash mismatch (import ${pending.hash}, re-fetch ${hash}). Re-run the import to refresh, then approve again.`,
+      );
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    const proposedSection = buildPersonalityAppendSection({
+      name: validated.skill.name,
+      description: validated.skill.description,
+      bullets: extractTopBullets(validated.skill.body),
+      slug: pending.skillSlug,
+    });
+
+    const branch = `jarvis/skill-import-${pending.skillSlug}-${new Date()
+      .toISOString()
+      .slice(0, 16)
+      .replace(/[:T]/g, '-')}`;
+
+    emitter.onProgress?.({
+      stage: 'inspect',
+      message: `Reading ${PERSONALITY_PATH}…`,
+      percent: 35,
+      toolName: 'self_improve',
+    });
+
+    const inspectOutput = await this.executeToolCall(
+      conversationId,
+      {
+        id: 'skill-import-inspect',
+        name: 'self_improve',
+        arguments: { action: 'inspect', path: PERSONALITY_PATH, mode: 'read' },
+      },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    if (
+      inspectOutput.startsWith('Error:') ||
+      inspectOutput.startsWith('Inspect error:') ||
+      inspectOutput.includes('Access denied') ||
+      inspectOutput.includes('requires GITHUB_TOKEN')
+    ) {
+      const finalText = buildSkillIntegrateFailureReply(`inspect failed: ${inspectOutput.slice(0, 400)}`);
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    const currentFile = stripInspectFileOutput(inspectOutput, PERSONALITY_PATH);
+    if (currentFile.includes('...[truncated]')) {
+      const finalText = buildSkillIntegrateFailureReply(
+        `${PERSONALITY_PATH} was truncated by inspect — cannot safely append. Increase MAX_READ or retry.`,
+      );
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    const appended = appendPersonalitySection(currentFile, proposedSection, pending.skillSlug);
+    if (appended.alreadyPresent) {
+      const finalText = buildSkillIntegrateAlreadyPresentReply(pending.skillSlug);
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      void this.memory.logEvent(trigger, `Skill already present: ${pending.skillSlug}`);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    emitter.onProgress?.({
+      stage: 'write',
+      message: `Writing ${PERSONALITY_PATH}…`,
+      percent: 55,
+      toolName: 'self_improve',
+    });
+
+    const writeOutput = await this.executeToolCall(
+      conversationId,
+      {
+        id: 'skill-import-write',
+        name: 'self_improve',
+        arguments: {
+          action: 'write',
+          path: PERSONALITY_PATH,
+          content: appended.content,
+          branch,
+          message: `feat(jarvis): import skill ${pending.skillSlug} into personality`,
+        },
+      },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    if (
+      writeOutput.startsWith('Error:') ||
+      writeOutput.includes('requires GITHUB_TOKEN') ||
+      writeOutput.includes('Write blocked') ||
+      writeOutput.includes('Write error:')
+    ) {
+      const finalText = buildSkillIntegrateFailureReply(`write failed: ${writeOutput.slice(0, 400)}`);
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    emitter.onProgress?.({
+      stage: 'pull_request',
+      message: 'Opening pull request…',
+      percent: 88,
+      toolName: 'self_improve',
+    });
+
+    const prOutput = await this.executeToolCall(
+      conversationId,
+      {
+        id: 'skill-import-pr',
+        name: 'self_improve',
+        arguments: {
+          action: 'pull_request',
+          branch,
+          title: `Import skill ${pending.skillSlug} into system prompt`,
+          message: [
+            `Import ${pending.skillSlug} from ${pending.source} into personality.ts (append-only).`,
+            '',
+            `Source: ${pending.url}`,
+            `Content hash: ${hash}`,
+            `Approved after: "${userText.slice(0, 200)}"`,
+          ].join('\n'),
+        },
+      },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    const finalText = hasPullRequestEvidence([prOutput])
+      ? buildSkillIntegrateSuccessReply(prOutput)
+      : buildSkillIntegrateFailureReply(
+          `pull_request did not return a verifiable PR URL. Tool output: ${prOutput.slice(0, 500)}`,
+        );
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    this.persistTurnLearning(userText, finalText);
+    void this.memory.logEvent(trigger, `Skill integrate: ${pending.skillSlug}`);
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
   }
 
   private async runResponsivePresetUpgrade(
@@ -706,6 +1692,302 @@ export class OrchestratorService {
     return true;
   }
 
+  private async runWeatherLookup(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+    clientPlatform: 'desktop' | 'web',
+  ): Promise<boolean> {
+    const skill = this.skills.get('get_weather');
+    if (!skill) {
+      return false;
+    }
+
+    let location = extractWeatherLocation(userText);
+    if (!location) {
+      const facts = await this.memory.recallFacts('home city location tunis where user lives');
+      const fromFacts = facts
+        .join(' ')
+        .match(/\b(Tunis|Sfax|Sousse|Paris|London|Berlin|Cairo|Algiers|Marseille)\b/i);
+      location = fromFacts?.[1] ?? null;
+    }
+
+    if (!location) {
+      const finalText =
+        'Which city should I check the weather for, sir? Name the place and I will pull live conditions from Open-Meteo.';
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    emitter.onProgress?.({
+      stage: 'weather',
+      message: `Checking weather for ${location}…`,
+      percent: 40,
+      toolName: 'get_weather',
+    });
+
+    const output = await this.executeToolCall(
+      conversationId,
+      {
+        id: 'weather-lookup',
+        name: 'get_weather',
+        arguments: { location, days: 3 },
+      },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    const finalText = output.startsWith('Error:') || output.includes("couldn't find")
+      ? `I couldn't fetch weather for ${location}, sir. ${output.split('\n')[0]}`
+      : output.includes('Now in')
+        ? output.split('\n').slice(0, 4).join(' ')
+        : output;
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    this.persistTurnLearning(userText, finalText);
+    void this.memory.logEvent(trigger, `Weather: ${location}`);
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runWebSearchMetaAnswer(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+  ): Promise<boolean> {
+    const last = await this.feedback.getLastForConversation(conversationId);
+    const recentAudits = await this.guardrails.recentAudit(30);
+    const lastSearchAudit = recentAudits.find((row) => row.action === 'web_search');
+    const tools = last?.toolsUsed?.split(',').map((s) => s.trim()).filter(Boolean) ?? [];
+    const usedWebSearch = tools.includes('web_search');
+
+    let finalText: string;
+    if (usedWebSearch) {
+      const outcome = lastSearchAudit?.outcome;
+      const outcomeNote =
+        outcome === 'success'
+          ? 'The search succeeded.'
+          : outcome
+            ? `Search outcome was: ${outcome}.`
+            : '';
+      finalText = `Yes, sir — that answer used a live web_search call, not training data alone. ${outcomeNote}`.trim();
+    } else if (last) {
+      const toolNote = last.toolsUsed?.trim()
+        ? `Tools logged for that turn: ${last.toolsUsed}.`
+        : 'No tools were logged for that turn.';
+      finalText = `No, sir — that answer did not use web_search. It was generated without a live search. ${toolNote}`;
+    } else {
+      finalText =
+        "I don't have a logged prior turn for this conversation, sir — I can't confirm whether the last answer used live web search.";
+    }
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    void this.memory.logEvent(trigger, 'Web search meta question answered from interaction log');
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runWebSearchLookup(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+    clientPlatform: 'desktop' | 'web',
+  ): Promise<boolean> {
+    const skill = this.skills.get('web_search');
+    if (!skill) {
+      return false;
+    }
+
+    const profile = runtimeProfile();
+    if (!isSkillAllowedOnRuntime('web_search', profile)) {
+      return false;
+    }
+
+    const perm = permissionForSkill('web_search');
+    const grantedTier = maxSkillTier();
+    if (perm && !isTierGranted(perm.tier, grantedTier)) {
+      const msg = tierDenialMessage('web_search', perm.tier, grantedTier);
+      await this.memory.appendMessage(conversationId, 'assistant', msg);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(msg);
+      return true;
+    }
+
+    const query = extractWebSearchQuery(userText);
+    emitter.onProgress?.({
+      stage: 'web_search',
+      message: 'Searching the web (required)…',
+      percent: 35,
+      toolName: 'web_search',
+    });
+
+    const searchOutput = await this.executeToolCall(
+      conversationId,
+      {
+        id: 'web-search-required',
+        name: 'web_search',
+        arguments: { query },
+      },
+      emitter,
+      trigger,
+      clientPlatform,
+    );
+
+    if (isFailedWebSearchOutput(searchOutput)) {
+      const finalText = buildWebSearchUnavailableMessage(searchOutput);
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      void this.memory.logEvent(trigger, `Web search failed: ${query.slice(0, 80)}`);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
+    const taskRoute = this.taskRouter.resolve(userText, undefined, userText.length);
+    const synthesisPrompt =
+      `${this.personality.getActivePrompt()}\n\n` +
+      `The user asked a question that requires current web information. ` +
+      `Answer using ONLY the web search results below — do not rely on training data for factual claims. Cite source links. ` +
+      `If results are thin or inconclusive, say so plainly.\n\n` +
+      `Web search results:\n${searchOutput}`;
+
+    let streamed = '';
+    const synthesisFilter = new ToolMarkupStreamFilter();
+    const result = await this.llmService.chatWithRoute(userText, {
+      messages: [
+        { role: 'system', content: synthesisPrompt },
+        { role: 'user', content: userText },
+      ],
+      tools: [],
+      route: taskRoute.route,
+      onToken: (token) => {
+        synthesisFilter.feed(token, (safe) => {
+          streamed += safe;
+          if (safe) {
+            emitter.onToken(safe);
+          }
+        });
+      },
+    });
+    this.taskRouter.recordUsage(estimateTurnTokens([{ role: 'user', content: userText }], result.content));
+
+    let finalText = sanitizeUserFacingAssistantText((result.content || streamed).trim());
+    if (!finalText || finalText.length < 20) {
+      finalText = searchOutput.startsWith('Error:') || searchOutput.includes('Permission denied')
+        ? `I couldn't complete the web search, sir. ${searchOutput.split('\n')[0]}`
+        : searchOutput;
+    }
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    this.persistTurnLearning(userText, finalText);
+    void this.memory.logEvent(trigger, `Web search: ${query.slice(0, 80)}`);
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runBrainOpsMetaAnswer(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+  ): Promise<boolean> {
+    const recentAudits = await this.guardrails.recentAudit(50);
+    const cleanupAudits = recentAudits.filter(
+      (row) => row.action === 'brain' && row.detail?.includes('"cleanup"'),
+    );
+    const history = await this.brain.getCleanupHistory();
+    const lastVaultCleanup = history.entries[0];
+    const episodic = await this.memory.recentEvents(30);
+    const lastEpisodicCleanup = episodic.find((e) => e.kind === 'brain_cleanup');
+
+    const asksDeletionLog =
+      /\b(deletion log|audit trail|log exist|what pages were removed|which pages|what was deleted|11 deleted|deleted pages)\b/i.test(
+        userText,
+      );
+
+    let finalText: string;
+    if (asksDeletionLog) {
+      const parts: string[] = [
+        'No, sir — there is no dedicated per-page deletion table in Postgres. Cleanup runs are logged in audit_log as action=brain with {"action":"cleanup"} only (timestamp, no page list).',
+      ];
+      if (cleanupAudits.length) {
+        const latest = cleanupAudits[0];
+        parts.push(
+          `Yes, cleanup did run — most recently at ${latest.createdAt.toISOString()} (${cleanupAudits.length} recorded cleanup invocation(s) in audit).`,
+        );
+      } else {
+        parts.push('I do not see a successful brain cleanup in the recent audit log.');
+      }
+      if (lastVaultCleanup?.removed.length) {
+        parts.push(
+          `The vault log lists ${lastVaultCleanup.count} page(s) from the last logged cleanup (${lastVaultCleanup.at}): ${lastVaultCleanup.removed.slice(0, 12).join('; ')}${lastVaultCleanup.removed.length > 12 ? '…' : ''}.`,
+        );
+      } else if (lastVaultCleanup?.count) {
+        parts.push(
+          `The vault log records ${lastVaultCleanup.count} page(s) removed at ${lastVaultCleanup.at}, but individual titles were not logged for that run (older format).`,
+        );
+      } else if (lastEpisodicCleanup?.detail?.trim()) {
+        parts.push(`Episodic log detail:\n${lastEpisodicCleanup.detail.slice(0, 1200)}`);
+      } else {
+        parts.push('No per-page removal list is stored for the last cleanup — only counts until the next cleanup runs with the updated logger.');
+      }
+      finalText = parts.join('\n\n');
+    } else {
+      finalText =
+        'Understood, sir — you are asking about prior brain behavior, not requesting a new cleanup/consolidate/pause. ' +
+        (cleanupAudits.length
+          ? `Recent audit shows ${cleanupAudits.length} brain cleanup invocation(s); latest at ${cleanupAudits[0].createdAt.toISOString()}. `
+          : 'No recent brain cleanup appears in audit. ') +
+        'I will answer your question directly without opening the graph or changing brain ops state.';
+    }
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    void this.memory.logEvent(trigger, 'Brain ops meta question answered');
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runBrainOpsPause(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+  ): Promise<boolean> {
+    await this.brainOpsPause.pause(userText.slice(0, 500));
+    const finalText =
+      'Understood, sir — brain cleanup, consolidate, and rehydrate are paused until you resume. Use Settings or say "resume brain operations".';
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    void this.memory.logEvent(trigger, 'Brain ops paused');
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runBrainOpsResume(
+    conversationId: string,
+    userText: string,
+    emitter: OrchestratorEmitter,
+    trigger: string,
+  ): Promise<boolean> {
+    await this.brainOpsPause.resume();
+    const finalText =
+      'Brain operations resumed, sir — cleanup, consolidate, and rehydrate are enabled again.';
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    void this.memory.logEvent(trigger, 'Brain ops resumed');
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
   private async runBrainCleanup(
     conversationId: string,
     userText: string,
@@ -713,12 +1995,22 @@ export class OrchestratorService {
     trigger: string,
     clientPlatform: 'desktop' | 'web',
   ): Promise<boolean> {
+    if (await this.brainOpsPause.isPaused()) {
+      const finalText = BRAIN_OPS_BLOCKED_MESSAGE;
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
     const skill = this.skills.get('brain');
     if (!skill) {
       return false;
     }
 
     emitter.onProgress?.({ stage: 'brain', message: 'Cleaning up brain vault…', percent: 30, toolName: 'brain' });
+
+    await this.brain.reloadFromStore();
 
     const output = await this.executeToolCall(
       conversationId,
@@ -736,12 +2028,23 @@ export class OrchestratorService {
       clientPlatform,
     );
 
+    const stats = await this.brain.getVaultStats();
     const finalText = output.includes('removed')
-      ? `Brain cleaned up, sir. ${output.split('\n')[0]} The graph is refreshed — orphan command pages are gone.`
-      : `Brain vault is tidy, sir. ${output.split('\n')[0]}`;
+      ? `Brain cleaned up, sir. ${output.split('\n')[0]} Vault now has ${stats.pageCount} notes and ${stats.edgeCount} links.`
+      : `Brain vault is tidy, sir. ${stats.pageCount} notes, ${stats.edgeCount} links.`;
 
     await this.memory.appendMessage(conversationId, 'assistant', finalText);
-    void this.memory.logEvent(trigger, 'Brain cleanup');
+    const history = await this.brain.getCleanupHistory();
+    const lastCleanup = history.entries[0];
+    if (lastCleanup?.count) {
+      void this.memory.logEvent(
+        'brain_cleanup',
+        `Removed ${lastCleanup.count} page(s)`,
+        lastCleanup.removed.length ? lastCleanup.removed.join('\n') : undefined,
+      );
+    } else {
+      void this.memory.logEvent(trigger, 'Brain cleanup');
+    }
     emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
     emitter.onDone(finalText);
     return true;
@@ -754,6 +2057,14 @@ export class OrchestratorService {
     trigger: string,
     clientPlatform: 'desktop' | 'web',
   ): Promise<boolean> {
+    if (await this.brainOpsPause.isPaused()) {
+      const finalText = BRAIN_OPS_BLOCKED_MESSAGE;
+      await this.memory.appendMessage(conversationId, 'assistant', finalText);
+      emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+      emitter.onDone(finalText);
+      return true;
+    }
+
     const skill = this.skills.get('brain');
     if (!skill) {
       return false;
@@ -765,6 +2076,8 @@ export class OrchestratorService {
       percent: 36,
       toolName: 'brain',
     });
+
+    await this.brain.reloadFromStore();
 
     const output = await this.executeToolCall(
       conversationId,
@@ -782,12 +2095,13 @@ export class OrchestratorService {
       clientPlatform,
     );
 
-    const graph = await this.brain.getGraph();
+    const stats = await this.brain.getVaultStats();
     const linkedMatch = output.match(/(\d+)\s+new pairs/i);
     const linked = linkedMatch?.[1] ?? '0';
+    const stampedAt = new Date().toISOString().slice(0, 16).replace('T', ' ');
     const finalText =
       `Relational mapping complete, sir — wrote ${linked} new link pair(s). ` +
-      `Graph now has ${graph.nodes.length} notes and ${graph.edges.length} links. ` +
+      `Graph now has ${stats.pageCount} notes and ${stats.edgeCount} links (verified ${stampedAt} UTC). ` +
       `Refresh the graph panel if it was already open.`;
 
     await this.memory.appendMessage(conversationId, 'assistant', finalText);
@@ -812,8 +2126,6 @@ export class OrchestratorService {
 
     emitter.onProgress?.({ stage: 'brain', message: 'Loading knowledge graph…', percent: 42, toolName: 'brain' });
 
-    void this.brain.cleanupVault();
-
     await this.executeToolCall(
       conversationId,
       { id: 'brain-graph', name: 'brain', arguments: { action: 'graph' } },
@@ -822,13 +2134,47 @@ export class OrchestratorService {
       clientPlatform,
     );
 
+    const stats = await this.brain.getVaultStats();
     const graph = await this.brain.getGraph();
     const labels = graph.nodes.map((n) => n.label).join(', ');
-    const finalText = `Opening your brain graph, sir — ${graph.nodes.length} notes (${labels}) and ${graph.edges.length} links.`;
+    const finalText = `Opening your brain graph, sir — ${stats.pageCount} notes (${labels}) and ${stats.edgeCount} links.`;
 
     await this.memory.appendMessage(conversationId, 'assistant', finalText);
     this.persistTurnLearning(userText, finalText);
     void this.memory.logEvent(trigger, 'Brain graph opened');
+    emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
+    emitter.onDone(finalText);
+    return true;
+  }
+
+  private async runExplicitLessonSave(
+    conversationId: string,
+    userText: string,
+    history: ChatMessage[],
+    emitter: OrchestratorEmitter,
+    trigger: string,
+  ): Promise<boolean> {
+    const lessonText = extractExplicitLessonText(userText);
+    if (!lessonText) {
+      return false;
+    }
+
+    const contextChars =
+      history.reduce((sum, m) => sum + String(m.content ?? '').length, 0) + userText.length;
+    const taskRoute = this.taskRouter.resolve(userText, undefined, contextChars);
+
+    emitter.onProgress?.({ stage: 'memory', message: 'Saving lesson…', percent: 50 });
+
+    await this.lessons.createDirect({
+      lessonText,
+      triggerContext: userText.slice(0, 500),
+      taskType: taskRoute.task,
+    });
+
+    const finalText = `Understood — I'll remember: ${lessonText}`;
+
+    await this.memory.appendMessage(conversationId, 'assistant', finalText);
+    void this.memory.logEvent(trigger, `Explicit lesson saved: ${lessonText.slice(0, 80)}`);
     emitter.onProgress?.({ stage: 'done', message: 'Complete', percent: 100 });
     emitter.onDone(finalText);
     return true;
@@ -877,22 +2223,24 @@ export class OrchestratorService {
     trigger: string,
   ): Promise<boolean> {
     const userPage = await this.brain.findUserEntityPage();
-    const query = await this.brain.query('user profile samer owner engineer', 5);
-    const facts = await this.memory.recallFacts('user profile samer');
+    const query = userPage
+      ? { hits: [] as Array<{ title: string; path: string; excerpt: string; score: number }> }
+      : await this.brain.query('user profile samer owner engineer', 5);
+    const [prefs, facts] = await Promise.all([
+      this.memory.listPreferences(),
+      this.memory.recallFacts('user profile samer'),
+    ]);
+    const preferences = prefs
+      .filter((p) => p.key?.startsWith('user.'))
+      .map((p) => `${p.key}: ${p.value}`);
 
-    let finalText = '';
-
-    if (userPage) {
-      const snippet = userPage.content.replace(/^#.+$/m, '').trim().slice(0, 420);
-      finalText = `From my brain, sir: I have your profile page "${userPage.title}" linked in the knowledge graph. ${snippet}`;
-    } else if (query.hits.length) {
-      finalText = `From my brain vault, sir: ${query.hits
-        .slice(0, 2)
-        .map((h) => `${h.title} — ${h.excerpt}`)
-        .join(' ')}`;
-    } else if (facts.length) {
-      finalText = `From memory, sir: ${facts.slice(0, 4).join(' ')}`;
-    } else {
+    const finalText = buildAboutUserReply({
+      userPage,
+      queryHits: query.hits,
+      preferences,
+      facts,
+    });
+    if (!finalText) {
       return false;
     }
 
@@ -994,6 +2342,20 @@ function sanitizeBrainDenial(text: string, userText: string): string {
   return text;
 }
 
+function sanitizeWeatherDenial(text: string, userText: string): string {
+  if (!isWeatherRequest(userText)) {
+    return text;
+  }
+  if (
+    /\b(don't have permission|do not have permission|can't access weather|cannot access weather|no permission|unable to access weather|don't have access to weather|cannot provide weather|can't provide weather)\b/i.test(
+      text,
+    )
+  ) {
+    return 'Sir, I do have live weather access via get_weather — tell me the city and I will fetch current conditions and the forecast now.';
+  }
+  return text;
+}
+
 function sanitizeSelfImproveDenial(text: string, userText: string): string {
   if (!/\bself[-_]?improve\b/i.test(userText)) {
     return text;
@@ -1060,4 +2422,9 @@ function selfImproveProgressLabel(action: string, args: Record<string, unknown>)
     default:
       return 'Self-upgrade in progress';
   }
+}
+
+function estimateTurnTokens(messages: ChatMessage[], response: string): number {
+  const inputChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
+  return Math.ceil((inputChars + response.length) / 4);
 }

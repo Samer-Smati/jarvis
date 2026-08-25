@@ -1,28 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Skill, SkillContext, SkillResult } from '../skill.interface';
+import {
+  formatSearchHits,
+  mapTavilyResults,
+  type SearchHit,
+  type TavilyWebResult,
+} from './web-search.util';
 
-interface DuckDuckGoTopic {
-  Text?: string;
-  FirstURL?: string;
-  Topics?: DuckDuckGoTopic[];
-}
-
-interface DuckDuckGoResponse {
-  AbstractText?: string;
-  AbstractURL?: string;
-  Answer?: string;
-  RelatedTopics?: DuckDuckGoTopic[];
-}
-
-interface SearchHit {
-  title: string;
-  url: string;
-  snippet?: string;
-}
-
+const TAVILY_SEARCH_URL = 'https://api.tavily.com/search';
 const DEFAULT_TIMEOUT_MS = 12_000;
+const SERVERLESS_TIMEOUT_MS = 20_000;
 const USER_AGENT =
   'Mozilla/5.0 (compatible; JARVIS/1.0; +https://github.com/Samer-Smati/jarvis)';
+
+interface TavilySearchResponse {
+  results?: TavilyWebResult[];
+}
 
 @Injectable()
 export class WebSearchSkill implements Skill {
@@ -30,7 +23,7 @@ export class WebSearchSkill implements Skill {
 
   readonly name = 'web_search';
   readonly description =
-    'Search the web and return a short summary with source links (DuckDuckGo + optional Hugging Face Hub lookup).';
+    'Search the web via Tavily Search API (free tier) and return a short summary with source links (optional Hugging Face Hub enrichment for model queries).';
   readonly requiresConfirmation = false;
   readonly parameters = {
     type: 'object',
@@ -50,7 +43,16 @@ export class WebSearchSkill implements Skill {
       return { success: false, output: 'Missing "query" argument.' };
     }
 
-    const timeoutMs = clampTimeout(args?.timeout);
+    const apiKey = process.env.TAVILY_API_KEY?.trim();
+    if (!apiKey) {
+      return {
+        success: false,
+        output:
+          'Search error: TAVILY_API_KEY is not set. Sign up free at https://tavily.com (1,000 searches/month, no credit card) and add your API key.',
+      };
+    }
+
+    const timeoutMs = clampTimeout(args?.timeout, isServerlessRuntime());
     context.onProgress?.({
       stage: 'web_search',
       message: `Searching: ${query}`,
@@ -58,25 +60,16 @@ export class WebSearchSkill implements Skill {
     });
 
     try {
-      const lines: string[] = [];
-      const instant = await this.instantAnswer(query, timeoutMs);
-      lines.push(...instant);
-
       context.onProgress?.({
         stage: 'web_search',
         message: 'Fetching web results…',
         percent: 55,
       });
-      const htmlHits = await this.htmlSearch(query, timeoutMs);
-      for (const hit of htmlHits.slice(0, 6)) {
-        lines.push(
-          hit.snippet
-            ? `- ${hit.title}: ${hit.snippet} (${hit.url})`
-            : `- ${hit.title} (${hit.url})`,
-        );
-      }
 
-      if (/hugging\s*face|huggingface|hf\.co/i.test(query)) {
+      const tavily = await this.tavilyWebSearch(query, apiKey, timeoutMs);
+      const lines = [...formatSearchHits(tavily.hits)];
+
+      if (this.shouldQueryHfHub(query)) {
         context.onProgress?.({
           stage: 'web_search',
           message: 'Checking Hugging Face Hub…',
@@ -90,84 +83,81 @@ export class WebSearchSkill implements Skill {
       }
 
       if (!lines.length) {
+        const detail = `[provider=tavily status=${tavily.status} hits=0${tavily.error ? ` error=${tavily.error}` : ''}]`;
+        this.logger.warn(`web_search empty results for "${query}": ${detail}`);
         return {
           success: false,
-          output: `No web results found for "${query}". Try a shorter or more specific query.`,
+          output: `No web results found for "${query}". ${detail}`,
         };
       }
 
       return { success: true, output: lines.join('\n') };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`web_search failed: ${message}`);
+      this.logger.warn(`web_search failed for "${query}": ${message}`);
       return { success: false, output: `Search error: ${message}` };
     }
   }
 
-  private async instantAnswer(query: string, timeoutMs: number): Promise<string[]> {
-    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
+  private async tavilyWebSearch(
+    query: string,
+    apiKey: string,
+    timeoutMs: number,
+  ): Promise<{ hits: SearchHit[]; status: number; error?: string }> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await this.fetchText(url, timeoutMs);
-      const data = JSON.parse(response) as DuckDuckGoResponse;
-      const lines: string[] = [];
-      if (data.Answer?.trim()) {
-        lines.push(`Answer: ${data.Answer.trim()}`);
-      }
-      if (data.AbstractText?.trim()) {
-        lines.push(
-          `${data.AbstractText.trim()}${data.AbstractURL ? ` (${data.AbstractURL})` : ''}`,
+      const response = await fetch(TAVILY_SEARCH_URL, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'User-Agent': USER_AGENT,
+        },
+        body: JSON.stringify({
+          api_key: apiKey,
+          query,
+          search_depth: 'basic',
+          include_answer: false,
+          max_results: 8,
+        }),
+      });
+
+      const body = await response.text();
+      if (!response.ok) {
+        const snippet = body.slice(0, 200).replace(/\s+/g, ' ').trim();
+        throw new Error(
+          `Tavily Search HTTP ${response.status}${snippet ? `: ${snippet}` : ''}`,
         );
       }
-      for (const topic of this.flattenTopics(data.RelatedTopics ?? []).slice(0, 4)) {
-        if (topic.Text?.trim()) {
-          lines.push(`- ${topic.Text.trim()}${topic.FirstURL ? ` (${topic.FirstURL})` : ''}`);
-        }
+
+      let parsed: TavilySearchResponse;
+      try {
+        parsed = JSON.parse(body) as TavilySearchResponse;
+      } catch {
+        throw new Error('Tavily Search returned invalid JSON');
       }
-      return lines;
+
+      const hits = mapTavilyResults(parsed.results ?? []);
+      return { hits, status: response.status };
     } catch (error) {
-      this.logger.debug(`instant answer skipped: ${(error as Error).message}`);
-      return [];
+      if ((error as Error).name === 'AbortError') {
+        throw new Error(`Timed out after ${timeoutMs}ms calling Tavily Search`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
-  private async htmlSearch(query: string, timeoutMs: number): Promise<SearchHit[]> {
-    const attempts: Array<{ url: string; init: RequestInit }> = [
-      {
-        url: 'https://html.duckduckgo.com/html/',
-        init: {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            Accept: 'text/html',
-            'User-Agent': USER_AGENT,
-          },
-          body: `q=${encodeURIComponent(query)}`,
-        },
-      },
-      {
-        url: `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
-        init: {
-          method: 'GET',
-          headers: {
-            Accept: 'text/html',
-            'User-Agent': USER_AGENT,
-          },
-        },
-      },
-    ];
-
-    for (const endpoint of attempts) {
-      try {
-        const html = await this.fetchText(endpoint.url, timeoutMs, endpoint.init);
-        const hits = parseDuckDuckGoHtml(html);
-        if (hits.length) {
-          return hits;
-        }
-      } catch (error) {
-        this.logger.debug(`html search attempt failed: ${(error as Error).message}`);
-      }
+  private shouldQueryHfHub(query: string): boolean {
+    if (/hugging\s*face|huggingface|hf\.co/i.test(query)) {
+      return true;
     }
-    return [];
+    return /\b(llm|llms|open.?source model|language model|gemma|llama|qwen|mistral|deepseek|model hub)\b/i.test(
+      query,
+    );
   }
 
   private async huggingFaceModels(query: string, timeoutMs: number): Promise<string[]> {
@@ -187,7 +177,6 @@ export class WebSearchSkill implements Skill {
         modelId?: string;
         downloads?: number;
         likes?: number;
-        tags?: string[];
       }>;
       if (!Array.isArray(models) || !models.length) {
         return [];
@@ -223,103 +212,24 @@ export class WebSearchSkill implements Skill {
       return await response.text();
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
-        throw new Error(`Timed out after ${timeoutMs}ms`);
+        throw new Error(`Timed out after ${timeoutMs}ms fetching ${url}`);
       }
       throw error;
     } finally {
       clearTimeout(timer);
     }
   }
-
-  private flattenTopics(topics: DuckDuckGoTopic[]): DuckDuckGoTopic[] {
-    const flat: DuckDuckGoTopic[] = [];
-    for (const topic of topics) {
-      if (topic.Topics?.length) {
-        flat.push(...this.flattenTopics(topic.Topics));
-      } else {
-        flat.push(topic);
-      }
-    }
-    return flat;
-  }
 }
 
-function clampTimeout(raw: unknown): number {
+function clampTimeout(raw: unknown, serverless = false): number {
   const n = typeof raw === 'number' ? raw : Number(raw);
+  const fallback = serverless ? SERVERLESS_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
   if (!Number.isFinite(n) || n <= 0) {
-    return DEFAULT_TIMEOUT_MS;
+    return fallback;
   }
   return Math.min(Math.max(Math.floor(n), 3000), 25_000);
 }
 
-function parseDuckDuckGoHtml(html: string): SearchHit[] {
-  const blocks = html.split(/class="[^"]*result[^"]*"/i).slice(1);
-  const hits: SearchHit[] = [];
-
-  for (const block of blocks) {
-    const linkMatch =
-      block.match(/class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i) ??
-      block.match(/href="(https?:\/\/[^"]+)"[^>]*class="result__a"[^>]*>([\s\S]*?)<\/a>/i);
-    if (!linkMatch) {
-      continue;
-    }
-    const url = cleanDuckDuckGoUrl(decodeBasicEntities(linkMatch[1] ?? ''));
-    const title = decodeBasicEntities(stripTags(linkMatch[2] ?? '')).trim();
-    if (!url || !title || /duckduckgo\.com\/y\.js/i.test(url)) {
-      continue;
-    }
-    const snippetMatch = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i)
-      ?? block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\//i);
-    const snippet = snippetMatch
-      ? decodeBasicEntities(stripTags(snippetMatch[1] ?? '')).trim()
-      : undefined;
-    hits.push({ title, url, snippet: snippet || undefined });
-    if (hits.length >= 8) {
-      break;
-    }
-  }
-
-  if (hits.length) {
-    return hits;
-  }
-
-  // Fallback: any result__a anchors if block split failed
-  const re = /class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(html)) && hits.length < 8) {
-    const url = cleanDuckDuckGoUrl(decodeBasicEntities(match[1] ?? ''));
-    const title = decodeBasicEntities(stripTags(match[2] ?? '')).trim();
-    if (url && title && !/duckduckgo\.com\/y\.js/i.test(url)) {
-      hits.push({ title, url });
-    }
-  }
-  return hits;
-}
-
-function cleanDuckDuckGoUrl(href: string): string {
-  try {
-    const parsed = new URL(href, 'https://duckduckgo.com');
-    const uddg = parsed.searchParams.get('uddg');
-    if (uddg) {
-      return decodeURIComponent(uddg);
-    }
-    return parsed.toString();
-  } catch {
-    return href;
-  }
-}
-
-function stripTags(value: string): string {
-  return value.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
-}
-
-function decodeBasicEntities(value: string): string {
-  return value
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#x27;/gi, "'")
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ');
+function isServerlessRuntime(): boolean {
+  return !!process.env.VERCEL || process.env.JARVIS_SERVERLESS === '1';
 }

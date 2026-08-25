@@ -1,9 +1,12 @@
 import { BrainPgStore } from '../brain/brain-pg.store';
 import { EmbeddingService } from '../llm/embedding.service';
+import { LessonsService } from '../lessons/lessons.service';
+import { MemoryRepository } from './memory.repository';
 import { MemoryService } from './memory.service';
 
 describe('MemoryService.rememberFact', () => {
-  let semantic: { save: jest.Mock; create: jest.Mock; find: jest.Mock };
+  let semantic: { find: jest.Mock };
+  let repository: jest.Mocked<Pick<MemoryRepository, 'createFact'>>;
   let embeddings: jest.Mocked<Pick<EmbeddingService, 'tryEmbed'>>;
   let brainPg: jest.Mocked<Pick<BrainPgStore, 'indexChunk'>>;
 
@@ -12,15 +15,20 @@ describe('MemoryService.rememberFact', () => {
       {} as never,
       {} as never,
       semantic as never,
+      {} as never,
+      {} as never,
       embeddings as unknown as EmbeddingService,
       brainPg as unknown as BrainPgStore,
+      repository as unknown as MemoryRepository,
+      {} as unknown as LessonsService,
     );
 
   beforeEach(() => {
     semantic = {
-      save: jest.fn().mockResolvedValue(undefined),
-      create: jest.fn((data) => data),
       find: jest.fn().mockResolvedValue([]),
+    };
+    repository = {
+      createFact: jest.fn().mockResolvedValue({ id: 'fact-1', text: 'User likes tea.', memoryType: 'fact' }),
     };
     embeddings = { tryEmbed: jest.fn() };
     brainPg = { indexChunk: jest.fn().mockResolvedValue(undefined) };
@@ -32,7 +40,7 @@ describe('MemoryService.rememberFact', () => {
 
     await buildService().rememberFact('User likes tea.');
 
-    expect(semantic.save).toHaveBeenCalledTimes(1);
+    expect(repository.createFact).toHaveBeenCalledTimes(1);
   });
 
   it('skips inserting a near-duplicate fact', async () => {
@@ -41,7 +49,7 @@ describe('MemoryService.rememberFact', () => {
 
     await buildService().rememberFact('User really likes tea.');
 
-    expect(semantic.save).not.toHaveBeenCalled();
+    expect(repository.createFact).not.toHaveBeenCalled();
   });
 
   it('always inserts when embeddings are unavailable', async () => {
@@ -50,6 +58,6 @@ describe('MemoryService.rememberFact', () => {
 
     await buildService().rememberFact('User likes tea.');
 
-    expect(semantic.save).toHaveBeenCalledTimes(1);
+    expect(repository.createFact).toHaveBeenCalledTimes(1);
   });
 });

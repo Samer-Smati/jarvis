@@ -22,7 +22,7 @@ import {
   shouldListRepoPath,
 } from '../project-scope.util';
 
-const MAX_READ = 12000;
+const MAX_READ = 48000;
 const RUN_TIMEOUT_MS = 120000;
 
 const PATH_ALIASES: Record<string, string> = {

@@ -2,10 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LlmChatOptions, LlmChatResult, LlmProvider } from './llm.types';
 import {
+  cappedRetryAfterMs,
+  isDailyQuotaExhaustedError,
   isModelNotFoundError,
   isRateLimitError,
   listOpenAiModels,
-  parseRetryAfterMs,
   resolveModelChain,
   sleep,
   streamOpenAiChat,
@@ -87,11 +88,14 @@ export class OpenRouterProvider implements LlmProvider {
           );
         } catch (error) {
           lastError = (error as Error).message;
+          if (isDailyQuotaExhaustedError(lastError)) {
+            throw error;
+          }
           if (isModelNotFoundError(lastError)) {
             this.resolvedModels = null;
             break;
           }
-          const retryMs = parseRetryAfterMs(lastError);
+          const retryMs = cappedRetryAfterMs(lastError);
           if (retryMs != null && attempt < 2) {
             await sleep(retryMs + 200);
             continue;

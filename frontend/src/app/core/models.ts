@@ -1,3 +1,38 @@
+export type TurnStage =
+  | 'queued'
+  | 'accepted'
+  | 'routing'
+  | 'thinking'
+  | 'tool'
+  | 'writing'
+  | 'waiting_user'
+  | 'done'
+  | 'error'
+  | 'timeout';
+
+export interface TurnStatusEvent {
+  stage: TurnStage | string;
+  message: string;
+  percent?: number;
+  detail?: string;
+  toolName?: string;
+  elapsedMs?: number;
+  slow?: boolean;
+  retryable?: boolean;
+}
+
+export interface ActiveTurnStatus {
+  requestId: string;
+  conversationId: string;
+  stage: TurnStage | string;
+  message: string;
+  slow: boolean;
+  retryable: boolean;
+  isTerminal: boolean;
+  startedAt: number;
+  lastEventAt: number;
+}
+
 export interface ToolActivity {
   toolName: string;
   label?: string;
@@ -7,18 +42,16 @@ export interface ToolActivity {
   running: boolean;
 }
 
-export interface ProgressStep {
+export interface ProgressStep extends TurnStatusEvent {
   stage: string;
-  message: string;
-  percent?: number;
-  detail?: string;
-  toolName?: string;
   at: number;
 }
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  requestId?: string;
+  pending?: boolean;
   createdAt?: string;
   streaming?: boolean;
   statusHint?: string;
@@ -28,6 +61,10 @@ export interface ChatMessage {
   progressPercent?: number;
   tools?: ToolActivity[];
   images?: ChatImageAttachment[];
+  interactionId?: string;
+  feedback?: 'up' | 'down' | null;
+  showCorrection?: boolean;
+  correctionText?: string;
 }
 
 export interface ChatImageAttachment {
@@ -99,6 +136,8 @@ export interface EpisodicEvent {
 export interface MemoryFact {
   id: string;
   text: string;
+  memoryType?: 'fact' | 'preference' | 'project';
+  pinned?: boolean;
   createdAt: string;
 }
 
@@ -145,6 +184,15 @@ export interface BrainGraph {
   nodes: BrainGraphNode[];
   edges: BrainGraphEdge[];
   updatedAt: string;
+  source?: 'vault' | 'pg' | 'seed';
+  pageCount?: number;
+  edgeCount?: number;
+}
+
+export interface BrainOpsStatus {
+  paused: boolean;
+  reason?: string;
+  since?: string;
 }
 
 export interface GraphLayoutNode {
@@ -156,5 +204,34 @@ export interface GraphLayoutNode {
   y: number;
   vx: number;
   vy: number;
+}
+
+export type LessonStatus = 'active' | 'needs_review' | 'archived';
+
+export interface Lesson {
+  id: string;
+  taskType: string;
+  triggerContext: string;
+  lessonText: string;
+  confidenceScore: number;
+  reinforcementCount: number;
+  retrievalCount: number;
+  sourceInteractionId?: string;
+  status: LessonStatus;
+  pinned: boolean;
+  lastUsedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LessonSourceInteraction {
+  id: string;
+  prompt: string;
+  response: string;
+  correction?: string;
+  createdAt?: string;
+  conversationId?: string;
+  rating?: number;
+  taskRoute?: string;
 }
 

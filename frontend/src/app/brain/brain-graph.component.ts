@@ -52,6 +52,7 @@ export class BrainGraphComponent implements AfterViewInit, OnChanges, OnDestroy 
   height = 520;
 
   private subs = new Subscription();
+  private refreshSub?: Subscription;
   private raf = 0;
   private dragNode: GraphLayoutNode | null = null;
 
@@ -60,7 +61,13 @@ export class BrainGraphComponent implements AfterViewInit, OnChanges, OnDestroy 
     private brainGraph: BrainGraphService,
     private cdr: ChangeDetectorRef,
     private zone: NgZone,
-  ) {}
+  ) {
+    this.refreshSub = this.brainGraph.refresh$.subscribe(() => {
+      if (this.visible) {
+        this.fetchGraph(false);
+      }
+    });
+  }
 
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['visible']) {
@@ -77,6 +84,7 @@ export class BrainGraphComponent implements AfterViewInit, OnChanges, OnDestroy 
   }
 
   ngOnDestroy(): void {
+    this.refreshSub?.unsubscribe();
     this.subs.unsubscribe();
     cancelAnimationFrame(this.raf);
   }
@@ -229,8 +237,8 @@ export class BrainGraphComponent implements AfterViewInit, OnChanges, OnDestroy 
   private applyGraph(graph: BrainGraph, showLoading: boolean): void {
     const prev = new Map(this.layoutNodes.map((n) => [n.id, n]));
     this.edges = graph.edges;
-    this.nodeCount = graph.nodes.length;
-    this.edgeCount = graph.edges.length;
+    this.nodeCount = graph.pageCount ?? graph.nodes.length;
+    this.edgeCount = graph.edgeCount ?? graph.edges.length;
     this.updatedAt = graph.updatedAt;
     this.resize();
 

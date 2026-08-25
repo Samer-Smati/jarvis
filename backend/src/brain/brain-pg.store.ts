@@ -6,7 +6,12 @@ import { isPostgresEnabled } from '../database/database.util';
 import { BrainEdgeEntity } from './entities/brain-edge.entity';
 import { BrainPageEntity } from './entities/brain-page.entity';
 import { MemoryChunkEntity } from './entities/memory-chunk.entity';
-import { BrainGraph, BrainGraphEdge, BrainVault } from './brain.types';
+import { BrainCategory, BrainGraph, BrainGraphEdge, BrainPage, BrainVault } from './brain.types';
+
+export interface PgVaultSnapshot {
+  pages: BrainPage[];
+  edgeCount: number;
+}
 
 @Injectable()
 export class BrainPgStore {
@@ -44,6 +49,14 @@ export class BrainPgStore {
         });
       }
 
+      const vaultPaths = new Set(Object.keys(vault.pages));
+      const existingPages = await this.pages.find();
+      for (const row of existingPages) {
+        if (!vaultPaths.has(row.path)) {
+          await this.pages.delete({ path: row.path });
+        }
+      }
+
       await this.edges.clear();
       const graph = this.buildGraphFromVault(vault);
       for (const edge of graph.edges) {
@@ -56,6 +69,18 @@ export class BrainPgStore {
     } catch (error) {
       this.logger.warn(`Brain PG sync failed: ${(error as Error).message}`);
     }
+  }
+
+  async clearAllChunks(): Promise<number> {
+    if (!this.enabled()) {
+      return 0;
+    }
+    const count = await this.chunks.count();
+    if (!count) {
+      return 0;
+    }
+    await this.chunks.clear();
+    return count;
   }
 
   async indexTurn(userText: string, assistantText: string, journalPath?: string): Promise<void> {
@@ -87,14 +112,25 @@ export class BrainPgStore {
     }
   }
 
-  async searchSimilar(query: string, limit = 5): Promise<Array<{ text: string; score: number }>> {
+  async searchSimilar(
+    query: string,
+    limit = 5,
+    options?: { excludeSourceTypes?: string[] },
+  ): Promise<Array<{ text: string; score: number }>> {
     if (!this.enabled()) {
       return [];
     }
 
+    // After a newborn wipe (or cold start) there is nothing to search — do not wait on embeddings.
+    const chunkCount = await this.chunks.count();
+    if (!chunkCount) {
+      return [];
+    }
+
+    const exclude = options?.excludeSourceTypes?.filter(Boolean) ?? [];
     const queryVector = await this.embeddings.tryEmbed(query.slice(0, 1500));
     if (!queryVector?.length) {
-      return this.keywordFallback(query, limit);
+      return this.keywordFallback(query, limit, exclude);
     }
 
     try {
@@ -104,16 +140,17 @@ export class BrainPgStore {
         SELECT text, 1 - (embedding <=> $1::vector) AS score
         FROM memory_chunks
         WHERE embedding IS NOT NULL
+          AND (cardinality($3::text[]) = 0 OR NOT ("sourceType" = ANY($3::text[])))
         ORDER BY embedding <=> $1::vector
         LIMIT $2
         `,
-        [vectorLiteral, limit],
+        [vectorLiteral, limit, exclude],
       )) as Array<{ text: string; score: string }>;
 
       return rows.map((r) => ({ text: r.text, score: Number(r.score) }));
     } catch (error) {
       this.logger.warn(`pgvector search fallback: ${(error as Error).message}`);
-      return this.keywordFallback(query, limit);
+      return this.keywordFallback(query, limit, exclude);
     }
   }
 
@@ -163,6 +200,47 @@ export class BrainPgStore {
     return `PostgreSQL (Neon): ${pageCount} pages, ${edgeCount} links, ${chunkCount} vector chunks`;
   }
 
+  async countPages(): Promise<number> {
+    if (!this.enabled()) {
+      return 0;
+    }
+    return this.pages.count();
+  }
+
+  async loadVaultFromPg(): Promise<PgVaultSnapshot | null> {
+    if (!this.enabled()) {
+      return null;
+    }
+
+    const pageRows = await this.pages.find();
+    if (!pageRows.length) {
+      return null;
+    }
+
+    const edgeRows = await this.edges.find();
+    const linkSets = new Map<string, Set<string>>();
+    for (const row of pageRows) {
+      linkSets.set(row.path, new Set(Array.isArray(row.links) ? row.links : []));
+    }
+
+    for (const edge of edgeRows) {
+      linkSets.get(edge.sourcePath)?.add(edge.targetPath);
+      linkSets.get(edge.targetPath)?.add(edge.sourcePath);
+    }
+
+    const pages: BrainPage[] = pageRows.map((row) => ({
+      path: row.path,
+      title: row.title,
+      category: row.category as BrainCategory,
+      content: row.content,
+      links: [...(linkSets.get(row.path) ?? [])],
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    }));
+
+    return { pages, edgeCount: edgeRows.length };
+  }
+
   private async saveVector(id: string, embedding: number[]): Promise<void> {
     const vectorLiteral = `[${embedding.join(',')}]`;
     await this.chunks.query(`UPDATE memory_chunks SET embedding = $1::vector WHERE id = $2`, [
@@ -171,13 +249,19 @@ export class BrainPgStore {
     ]);
   }
 
-  private async keywordFallback(query: string, limit: number): Promise<Array<{ text: string; score: number }>> {
+  private async keywordFallback(
+    query: string,
+    limit: number,
+    excludeSourceTypes: string[] = [],
+  ): Promise<Array<{ text: string; score: number }>> {
     const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
     if (!terms.length) {
       return [];
     }
+    const exclude = new Set(excludeSourceTypes);
     const rows = await this.chunks.find({ order: { createdAt: 'DESC' }, take: 50 });
     return rows
+      .filter((row) => !exclude.has(row.sourceType))
       .map((row) => {
         const lower = row.text.toLowerCase();
         let score = 0;

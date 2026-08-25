@@ -8,12 +8,20 @@ export class BrainBlobStore {
     return !!process.env.BLOB_READ_WRITE_TOKEN;
   }
 
-  async load(): Promise<BrainVault | null> {
+  private token(): string | undefined {
+    return process.env.BLOB_READ_WRITE_TOKEN;
+  }
+
+  async load(useCache = true): Promise<BrainVault | null> {
     if (!this.enabled()) {
       return null;
     }
     try {
-      const result = await get(BLOB_PATH, { access: 'public' });
+      const result = await get(BLOB_PATH, {
+        access: 'public',
+        useCache,
+        token: this.token(),
+      });
       if (!result?.stream) {
         return null;
       }
@@ -34,6 +42,7 @@ export class BrainBlobStore {
       addRandomSuffix: false,
       allowOverwrite: true,
       contentType: 'application/json',
+      token: this.token(),
     });
   }
 }

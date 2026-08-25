@@ -12,6 +12,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { SttService } from './stt.service';
 import { TtsService } from './tts.service';
+import { DEFAULT_VOICE_CONFIG } from './voice.config';
 
 interface AudioUpload {
   buffer: Buffer;
@@ -32,6 +33,11 @@ export class VoiceController {
   @Get('tts-status')
   ttsStatus() {
     return this.tts.getStatus();
+  }
+
+  @Get('config')
+  voiceConfig() {
+    return DEFAULT_VOICE_CONFIG;
   }
 
   @Post('synthesize')

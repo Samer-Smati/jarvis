@@ -3,15 +3,18 @@ import { ConfigService } from '@nestjs/config';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BrainBlobStore } from './brain-blob.store';
+import { BrainOpsPauseService } from './brain-ops-pause.service';
+import { isMetaComplaintForFiling, isMetaFactPageTitle } from './brain-ops.util';
 import { BrainPgStore } from './brain-pg.store';
 import { createSeedVault } from './brain.seed';
 import { BrainCategory, BrainGraph, BrainGraphEdge, BrainPage, BrainQueryHit, BrainVault } from './brain.types';
 import { cosineSimilarity, EmbeddingService } from '../llm/embedding.service';
+import { JARVIS_ENTITY_PATH, selectUserEntityPage } from './user-entity.util';
+import { filterStaleMemoryHits } from '../memory/memory-hit-filter.util';
 
 const HOT_MAX_CHARS = 2400;
 const LOG_MAX_LINES = 200;
 const JOURNAL_MAX_CHARS = 14000;
-const JARVIS_ENTITY_PATH = 'entities/jarvis.md';
 /** Cosine similarity above which a page is considered semantically relevant to a query. */
 const EMBEDDING_SEARCH_THRESHOLD = 0.35;
 /** Cosine similarity above which two pages are considered related enough to auto-link. */
@@ -24,6 +27,38 @@ export interface IngestUrlResult {
   excerpt: string;
 }
 
+export const BRAIN_REHYDRATE_CONFIRM_PHRASE = 'REHYDRATE_FROM_PG';
+
+export interface BrainRehydratePreview {
+  pgPageCount: number;
+  pgEdgeCount: number;
+  blobEnabled: boolean;
+  blobPageCount: number | null;
+  vaultIsEphemeralSeed: boolean;
+}
+
+export interface BrainRehydrateResult {
+  pgPageCount: number;
+  pgEdgeCount: number;
+  blobPageCount: number;
+  updatedAt: string;
+}
+
+export interface BrainVaultStats {
+  pageCount: number;
+  edgeCount: number;
+  updatedAt: string;
+  source: 'vault' | 'pg' | 'seed';
+}
+
+export interface BrainCleanupHistoryEntry {
+  at: string;
+  count: number;
+  removed: string[];
+}
+
+export const BRAIN_PRUNE_META_CONFIRM_PHRASE = 'PRUNE_META_FACTS';
+
 @Injectable()
 export class BrainService implements OnModuleInit {
   private readonly logger = new Logger(BrainService.name);
@@ -33,11 +68,13 @@ export class BrainService implements OnModuleInit {
   private vault: BrainVault | null = null;
   private vaultRepaired = false;
   private readonly pendingEmbeds = new Set<string>();
+  private vaultIsEphemeralSeed = false;
 
   constructor(
     config: ConfigService,
     private readonly pgStore: BrainPgStore,
     private readonly embeddings: EmbeddingService,
+    private readonly brainOpsPause: BrainOpsPauseService,
   ) {
     const dataRoot = config.get<string>('DATA_ROOT') ?? join(process.cwd(), 'data');
     this.vaultPath = join(dataRoot, 'brain', 'vault.json');
@@ -98,11 +135,9 @@ export class BrainService implements OnModuleInit {
     }
 
     const vectorHits = await this.pgStore.searchSimilar(query, 3);
-    if (vectorHits.length) {
-      parts.push(
-        '## Semantically similar past conversations\n' +
-          vectorHits.map((h) => h.text.slice(0, 360)).join('\n\n'),
-      );
+    const filteredHits = filterStaleMemoryHits(vectorHits.map((h) => h.text.slice(0, 360)));
+    if (filteredHits.length) {
+      parts.push('## Semantically similar past conversations\n' + filteredHits.join('\n\n'));
     }
 
     if (hits.length) {
@@ -244,26 +279,14 @@ ${content}`;
 
   async findUserEntityPage(): Promise<BrainPage | null> {
     const vault = await this.ensureLoaded();
-    const candidates = Object.values(vault.pages).filter(
-      (p) =>
-        p.category === 'entity' &&
-        p.path !== JARVIS_ENTITY_PATH &&
-        /user|profile|samer|owner|sir/i.test(`${p.title} ${p.path} ${p.content}`),
-    );
-    return candidates.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0] ?? null;
+    return selectUserEntityPage(Object.values(vault.pages));
   }
 
   private findUserEntityPageSync(): BrainPage | null {
     if (!this.vault) {
       return null;
     }
-    const candidates = Object.values(this.vault.pages).filter(
-      (p) =>
-        p.category === 'entity' &&
-        p.path !== JARVIS_ENTITY_PATH &&
-        /user|profile|samer|owner|sir/i.test(`${p.title} ${p.path} ${p.content}`),
-    );
-    return candidates.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0] ?? null;
+    return selectUserEntityPage(Object.values(this.vault.pages));
   }
 
   async linkUserEntityToJarvis(): Promise<string> {
@@ -336,6 +359,13 @@ ${content}`;
    * (shared title/content tokens, known topic hubs). Persists and syncs PG.
    */
   async consolidateLinks(): Promise<{ linked: number; pairs: string[]; edgeCount: number; nodeCount: number }> {
+    await this.brainOpsPause.assertMutationAllowed('consolidate');
+    await this.reloadFromStore();
+    if (this.vaultIsEphemeralSeed) {
+      throw new Error(
+        'Brain vault is unavailable on this instance (durable storage load failed). Try again in a moment.',
+      );
+    }
     const vault = await this.ensureLoaded();
     const pages = Object.values(vault.pages);
     const stop = CONSOLIDATE_STOPWORDS;
@@ -571,7 +601,11 @@ ${content}`;
       HOT_MAX_CHARS,
     );
 
-    if (!shouldAutoLearnTurn(user, assistant)) {
+    const paused = await this.brainOpsPause.isPaused();
+    const skipVaultLearning =
+      paused || !shouldAutoLearnTurn(user, assistant) || isMetaComplaintForFiling(user);
+
+    if (skipVaultLearning) {
       vault.updatedAt = now;
       await this.persist(vault);
       void this.pgStore.indexTurn(user, assistant);
@@ -698,6 +732,103 @@ ${content}`;
     this.markForEmbedding(path);
   }
 
+  async reloadFromStore(): Promise<BrainVault> {
+    this.vault = null;
+    this.vaultRepaired = false;
+    this.vaultIsEphemeralSeed = false;
+    return this.ensureLoaded();
+  }
+
+  async previewRehydrateFromPg(): Promise<BrainRehydratePreview> {
+    const snapshot = await this.pgStore.loadVaultFromPg();
+    let blobPageCount: number | null = null;
+    if (this.blob.enabled()) {
+      const remote = await this.blob.load();
+      blobPageCount = remote ? Object.keys(remote.pages).length : null;
+    }
+    return {
+      pgPageCount: snapshot?.pages.length ?? 0,
+      pgEdgeCount: snapshot?.edgeCount ?? 0,
+      blobEnabled: this.blob.enabled(),
+      blobPageCount,
+      vaultIsEphemeralSeed: this.vaultIsEphemeralSeed,
+    };
+  }
+
+  async rehydrateFromPg(input: {
+    confirm: string;
+    expectedMinPages?: number;
+  }): Promise<BrainRehydrateResult> {
+    await this.brainOpsPause.assertMutationAllowed('rehydrate_from_pg');
+    if (input.confirm !== BRAIN_REHYDRATE_CONFIRM_PHRASE) {
+      throw new Error(
+        `Rehydration refused — confirm must be exactly "${BRAIN_REHYDRATE_CONFIRM_PHRASE}".`,
+      );
+    }
+    if (!this.blob.enabled()) {
+      throw new Error('Rehydration refused — BLOB_READ_WRITE_TOKEN is not configured.');
+    }
+
+    const snapshot = await this.pgStore.loadVaultFromPg();
+    if (!snapshot?.pages.length) {
+      throw new Error('Rehydration refused — Postgres has no brain pages to export.');
+    }
+
+    const minPages = input.expectedMinPages ?? 5;
+    if (snapshot.pages.length < minPages) {
+      throw new Error(
+        `Rehydration refused — Postgres has ${snapshot.pages.length} page(s), below expected minimum ${minPages}.`,
+      );
+    }
+
+    const now = new Date().toISOString();
+    const pageMap: Record<string, BrainPage> = {};
+    for (const page of snapshot.pages) {
+      pageMap[page.path] = page;
+    }
+
+    const vault: BrainVault = {
+      version: 1,
+      hot: `# Hot Cache\n\nLast updated: ${now}\n\nVault rehydrated from PostgreSQL (${snapshot.pages.length} pages, ${snapshot.edgeCount} edges).`,
+      index: '',
+      log: `# Brain Log\n\n- [${now}] rehydrate_from_pg: restored ${snapshot.pages.length} pages from PostgreSQL.\n`,
+      pages: pageMap,
+      updatedAt: now,
+    };
+    this.rebuildIndex(vault);
+
+    this.vault = null;
+    this.vaultRepaired = true;
+    this.vaultIsEphemeralSeed = false;
+    await this.persist(vault);
+
+    const verified = await this.verifyBlobVaultPageCount();
+    if (verified !== snapshot.pages.length) {
+      throw new Error(
+        `Rehydration verification failed — blob has ${verified} page(s), expected ${snapshot.pages.length}.`,
+      );
+    }
+
+    this.logger.warn(
+      `Brain vault rehydrated from PostgreSQL: ${snapshot.pages.length} pages → blob.`,
+    );
+
+    return {
+      pgPageCount: snapshot.pages.length,
+      pgEdgeCount: snapshot.edgeCount,
+      blobPageCount: verified,
+      updatedAt: vault.updatedAt,
+    };
+  }
+
+  async verifyBlobVaultPageCount(): Promise<number> {
+    if (!this.blob.enabled()) {
+      return 0;
+    }
+    const remote = await this.blob.load(false);
+    return remote ? Object.keys(remote.pages).length : 0;
+  }
+
   async listPages(): Promise<BrainPage[]> {
     const vault = await this.ensureLoaded();
     return Object.values(vault.pages).sort(
@@ -705,22 +836,86 @@ ${content}`;
     );
   }
 
+  async getVaultStats(): Promise<BrainVaultStats> {
+    const vault = await this.ensureLoaded();
+    const graph = this.buildGraphFromVault(vault);
+    return {
+      pageCount: graph.nodes.length,
+      edgeCount: graph.edges.length,
+      updatedAt: graph.updatedAt,
+      source: this.vaultIsEphemeralSeed ? 'seed' : 'vault',
+    };
+  }
+
   async getGraph(): Promise<BrainGraph> {
-    const pgGraph = await this.pgStore.loadGraph();
     const vault = await this.ensureLoaded();
     const vaultGraph = this.buildGraphFromVault(vault);
-    // Prefer PG only when it has at least as many edges — weak PG sync must not hide vault wiki links.
-    if (
-      pgGraph &&
-      pgGraph.nodes.length >= vaultGraph.nodes.length &&
-      pgGraph.edges.length >= vaultGraph.edges.length
-    ) {
-      return pgGraph;
+    if (!this.vaultIsEphemeralSeed && vaultGraph.nodes.length > 0) {
+      return this.withGraphCounts({ ...vaultGraph, source: 'vault' });
     }
-    return vaultGraph;
+    const pgGraph = await this.pgStore.loadGraph();
+    if (pgGraph?.nodes.length) {
+      return this.withGraphCounts({ ...pgGraph, source: 'pg' });
+    }
+    return this.withGraphCounts({
+      ...vaultGraph,
+      source: this.vaultIsEphemeralSeed ? 'seed' : 'vault',
+    });
+  }
+
+  private withGraphCounts(graph: BrainGraph): BrainGraph {
+    return {
+      ...graph,
+      pageCount: graph.nodes.length,
+      edgeCount: graph.edges.length,
+    };
+  }
+
+  /** Replace the vault with the seed wiki and persist (blob + disk + PG). */
+  async resetToNewborn(): Promise<{ pageCount: number; updatedAt: string }> {
+    const seeded = createSeedVault();
+    this.vault = seeded;
+    this.vaultIsEphemeralSeed = false;
+    this.vaultRepaired = true;
+    await this.persist(seeded);
+    await this.pgStore.syncVault(seeded);
+    this.logger.warn(`Brain reset to newborn seed (${Object.keys(seeded.pages).length} pages).`);
+    return {
+      pageCount: Object.keys(seeded.pages).length,
+      updatedAt: seeded.updatedAt,
+    };
+  }
+
+  async pruneMetaFactPages(confirm: string): Promise<{ removed: string[]; kept: number }> {
+    if (confirm !== BRAIN_PRUNE_META_CONFIRM_PHRASE) {
+      throw new Error(`Refused — confirm must be exactly "${BRAIN_PRUNE_META_CONFIRM_PHRASE}".`);
+    }
+    const vault = await this.ensureLoaded();
+    const removed: string[] = [];
+    for (const [path, page] of Object.entries(vault.pages)) {
+      if (isMetaFactPageTitle(page.title)) {
+        delete vault.pages[path];
+        removed.push(`${page.title} (${path})`);
+      }
+    }
+    if (removed.length) {
+      this.rebuildIndex(vault);
+      this.appendLog(vault, `prune_meta_facts: removed ${removed.length} page(s)`);
+      vault.updatedAt = new Date().toISOString();
+      await this.persist(vault);
+      void this.pgStore.syncVault(vault);
+    }
+    return { removed, kept: Object.keys(vault.pages).length };
   }
 
   async cleanupVault(): Promise<{ removed: string[]; kept: number }> {
+    await this.brainOpsPause.assertMutationAllowed('cleanup');
+    await this.reloadFromStore();
+    if (this.vaultIsEphemeralSeed) {
+      throw new Error(
+        'Brain vault is unavailable on this instance (durable storage load failed). Try again in a moment.',
+      );
+    }
     const vault = await this.ensureLoaded();
     const removed: string[] = [];
 
@@ -736,7 +931,13 @@ ${content}`;
 
     if (removed.length) {
       this.rebuildIndex(vault);
-      this.appendLog(vault, `cleanup: removed ${removed.length} low-quality page(s)`);
+      const removedSummary = removed.slice(0, 40).join('; ');
+      this.appendLog(
+        vault,
+        removed.length > 0
+          ? `cleanup: removed ${removed.length}: ${removedSummary}${removed.length > 40 ? '…' : ''}`
+          : `cleanup: removed 0 low-quality page(s)`,
+      );
       vault.updatedAt = new Date().toISOString();
       this.repairVault(vault);
       await this.persist(vault);
@@ -744,6 +945,44 @@ ${content}`;
     }
 
     return { removed, kept: Object.keys(vault.pages).length };
+  }
+
+  async getCleanupHistory(): Promise<{ entries: BrainCleanupHistoryEntry[] }> {
+    const vault = await this.ensureLoaded();
+    const entries: BrainCleanupHistoryEntry[] = [];
+    const detailRe = /^- \[(.+?)\] cleanup: removed (\d+): (.+)$/;
+    const countOnlyRe = /^- \[(.+?)\] cleanup: removed (\d+) low-quality page\(s\)$/;
+
+    for (const line of vault.log.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed.includes('cleanup: removed')) {
+        continue;
+      }
+      const detailMatch = trimmed.match(detailRe);
+      if (detailMatch) {
+        const removedRaw = detailMatch[3].replace(/…$/, '');
+        const removed = removedRaw
+          .split(';')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        entries.push({
+          at: detailMatch[1],
+          count: Number(detailMatch[2]),
+          removed,
+        });
+        continue;
+      }
+      const countMatch = trimmed.match(countOnlyRe);
+      if (countMatch) {
+        entries.push({
+          at: countMatch[1],
+          count: Number(countMatch[2]),
+          removed: [],
+        });
+      }
+    }
+
+    return { entries: entries.reverse() };
   }
 
   private buildGraphFromVault(vault: BrainVault): BrainGraph {
@@ -821,11 +1060,15 @@ ${content}`;
     }
 
     if (this.blob.enabled()) {
-      const remote = await this.blob.load();
+      const remote = await this.loadBlobWithRetry();
       if (remote) {
         this.vault = remote;
+        this.vaultIsEphemeralSeed = false;
         return this.afterLoad(remote);
       }
+      this.logger.error(
+        'Brain blob load failed — using in-memory seed only. Will NOT overwrite cloud vault.',
+      );
     }
 
     if (!this.isServerless && existsSync(this.vaultPath)) {
@@ -834,6 +1077,7 @@ ${content}`;
         const parsed = JSON.parse(raw) as BrainVault;
         if (parsed.version === 1) {
           this.vault = parsed;
+          this.vaultIsEphemeralSeed = false;
           return this.afterLoad(parsed);
         }
       } catch {
@@ -843,9 +1087,27 @@ ${content}`;
 
     const seeded = createSeedVault();
     this.vault = seeded;
-    await this.persist(seeded);
+    this.vaultIsEphemeralSeed = this.blob.enabled() || this.isServerless;
+    if (!this.vaultIsEphemeralSeed) {
+      await this.persist(seeded);
+    } else {
+      this.logger.warn('JARVIS brain using ephemeral seed vault — durable storage unavailable.');
+    }
     this.logger.log('JARVIS brain initialized with seed vault.');
     return this.afterLoad(seeded);
+  }
+
+  private async loadBlobWithRetry(attempts = 3): Promise<BrainVault | null> {
+    for (let i = 0; i < attempts; i++) {
+      const remote = await this.blob.load(i > 0 ? false : true);
+      if (remote) {
+        return remote;
+      }
+      if (i < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 120 * (i + 1)));
+      }
+    }
+    return null;
   }
 
   private async afterLoad(vault: BrainVault): Promise<BrainVault> {
@@ -880,7 +1142,7 @@ ${content}`;
       );
     }
 
-    if (this.blob.enabled()) {
+    if (this.blob.enabled() && !this.vaultIsEphemeralSeed) {
       await this.blob.save(vault);
     }
 
@@ -889,7 +1151,9 @@ ${content}`;
       writeFileSync(this.vaultPath, JSON.stringify(vault, null, 2), 'utf8');
     }
 
-    void this.pgStore.syncVault(vault);
+    if (!this.vaultIsEphemeralSeed) {
+      void this.pgStore.syncVault(vault);
+    }
   }
 
   private async searchPages(vault: BrainVault, query: string, limit: number): Promise<BrainQueryHit[]> {
@@ -1085,6 +1349,9 @@ function extractFactsFromUser(text: string): string[] {
 
 function isLowValueForFacts(text: string): boolean {
   const t = text.trim();
+  if (isMetaComplaintForFiling(t)) {
+    return true;
+  }
   if (t.length < 8) {
     return true;
   }
@@ -1108,9 +1375,16 @@ function isLowValueForFacts(text: string): boolean {
 }
 
 function summarizeFactTitle(fact: string): string {
+  if (/\b(?:I am|I'm)\s+(concerned|worried|frustrated|upset|annoyed)\b/i.test(fact)) {
+    return 'User note';
+  }
   const owner = fact.match(/\b(?:I am|I'm|my name is|call me)\s+([^,.!?]+)/i);
   if (owner?.[1]) {
-    return `User: ${owner[1].trim().slice(0, 40)}`;
+    const name = owner[1].trim();
+    if (/^(concerned|worried|frustrated|upset|annoyed)\b/i.test(name)) {
+      return 'User note';
+    }
+    return `User: ${name.slice(0, 40)}`;
   }
   const remember = fact.match(/\b(?:remember that|note that|keep in mind|don't forget)\s+(.+)/i);
   if (remember?.[1]) {
@@ -1162,6 +1436,9 @@ function isProtectedBrainPage(page: BrainPage): boolean {
 
 function isGarbageBrainPage(page: BrainPage): boolean {
   const title = page.title.trim();
+  if (isMetaFactPageTitle(title)) {
+    return true;
+  }
   if (page.category === 'fact') {
     if (title.length > 55) {
       return true;

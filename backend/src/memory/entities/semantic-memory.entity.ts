@@ -1,4 +1,6 @@
-import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import { dateTimeColumnType } from '../../database/database.util';
+import type { MemoryType } from '../memory.types';
 
 @Entity('semantic_memories')
 export class SemanticMemoryEntity {
@@ -8,10 +10,30 @@ export class SemanticMemoryEntity {
   @Column({ type: 'text' })
   text: string;
 
-  // Embedding vector serialized as JSON; swap to pgvector/sqlite-vec for scale.
+  @Column({ type: 'varchar', length: 32, default: 'fact' })
+  memoryType: MemoryType;
+
+  @Column({ type: 'text', nullable: true })
+  source?: string;
+
+  @Column({ type: 'float', default: 1 })
+  confidence: number;
+
+  @Column({ type: 'boolean', default: false })
+  pinned: boolean;
+
+  @Column({ type: dateTimeColumnType(), nullable: true })
+  forgottenAt?: Date;
+
+  @Column({ type: dateTimeColumnType(), nullable: true })
+  lastVerified?: Date;
+
   @Column({ type: 'text', nullable: true })
   embedding?: string;
 
   @CreateDateColumn()
   createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
 }

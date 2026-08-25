@@ -1,6 +1,7 @@
 import { Component, OnInit } from '@angular/core';
 import { MessageService } from 'primeng/api';
 import { ApiService } from '../core/api.service';
+import { ConversationHistoryService } from '../core/conversation-history.service';
 import { SkillInfo, PermissionGrant } from '../core/models';
 import { isDesktopClient } from '../core/platform.util';
 import { isPerformanceMode, setPerformanceMode } from '../core/performance.util';
@@ -52,6 +53,11 @@ export class SettingsComponent implements OnInit {
   isDesktop = isDesktopClient();
   devicePermissions: PermissionGrant[] = [];
   performanceMode = isPerformanceMode();
+  brainOpsPaused = true;
+  brainOpsReason?: string;
+  brainOpsSince?: string;
+  factoryResetConfirm = '';
+  factoryResetBusy = false;
   diagnostics?: {
     uptimeSec: number;
     memoryMb: { rss: number; heapUsed: number };
@@ -65,6 +71,7 @@ export class SettingsComponent implements OnInit {
     private api: ApiService,
     private toast: MessageService,
     private voice: VoiceService,
+    private conversationHistory: ConversationHistoryService,
   ) {
     this.voiceEnabled = voice.enabled;
     this.ttsSupported = voice.ttsSupported;
@@ -86,6 +93,7 @@ export class SettingsComponent implements OnInit {
       },
     });
     this.api.skills().subscribe({ next: (skills) => (this.skills = skills) });
+    this.loadBrainOpsStatus();
     this.loadPermissions();
     this.loadDiagnostics();
     void this.voice.refreshTtsStatus().then((status) => {
@@ -160,6 +168,44 @@ export class SettingsComponent implements OnInit {
     });
   }
 
+  loadBrainOpsStatus(): void {
+    this.api.brainOpsStatus().subscribe({
+      next: (status) => {
+        this.brainOpsPaused = status?.paused !== false;
+        this.brainOpsReason = status?.reason;
+        this.brainOpsSince = status?.since;
+      },
+    });
+  }
+
+  toggleBrainOps(): void {
+    const op = this.brainOpsPaused
+      ? this.api.brainOpsPause('Paused from settings')
+      : this.api.brainOpsResume();
+    op.subscribe({
+      next: (status) => {
+        this.brainOpsPaused = status?.paused !== false;
+        this.brainOpsReason = status?.reason;
+        this.brainOpsSince = status?.since;
+        this.toast.add({
+          severity: 'info',
+          summary: 'Brain operations',
+          detail: this.brainOpsPaused
+            ? 'Cleanup, consolidate, and rehydrate are paused.'
+            : 'Brain operations resumed.',
+        });
+      },
+      error: (err) => {
+        this.brainOpsPaused = !this.brainOpsPaused;
+        this.toast.add({
+          severity: 'error',
+          summary: 'Brain operations',
+          detail: err?.error?.message ?? 'Could not update brain ops status.',
+        });
+      },
+    });
+  }
+
   loadPermissions(): void {
     this.api.permissions().subscribe({
       next: (grants) => (this.devicePermissions = grants ?? []),
@@ -231,6 +277,36 @@ export class SettingsComponent implements OnInit {
           summary: 'Kill switch',
           detail: `${result?.aborted ?? 0} run(s) halted.`,
         }),
+    });
+  }
+
+  runFactoryReset(): void {
+    const confirm = this.factoryResetConfirm.trim();
+    if (confirm !== 'NEWBORN' || this.factoryResetBusy) {
+      return;
+    }
+    this.factoryResetBusy = true;
+    this.api.factoryReset(confirm).subscribe({
+      next: (result) => {
+        const localCleared = this.conversationHistory.clearAllLocal();
+        this.factoryResetBusy = false;
+        this.factoryResetConfirm = '';
+        this.toast.add({
+          severity: 'success',
+          summary: 'Newborn reset',
+          detail: `JARVIS wiped and reseeded (${result.brainPageCount} seed pages). Cleared ${localCleared} local chat(s). Reloading…`,
+          life: 4000,
+        });
+        setTimeout(() => window.location.assign('/'), 1200);
+      },
+      error: (err) => {
+        this.factoryResetBusy = false;
+        this.toast.add({
+          severity: 'error',
+          summary: 'Newborn reset',
+          detail: err?.error?.message ?? 'Factory reset failed.',
+        });
+      },
     });
   }
 }

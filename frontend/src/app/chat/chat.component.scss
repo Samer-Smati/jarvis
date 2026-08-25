@@ -17,6 +17,30 @@
   background: linear-gradient(90deg, var(--jarvis-cyan-faint), transparent 55%);
 }
 
+.brain-ops-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  margin: 0.65rem 1rem 0;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid rgba(255, 180, 60, 0.35);
+  background: rgba(255, 180, 60, 0.08);
+  color: var(--jarvis-text);
+  font-size: 0.88rem;
+  line-height: 1.45;
+
+  i {
+    color: #ffb43c;
+    margin-top: 0.1rem;
+  }
+
+  a {
+    color: var(--jarvis-cyan);
+    text-decoration: none;
+    margin-left: 0.25rem;
+  }
+}
+
 .header-actions {
   display: flex;
   align-items: center;
@@ -272,6 +296,17 @@
     margin-bottom: 0.45rem;
   }
 
+  .queued-badge {
+    display: inline-block;
+    margin-bottom: 0.45rem;
+    margin-left: 0.35rem;
+    font-family: "Orbitron", sans-serif;
+    font-size: 0.52rem;
+    letter-spacing: 0.12em;
+    color: rgba(255, 196, 86, 0.9);
+    text-transform: uppercase;
+  }
+
   .content {
     white-space: pre-wrap;
     word-break: break-word;
@@ -518,6 +553,59 @@
   }
 }
 
+.turn-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.88rem;
+  color: var(--jarvis-cyan);
+  border: 1px solid rgba(23, 209, 255, 0.25);
+  background: rgba(23, 209, 255, 0.06);
+
+  &.error {
+    color: #ffb4a2;
+    border-color: rgba(255, 120, 90, 0.35);
+    background: rgba(255, 80, 60, 0.08);
+  }
+
+  .turn-status-message {
+    flex: 1;
+    line-height: 1.35;
+  }
+
+  .slow-hint {
+    font-size: 0.78rem;
+    color: rgba(255, 196, 86, 0.95);
+    white-space: nowrap;
+  }
+
+  .retry-btn {
+    border: 1px solid rgba(255, 120, 90, 0.45);
+    background: transparent;
+    color: #ffb4a2;
+    border-radius: 3px;
+    padding: 0.25rem 0.65rem;
+    cursor: pointer;
+    font-size: 0.78rem;
+    letter-spacing: 0.06em;
+  }
+}
+
+.connection-hint {
+  font-size: 0.78rem;
+  color: rgba(255, 196, 86, 0.9);
+  padding: 0 0.15rem;
+}
+
+.queue-hint {
+  font-family: "Orbitron", sans-serif;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  color: rgba(255, 196, 86, 0.9);
+  white-space: nowrap;
+}
+
 .pending-images {
   display: flex;
   flex-wrap: wrap;
@@ -755,5 +843,18 @@
 
   .bubble .msg-time {
     font-size: 0.48rem;
+  }
+}
+
+.memory-actions {
+  margin-top: 0.25rem;
+
+  .mem-btn {
+    background: transparent;
+    border: 1px solid rgba(0, 212, 255, 0.2);
+    color: #8ecae6;
+    border-radius: 4px;
+    padding: 0.1rem 0.35rem;
+    cursor: pointer;
   }
 }
