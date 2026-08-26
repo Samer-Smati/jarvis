@@ -46,6 +46,7 @@ export class LlmService implements LlmProvider {
   private readonly readyTtlMs = 30_000;
   private lastServingProvider?: string;
   private lastServingModel?: string;
+  private manuallySelected = false;
 
   constructor(
     config: ConfigService,
@@ -77,6 +78,12 @@ export class LlmService implements LlmProvider {
     return this.active.name;
   }
 
+  /** True once the user has picked a provider via setManualProvider() — task-routing no longer
+   * overrides it. False means the active provider is still just the LLM_PROVIDER env default. */
+  get isManuallySelected(): boolean {
+    return this.manuallySelected;
+  }
+
   get servingProvider(): string | undefined {
     return this.lastServingProvider;
   }
@@ -105,13 +112,28 @@ export class LlmService implements LlmProvider {
     return true;
   }
 
+  /** User explicitly picked this provider (Settings dropdown / POST /api/provider) — sticky
+   * until they pick another one. Distinct from setProvider(), which task-routing also calls for
+   * a single call and reverts afterward; a manual pick must survive that per-call override. */
+  setManualProvider(name: string): boolean {
+    if (!this.setProvider(name)) {
+      return false;
+    }
+    this.manuallySelected = true;
+    return true;
+  }
+
   async chat(options: LlmChatOptions): Promise<LlmChatResult> {
     await this.ensureLocalRuntime();
     const previous = this.active;
-    const providerName = options.route?.provider ?? this.active.name;
+    // A manual pick wins over task-routing's provider choice — it still goes through
+    // chatWithCloudFallback's health checks/cooldowns/auto-failover below, it's just the
+    // preferred first try instead of being silently overridden every turn.
+    const routeProvider = this.manuallySelected ? undefined : options.route?.provider;
+    const providerName = routeProvider ?? this.active.name;
 
-    if (options.route?.provider) {
-      this.setProvider(options.route.provider);
+    if (routeProvider) {
+      this.setProvider(routeProvider);
     }
     try {
       let result: LlmChatResult;
@@ -139,7 +161,7 @@ export class LlmService implements LlmProvider {
       }
       return result;
     } finally {
-      if (options.route?.provider && previous.name !== this.active.name) {
+      if (routeProvider && previous.name !== this.active.name) {
         this.active = previous;
       }
     }

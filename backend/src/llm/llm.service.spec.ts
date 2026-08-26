@@ -165,4 +165,43 @@ describe('LlmService ensureLocalRuntime', () => {
 
     expect(gemini.chat).toHaveBeenCalled();
   });
+
+  it('lets a manually selected provider override task-routing on every subsequent call', async () => {
+    process.env.VERCEL = '1';
+    process.env.JARVIS_SERVERLESS = '1';
+    process.env.GEMINI_API_KEY = 'g';
+    process.env.CLOUDFLARE_API_TOKEN = 'c';
+    process.env.CLOUDFLARE_ACCOUNT_ID = 'a';
+    service.setManualProvider('cloudflare');
+    cloudflare.chat.mockResolvedValue({ content: 'from cloudflare', toolCalls: [] });
+
+    const result = await service.chat({
+      messages: [{ role: 'user', content: 'hi' }],
+      route: { provider: 'gemini' },
+    });
+
+    expect(cloudflare.chat).toHaveBeenCalled();
+    expect(gemini.chat).not.toHaveBeenCalled();
+    expect(result.content).toContain('from cloudflare');
+  });
+
+  it('still auto-fails-over away from a manually selected provider when it errors', async () => {
+    process.env.VERCEL = '1';
+    process.env.JARVIS_SERVERLESS = '1';
+    process.env.GEMINI_API_KEY = 'g';
+    process.env.CLOUDFLARE_API_TOKEN = 'c';
+    process.env.CLOUDFLARE_ACCOUNT_ID = 'a';
+    service.setManualProvider('cloudflare');
+    cloudflare.chat.mockRejectedValue(new Error('Cloudflare request failed (503): overloaded'));
+    gemini.chat.mockResolvedValue({ content: 'from gemini', toolCalls: [] });
+
+    const result = await service.chat({
+      messages: [{ role: 'user', content: 'hi' }],
+      route: { provider: 'gemini' },
+    });
+
+    expect(cloudflare.chat).toHaveBeenCalled();
+    expect(gemini.chat).toHaveBeenCalled();
+    expect(result.content).toContain('from gemini');
+  });
 });
