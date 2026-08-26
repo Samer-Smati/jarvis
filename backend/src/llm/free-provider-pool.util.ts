@@ -4,8 +4,10 @@ import {
   parseRetryAfterMs,
 } from './openai-stream.util';
 
-/** Free-tier cloud LLMs JARVIS rotates between (speed-first, then multimodal, then broad fallback). */
-export const FREE_LLM_PROVIDERS = ['groq', 'gemini', 'openrouter'] as const;
+/** Free-tier cloud LLMs JARVIS rotates between (speed-first, then multimodal, then broad
+ * fallback). cloudflare goes last: a real safety net for when the others are all down/exhausted,
+ * not a default pick — it's a smaller/slower model than the primary providers. */
+export const FREE_LLM_PROVIDERS = ['groq', 'gemini', 'openrouter', 'cloudflare'] as const;
 
 export type FreeLlmProvider = (typeof FREE_LLM_PROVIDERS)[number];
 
@@ -13,6 +15,7 @@ const FREE_PROVIDER_ENV_KEYS: Record<FreeLlmProvider, string> = {
   gemini: 'GEMINI_API_KEY',
   groq: 'GROQ_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
+  cloudflare: 'CLOUDFLARE_API_TOKEN',
 };
 
 const cooldownUntil = new Map<string, number>();
@@ -22,7 +25,14 @@ export function isFreeLlmProvider(name: string): name is FreeLlmProvider {
 }
 
 export function isFreeProviderConfigured(name: FreeLlmProvider): boolean {
-  return Boolean(process.env[FREE_PROVIDER_ENV_KEYS[name]]?.trim());
+  if (!process.env[FREE_PROVIDER_ENV_KEYS[name]]?.trim()) {
+    return false;
+  }
+  // Cloudflare's OpenAI-compatible base URL embeds the account id, so both must be set.
+  if (name === 'cloudflare') {
+    return Boolean(process.env.CLOUDFLARE_ACCOUNT_ID?.trim());
+  }
+  return true;
 }
 
 /** Configured free providers in preferred failover order. */

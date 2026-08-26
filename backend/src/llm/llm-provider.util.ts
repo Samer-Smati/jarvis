@@ -5,6 +5,7 @@ export const SERVERLESS_LLM_PROVIDERS = [
   'groq',
   'xai',
   'claude',
+  'cloudflare',
 ] as const;
 
 export type ServerlessLlmProvider = (typeof SERVERLESS_LLM_PROVIDERS)[number];

@@ -64,4 +64,23 @@ describe('free-provider-pool.util', () => {
     markProviderCooldown('groq', 'empty response');
     expect(isProviderInCooldown('groq')).toBe(true);
   });
+
+  it('requires both CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID before treating cloudflare as configured', () => {
+    process.env.CLOUDFLARE_API_TOKEN = 't';
+    delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    expect(listConfiguredFreeProviders()).not.toContain('cloudflare');
+
+    process.env.CLOUDFLARE_ACCOUNT_ID = 'a';
+    expect(listConfiguredFreeProviders()).toContain('cloudflare');
+  });
+
+  it('puts cloudflare last — a safety net behind groq/gemini/openrouter, not a default pick', () => {
+    process.env.GEMINI_API_KEY = 'g';
+    process.env.GROQ_API_KEY = 'q';
+    process.env.OPENROUTER_API_KEY = 'o';
+    process.env.CLOUDFLARE_API_TOKEN = 't';
+    process.env.CLOUDFLARE_ACCOUNT_ID = 'a';
+
+    expect(listConfiguredFreeProviders()).toEqual(['groq', 'gemini', 'openrouter', 'cloudflare']);
+  });
 });

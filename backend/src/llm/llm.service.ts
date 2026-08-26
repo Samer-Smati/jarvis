@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ClaudeProvider } from './claude.provider';
+import { CloudflareProvider } from './cloudflare.provider';
 import { EnsureLlmService } from './ensure-llm.service';
 import { GeminiProvider } from './gemini.provider';
 import { GroqProvider } from './groq.provider';
@@ -54,6 +55,7 @@ export class LlmService implements LlmProvider {
     gemini: GeminiProvider,
     openrouter: OpenRouterProvider,
     xai: XaiProvider,
+    cloudflare: CloudflareProvider,
     lmstudio: LmStudioProvider,
     private readonly ensureLlm: EnsureLlmService,
   ) {
@@ -64,6 +66,7 @@ export class LlmService implements LlmProvider {
       [gemini.name, gemini],
       [openrouter.name, openrouter],
       [xai.name, xai],
+      [cloudflare.name, cloudflare],
       [lmstudio.name, lmstudio],
     ]);
     const configured = config.get<string>('LLM_PROVIDER') ?? 'ollama';

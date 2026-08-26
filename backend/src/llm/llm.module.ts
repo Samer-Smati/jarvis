@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { ClaudeProvider } from './claude.provider';
+import { CloudflareProvider } from './cloudflare.provider';
 import { EmbeddingService } from './embedding.service';
 import { EnsureLlmService } from './ensure-llm.service';
 import { GroqProvider } from './groq.provider';
@@ -21,6 +22,7 @@ import { TaskRouterService } from './task-router.service';
     GeminiProvider,
     OpenRouterProvider,
     XaiProvider,
+    CloudflareProvider,
     LmStudioProvider,
     EmbeddingService,
     EnsureLlmService,

@@ -19,6 +19,7 @@ export class SettingsComponent implements OnInit {
     { label: 'OpenRouter (many free models)', value: 'openrouter' },
     { label: 'Groq Cloud (free online)', value: 'groq' },
     { label: 'Grok (xAI cloud)', value: 'xai' },
+    { label: 'Cloudflare Workers AI (free online)', value: 'cloudflare' },
     { label: 'LM Studio (local)', value: 'lmstudio' },
     { label: 'Ollama (local)', value: 'ollama' },
     { label: 'Claude API', value: 'claude' },
@@ -28,6 +29,7 @@ export class SettingsComponent implements OnInit {
     { label: 'OpenRouter (many free models)', value: 'openrouter' },
     { label: 'Groq Cloud (free online)', value: 'groq' },
     { label: 'Grok (xAI cloud)', value: 'xai' },
+    { label: 'Cloudflare Workers AI (free online)', value: 'cloudflare' },
     { label: 'Claude API', value: 'claude' },
   ];
   get providers() {
