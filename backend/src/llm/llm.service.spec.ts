@@ -1,6 +1,7 @@
 import { EnsureLlmService } from './ensure-llm.service';
 import { LlmService } from './llm.service';
 import { ClaudeProvider } from './claude.provider';
+import { CloudflareProvider } from './cloudflare.provider';
 import { GroqProvider } from './groq.provider';
 import { GeminiProvider } from './gemini.provider';
 import { OpenRouterProvider } from './openrouter.provider';
@@ -18,6 +19,7 @@ describe('LlmService ensureLocalRuntime', () => {
   let gemini: jest.Mocked<Pick<GeminiProvider, 'name' | 'chat' | 'isReady'>>;
   let openrouter: jest.Mocked<Pick<OpenRouterProvider, 'name' | 'chat' | 'isReady'>>;
   let xai: jest.Mocked<Pick<XaiProvider, 'name' | 'chat' | 'isReady'>>;
+  let cloudflare: jest.Mocked<Pick<CloudflareProvider, 'name' | 'chat' | 'isReady'>>;
   let service: LlmService;
 
   beforeEach(() => {
@@ -60,6 +62,11 @@ describe('LlmService ensureLocalRuntime', () => {
       chat: jest.fn().mockResolvedValue({ content: 'hi', toolCalls: [] }),
       isReady: jest.fn().mockResolvedValue({ ok: true, model: 'grok-3-fast' }),
     };
+    cloudflare = {
+      name: 'cloudflare',
+      chat: jest.fn().mockResolvedValue({ content: 'hi', toolCalls: [] }),
+      isReady: jest.fn().mockResolvedValue({ ok: true, model: '@cf/openai/gpt-oss-120b' }),
+    };
     service = new LlmService(
       { get: () => 'lmstudio' } as never,
       ollama as unknown as OllamaProvider,
@@ -68,6 +75,7 @@ describe('LlmService ensureLocalRuntime', () => {
       gemini as unknown as GeminiProvider,
       openrouter as unknown as OpenRouterProvider,
       xai as unknown as XaiProvider,
+      cloudflare as unknown as CloudflareProvider,
       lmstudio as unknown as LmStudioProvider,
       ensureLlm as unknown as EnsureLlmService,
     );
