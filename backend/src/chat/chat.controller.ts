@@ -36,7 +36,7 @@ export class ChatController {
 
   @Post('provider')
   setProvider(@Body() body: { provider: string }) {
-    if (!this.llm.setProvider(body?.provider)) {
+    if (!this.llm.setManualProvider(body?.provider)) {
       throw new BadRequestException(
         `Unknown provider "${body?.provider}". Available: ${this.llm.available.join(', ')}.`,
       );
@@ -54,6 +54,7 @@ export class ChatController {
     return {
       provider: configuredProvider,
       configuredProvider,
+      manuallySelected: this.llm.isManuallySelected,
       readyProvider,
       servingProvider: servingProvider ?? readyProvider,
       servingModel,
