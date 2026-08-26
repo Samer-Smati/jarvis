@@ -1,8 +1,10 @@
 import { Global, Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { ClaudeProvider } from './claude.provider';
 import { CloudflareProvider } from './cloudflare.provider';
 import { EmbeddingService } from './embedding.service';
 import { EnsureLlmService } from './ensure-llm.service';
+import { LlmSettingEntity } from './entities/llm-setting.entity';
 import { GroqProvider } from './groq.provider';
 import { GeminiProvider } from './gemini.provider';
 import { OpenRouterProvider } from './openrouter.provider';
@@ -15,6 +17,7 @@ import { TaskRouterService } from './task-router.service';
 
 @Global()
 @Module({
+  imports: [TypeOrmModule.forFeature([LlmSettingEntity])],
   providers: [
     OllamaProvider,
     ClaudeProvider,

@@ -1,8 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import type { Repository } from 'typeorm';
 import { ClaudeProvider } from './claude.provider';
 import { CloudflareProvider } from './cloudflare.provider';
 import { EnsureLlmService } from './ensure-llm.service';
+import { LlmSettingEntity } from './entities/llm-setting.entity';
 import { GeminiProvider } from './gemini.provider';
 import { GroqProvider } from './groq.provider';
 import { isServerlessLlmProvider } from './llm-provider.util';
@@ -47,6 +50,9 @@ export class LlmService implements LlmProvider {
   private lastServingProvider?: string;
   private lastServingModel?: string;
   private manuallySelected = false;
+  private manualProviderCache: { at: number; value: string | null } | null = null;
+  private readonly manualProviderTtlMs = 30_000;
+  private static readonly MANUAL_PROVIDER_KEY = 'manual_provider';
 
   constructor(
     config: ConfigService,
@@ -59,6 +65,8 @@ export class LlmService implements LlmProvider {
     cloudflare: CloudflareProvider,
     lmstudio: LmStudioProvider,
     private readonly ensureLlm: EnsureLlmService,
+    @InjectRepository(LlmSettingEntity)
+    private readonly settings: Repository<LlmSettingEntity>,
   ) {
     this.providers = new Map<string, LlmProvider>([
       [ollama.name, ollama],
@@ -114,16 +122,50 @@ export class LlmService implements LlmProvider {
 
   /** User explicitly picked this provider (Settings dropdown / POST /api/provider) — sticky
    * until they pick another one. Distinct from setProvider(), which task-routing also calls for
-   * a single call and reverts afterward; a manual pick must survive that per-call override. */
-  setManualProvider(name: string): boolean {
+   * a single call and reverts afterward; a manual pick must survive that per-call override.
+   * Persisted to the database (not just in-memory) since Vercel can route the next request to a
+   * different serverless instance, which would otherwise silently forget the choice. */
+  async setManualProvider(name: string): Promise<boolean> {
     if (!this.setProvider(name)) {
       return false;
     }
     this.manuallySelected = true;
+    this.manualProviderCache = { at: Date.now(), value: name };
+    await this.settings.upsert(
+      { key: LlmService.MANUAL_PROVIDER_KEY, value: name },
+      ['key'],
+    );
     return true;
   }
 
+  /** Loads the manually selected provider from the database (cached briefly) and applies it to
+   * this instance if it hasn't already been applied — covers a freshly cold-started serverless
+   * instance that never received the original setManualProvider() call. */
+  private async syncManualProviderFromDb(): Promise<void> {
+    if (this.manuallySelected) {
+      return;
+    }
+    if (this.manualProviderCache && Date.now() - this.manualProviderCache.at < this.manualProviderTtlMs) {
+      return;
+    }
+    let value: string | null = null;
+    try {
+      const row = await this.settings.findOne({ where: { key: LlmService.MANUAL_PROVIDER_KEY } });
+      value = row?.value ?? null;
+    } catch (error) {
+      this.logger.warn(`Failed to load persisted provider selection: ${(error as Error).message}`);
+    }
+    this.manualProviderCache = { at: Date.now(), value };
+    if (value && this.setProvider(value)) {
+      this.manuallySelected = true;
+    }
+  }
+
   async chat(options: LlmChatOptions): Promise<LlmChatResult> {
+    // Resolve which provider is actually active (a persisted manual pick from another serverless
+    // instance may override the constructor default) before deciding whether local-runtime-ensure
+    // logic even applies.
+    await this.syncManualProviderFromDb();
     await this.ensureLocalRuntime();
     const previous = this.active;
     // A manual pick wins over task-routing's provider choice — it still goes through
@@ -250,6 +292,7 @@ export class LlmService implements LlmProvider {
   }
 
   async isReady(): Promise<{ ok: boolean; model?: string; error?: string; provider?: string }> {
+    await this.syncManualProviderFromDb();
     if (this.readyCache && Date.now() - this.readyCache.at < this.readyTtlMs) {
       return this.readyCache.value;
     }

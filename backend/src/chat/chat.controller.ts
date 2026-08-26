@@ -35,8 +35,8 @@ export class ChatController {
   ) {}
 
   @Post('provider')
-  setProvider(@Body() body: { provider: string }) {
-    if (!this.llm.setManualProvider(body?.provider)) {
+  async setProvider(@Body() body: { provider: string }) {
+    if (!(await this.llm.setManualProvider(body?.provider))) {
       throw new BadRequestException(
         `Unknown provider "${body?.provider}". Available: ${this.llm.available.join(', ')}.`,
       );

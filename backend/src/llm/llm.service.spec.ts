@@ -20,6 +20,7 @@ describe('LlmService ensureLocalRuntime', () => {
   let openrouter: jest.Mocked<Pick<OpenRouterProvider, 'name' | 'chat' | 'isReady'>>;
   let xai: jest.Mocked<Pick<XaiProvider, 'name' | 'chat' | 'isReady'>>;
   let cloudflare: jest.Mocked<Pick<CloudflareProvider, 'name' | 'chat' | 'isReady'>>;
+  let settings: { findOne: jest.Mock; upsert: jest.Mock };
   let service: LlmService;
 
   beforeEach(() => {
@@ -67,6 +68,10 @@ describe('LlmService ensureLocalRuntime', () => {
       chat: jest.fn().mockResolvedValue({ content: 'hi', toolCalls: [] }),
       isReady: jest.fn().mockResolvedValue({ ok: true, model: '@cf/openai/gpt-oss-120b' }),
     };
+    settings = {
+      findOne: jest.fn().mockResolvedValue(null),
+      upsert: jest.fn().mockResolvedValue(undefined),
+    };
     service = new LlmService(
       { get: () => 'lmstudio' } as never,
       ollama as unknown as OllamaProvider,
@@ -78,6 +83,7 @@ describe('LlmService ensureLocalRuntime', () => {
       cloudflare as unknown as CloudflareProvider,
       lmstudio as unknown as LmStudioProvider,
       ensureLlm as unknown as EnsureLlmService,
+      settings as never,
     );
   });
 
@@ -172,7 +178,7 @@ describe('LlmService ensureLocalRuntime', () => {
     process.env.GEMINI_API_KEY = 'g';
     process.env.CLOUDFLARE_API_TOKEN = 'c';
     process.env.CLOUDFLARE_ACCOUNT_ID = 'a';
-    service.setManualProvider('cloudflare');
+    await service.setManualProvider('cloudflare');
     cloudflare.chat.mockResolvedValue({ content: 'from cloudflare', toolCalls: [] });
 
     const result = await service.chat({
@@ -191,7 +197,7 @@ describe('LlmService ensureLocalRuntime', () => {
     process.env.GEMINI_API_KEY = 'g';
     process.env.CLOUDFLARE_API_TOKEN = 'c';
     process.env.CLOUDFLARE_ACCOUNT_ID = 'a';
-    service.setManualProvider('cloudflare');
+    await service.setManualProvider('cloudflare');
     cloudflare.chat.mockRejectedValue(new Error('Cloudflare request failed (503): overloaded'));
     gemini.chat.mockResolvedValue({ content: 'from gemini', toolCalls: [] });
 
@@ -203,5 +209,36 @@ describe('LlmService ensureLocalRuntime', () => {
     expect(cloudflare.chat).toHaveBeenCalled();
     expect(gemini.chat).toHaveBeenCalled();
     expect(result.content).toContain('from gemini');
+  });
+
+  it('persists a manual selection to the database, not just in-memory', async () => {
+    await service.setManualProvider('cloudflare');
+
+    expect(settings.upsert).toHaveBeenCalledWith(
+      { key: 'manual_provider', value: 'cloudflare' },
+      ['key'],
+    );
+  });
+
+  it('picks up a manual selection persisted by a different serverless instance', async () => {
+    // Simulates a fresh cold start: this instance never called setManualProvider() itself, but
+    // the database already has a value from a previous instance/request.
+    process.env.VERCEL = '1';
+    process.env.JARVIS_SERVERLESS = '1';
+    process.env.GEMINI_API_KEY = 'g';
+    process.env.CLOUDFLARE_API_TOKEN = 'c';
+    process.env.CLOUDFLARE_ACCOUNT_ID = 'a';
+    settings.findOne.mockResolvedValue({ key: 'manual_provider', value: 'cloudflare' });
+    cloudflare.chat.mockResolvedValue({ content: 'from cloudflare', toolCalls: [] });
+
+    const result = await service.chat({
+      messages: [{ role: 'user', content: 'hi' }],
+      route: { provider: 'gemini' },
+    });
+
+    expect(settings.findOne).toHaveBeenCalledWith({ where: { key: 'manual_provider' } });
+    expect(cloudflare.chat).toHaveBeenCalled();
+    expect(gemini.chat).not.toHaveBeenCalled();
+    expect(result.content).toContain('from cloudflare');
   });
 });
