@@ -20,7 +20,10 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 
 /**
  * Text embeddings for semantic memory.
- * Cloud (Vercel): Gemini text-embedding-004 (free tier).
+ * Cloud (Vercel): Gemini gemini-embedding-001 (free tier), requested at 768 dimensions to stay
+ * compatible with embeddings already stored from the retired text-embedding-004 model — stored
+ * as plain JSON text (no fixed-dimension DB column), so a dimension change would silently break
+ * cosineSimilarity comparisons against old rows rather than fail loudly.
  * Desktop: Ollama or LM Studio local models.
  */
 @Injectable()
@@ -37,7 +40,7 @@ export class EmbeddingService {
   constructor(config: ConfigService) {
     const llmProvider = config.get<string>('LLM_PROVIDER') ?? 'ollama';
     this.geminiApiKey = config.get<string>('GEMINI_API_KEY')?.trim() ?? '';
-    this.geminiModel = config.get<string>('GEMINI_EMBED_MODEL') ?? 'text-embedding-004';
+    this.geminiModel = config.get<string>('GEMINI_EMBED_MODEL') ?? 'gemini-embedding-001';
     this.provider =
       config.get<string>('EMBED_PROVIDER') ??
       (this.geminiApiKey && isServerlessRuntime()
@@ -104,6 +107,7 @@ export class EmbeddingService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           content: { parts: [{ text: text.slice(0, 8000) }] },
+          outputDimensionality: 768,
         }),
         signal: AbortSignal.timeout(4_000),
       },

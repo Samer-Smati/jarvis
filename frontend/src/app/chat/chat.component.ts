@@ -34,6 +34,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   @ViewChild('scrollPane') scrollPane?: ElementRef<HTMLElement>;
   @ViewChild('bottomAnchor') bottomAnchor?: ElementRef<HTMLElement>;
   @ViewChild('fileInput') fileInput?: ElementRef<HTMLInputElement>;
+  @ViewChild('messageInput') messageInput?: ElementRef<HTMLTextAreaElement>;
 
   messages: ChatMessage[] = [];
   pendingImages: ChatImageAttachment[] = [];
@@ -556,7 +557,15 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.pendingImages = [];
     this.pendingImageFiles.clear();
     this.persistConversation();
-    this.cdr.markForCheck();
+    // detectChanges (not markForCheck) so the textarea clears immediately: under OnPush,
+    // markForCheck only schedules a check for whenever the next tick happens to run, which left
+    // the DOM textarea showing stale text — the next keystroke would then append onto it instead
+    // of replacing it, silently corrupting the next message sent. Also clear the native element
+    // directly as a hard guarantee, independent of ngModel/change-detection timing.
+    if (this.messageInput?.nativeElement) {
+      this.messageInput.nativeElement.value = '';
+    }
+    this.cdr.detectChanges();
     this.scrollToBottom();
     void this.prepareOutbound(requestId, text, images).finally(() => {
       this.sendLock = false;
