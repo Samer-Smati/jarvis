@@ -36,6 +36,11 @@
               {
                 "glob": "**/*",
                 "input": "public"
+              },
+              {
+                "glob": "**/*",
+                "input": "node_modules/@mediapipe/tasks-vision/wasm",
+                "output": "holo-wasm"
               }
             ],
             "styles": [

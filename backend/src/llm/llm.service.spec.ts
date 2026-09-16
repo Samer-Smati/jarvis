@@ -4,6 +4,7 @@ import { ClaudeProvider } from './claude.provider';
 import { CloudflareProvider } from './cloudflare.provider';
 import { GroqProvider } from './groq.provider';
 import { GeminiProvider } from './gemini.provider';
+import { NousProvider } from './nous.provider';
 import { OpenRouterProvider } from './openrouter.provider';
 import { XaiProvider } from './xai.provider';
 import { LmStudioProvider } from './lmstudio.provider';
@@ -18,6 +19,7 @@ describe('LlmService ensureLocalRuntime', () => {
   let groq: jest.Mocked<Pick<GroqProvider, 'name' | 'chat' | 'isReady'>>;
   let gemini: jest.Mocked<Pick<GeminiProvider, 'name' | 'chat' | 'isReady'>>;
   let openrouter: jest.Mocked<Pick<OpenRouterProvider, 'name' | 'chat' | 'isReady'>>;
+  let nous: jest.Mocked<Pick<NousProvider, 'name' | 'chat' | 'isReady'>>;
   let xai: jest.Mocked<Pick<XaiProvider, 'name' | 'chat' | 'isReady'>>;
   let cloudflare: jest.Mocked<Pick<CloudflareProvider, 'name' | 'chat' | 'isReady'>>;
   let settings: { findOne: jest.Mock; upsert: jest.Mock };
@@ -58,6 +60,11 @@ describe('LlmService ensureLocalRuntime', () => {
       chat: jest.fn().mockResolvedValue({ content: 'hi', toolCalls: [] }),
       isReady: jest.fn().mockResolvedValue({ ok: true, model: 'google/gemini-2.0-flash-exp:free' }),
     };
+    nous = {
+      name: 'nous',
+      chat: jest.fn().mockResolvedValue({ content: 'hi', toolCalls: [] }),
+      isReady: jest.fn().mockResolvedValue({ ok: true, model: 'hermes/hermes-4-70b' }),
+    };
     xai = {
       name: 'xai',
       chat: jest.fn().mockResolvedValue({ content: 'hi', toolCalls: [] }),
@@ -79,6 +86,7 @@ describe('LlmService ensureLocalRuntime', () => {
       groq as unknown as GroqProvider,
       gemini as unknown as GeminiProvider,
       openrouter as unknown as OpenRouterProvider,
+      nous as unknown as NousProvider,
       xai as unknown as XaiProvider,
       cloudflare as unknown as CloudflareProvider,
       lmstudio as unknown as LmStudioProvider,

@@ -11,6 +11,7 @@ import { GroqProvider } from './groq.provider';
 import { isServerlessLlmProvider } from './llm-provider.util';
 import { normalizeToolCalls } from '../skills/tool-schema.normalizer';
 import { parseTextToolCallsFromContent, sanitizeUserFacingAssistantText } from './text-tool-call.util';
+import { NousProvider } from './nous.provider';
 import { OpenRouterProvider } from './openrouter.provider';
 import { XaiProvider } from './xai.provider';
 import { LmStudioProvider } from './lmstudio.provider';
@@ -61,6 +62,7 @@ export class LlmService implements LlmProvider {
     groq: GroqProvider,
     gemini: GeminiProvider,
     openrouter: OpenRouterProvider,
+    nous: NousProvider,
     xai: XaiProvider,
     cloudflare: CloudflareProvider,
     lmstudio: LmStudioProvider,
@@ -74,6 +76,7 @@ export class LlmService implements LlmProvider {
       [groq.name, groq],
       [gemini.name, gemini],
       [openrouter.name, openrouter],
+      [nous.name, nous],
       [xai.name, xai],
       [cloudflare.name, cloudflare],
       [lmstudio.name, lmstudio],

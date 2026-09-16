@@ -7,7 +7,7 @@ import {
 /** Free-tier cloud LLMs JARVIS rotates between (speed-first, then multimodal, then broad
  * fallback). cloudflare goes last: a real safety net for when the others are all down/exhausted,
  * not a default pick — it's a smaller/slower model than the primary providers. */
-export const FREE_LLM_PROVIDERS = ['groq', 'gemini', 'openrouter', 'cloudflare'] as const;
+export const FREE_LLM_PROVIDERS = ['groq', 'gemini', 'openrouter', 'nous', 'cloudflare'] as const;
 
 export type FreeLlmProvider = (typeof FREE_LLM_PROVIDERS)[number];
 
@@ -15,6 +15,7 @@ const FREE_PROVIDER_ENV_KEYS: Record<FreeLlmProvider, string> = {
   gemini: 'GEMINI_API_KEY',
   groq: 'GROQ_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
+  nous: 'NOUS_API_KEY',
   cloudflare: 'CLOUDFLARE_API_TOKEN',
 };
 
