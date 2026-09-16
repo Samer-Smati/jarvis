@@ -16,7 +16,9 @@ import {
 } from '../core/chat-request.util';
 import { ChatMessage, ChatImageAttachment, ChatImagePayload, ConfirmationRequest, PermissionRequest, ProgressStep, ToolActivity, ActiveTurnStatus } from '../core/models';
 import { TurnStatusService } from '../core/turn-status.service';
+import { Router } from '@angular/router';
 import { BrainGraphService, isBrainGraphRequest, isBrainMutationToolOutput } from '../brain/brain-graph.service';
+import { HoloWorkspaceService, holoCommandFor } from '../holo/state/holo-workspace.service';
 import { VoiceService } from '../core/voice.service';
 import { compressImageForChat } from '../core/image-compress.util';
 
@@ -89,6 +91,8 @@ export class ChatComponent implements OnInit, OnDestroy {
     private toast: MessageService,
     private voice: VoiceService,
     private brainGraph: BrainGraphService,
+    private holoWorkspace: HoloWorkspaceService,
+    private router: Router,
     private turnStatusService: TurnStatusService,
     private cdr: ChangeDetectorRef,
     private zone: NgZone,
@@ -539,6 +543,14 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.lastSendAt = now;
     if (isBrainGraphRequest(text)) {
       this.brainGraph.open();
+    }
+    // Spatial requests ("show me my projects") queue a command for the deck and
+    // navigate there. The message still goes to JARVIS — the deck shows the
+    // entities while the assistant answers about them.
+    const holo = holoCommandFor(text);
+    if (holo) {
+      this.holoWorkspace.send(holo);
+      void this.router.navigate(['/holo']);
     }
     this.voice.stopSpeaking();
     this.voice.stopListening();

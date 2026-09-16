@@ -19,3 +19,24 @@ export interface HoloStateReport {
   card?: string;
   ts: number;
 }
+
+/** Which JARVIS entities the deck is asking for. `brain` is the default vault view. */
+export type HoloSource = 'brain' | 'projects' | 'tasks' | 'memories' | 'events' | 'calendar' | 'all';
+
+/** One entity rendered as a card. Deliberately flat: the deck shows a title, a
+ *  body and whatever metadata the UI wants to echo back, and nothing else. */
+export interface HoloItem {
+  id: string;
+  title: string;
+  body: string;
+  /** Matches the frontend's HoloObjectType. */
+  type: 'note' | 'file' | 'project' | 'task' | 'memory' | 'event' | 'ai-node';
+  metadata?: Record<string, unknown>;
+}
+
+/** A container orb and its cards. */
+export interface HoloWorkspaceGroup {
+  name: string;
+  type: 'folder';
+  items: HoloItem[];
+}
