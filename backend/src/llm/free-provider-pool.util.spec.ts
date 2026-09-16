@@ -19,6 +19,7 @@ describe('free-provider-pool.util', () => {
       'GEMINI_API_KEY',
       'GROQ_API_KEY',
       'OPENROUTER_API_KEY',
+      'NOUS_API_KEY',
       'CLOUDFLARE_API_TOKEN',
       'CLOUDFLARE_ACCOUNT_ID',
       'LLM_PROVIDER',
@@ -46,6 +47,28 @@ describe('free-provider-pool.util', () => {
     process.env.OPENROUTER_API_KEY = 'o';
 
     expect(buildFreeProviderTryOrder('gemini')).toEqual(['gemini', 'groq', 'openrouter']);
+  });
+
+  it('slots nous into the rotation ahead of the cloudflare safety net', () => {
+    process.env.GROQ_API_KEY = 'q';
+    process.env.NOUS_API_KEY = 'n';
+    process.env.CLOUDFLARE_API_TOKEN = 'c';
+    process.env.CLOUDFLARE_ACCOUNT_ID = 'acct';
+
+    expect(listConfiguredFreeProviders()).toEqual(['groq', 'nous', 'cloudflare']);
+  });
+
+  it('omits nous when its key is absent', () => {
+    process.env.GROQ_API_KEY = 'q';
+
+    expect(listConfiguredFreeProviders()).toEqual(['groq']);
+  });
+
+  it('puts nous first when it is the preferred provider', () => {
+    process.env.GROQ_API_KEY = 'q';
+    process.env.NOUS_API_KEY = 'n';
+
+    expect(buildFreeProviderTryOrder('nous')).toEqual(['nous', 'groq']);
   });
 
   it('detects switchable rate-limit and daily quota errors', () => {

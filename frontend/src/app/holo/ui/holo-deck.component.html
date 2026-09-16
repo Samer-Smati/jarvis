@@ -1,0 +1,51 @@
+<div class="holo-shell">
+  <video #video class="holo-cam" playsinline muted [class.live]="session.isActive()"></video>
+  <canvas #overlay class="holo-overlay"></canvas>
+
+  <header class="holo-bar">
+    <a class="btn ghost" routerLink="/">← JARVIS</a>
+    <span class="title">H.O.L.O. HANDS</span>
+    <span class="phase">PHASE 1 · TRACKING</span>
+  </header>
+
+  <div class="holo-controls">
+    <button
+      class="btn"
+      type="button"
+      [class.on]="session.isActive()"
+      (click)="toggle()"
+      [disabled]="busy()"
+    >
+      HANDS: {{ session.isActive() ? 'ON' : 'OFF' }}
+    </button>
+    <button class="btn" type="button" [class.on]="showDebug()" (click)="showDebug.set(!showDebug())">
+      DEBUG
+    </button>
+  </div>
+
+  @if (session.lastError(); as error) {
+    <div class="holo-error" role="alert">
+      <b>Camera unavailable</b>
+      <p>{{ error }}</p>
+      <p class="hint">JARVIS keeps running — this only affects hand tracking.</p>
+    </div>
+  }
+
+  @if (showDebug()) {
+    <dl class="holo-debug">
+      <div><dt>Camera</dt><dd>{{ session.cameraStatus() }}</dd></div>
+      <div><dt>Tracking</dt><dd>{{ session.trackingStatus() }}</dd></div>
+      <div><dt>FPS</dt><dd>{{ session.fps() }}</dd></div>
+      <div><dt>Hands</dt><dd>{{ session.handCount() }}</dd></div>
+      <div><dt>Left conf.</dt><dd>{{ session.leftConfidence() ?? '—' }}</dd></div>
+      <div><dt>Right conf.</dt><dd>{{ session.rightConfidence() ?? '—' }}</dd></div>
+    </dl>
+  }
+
+  @if (!session.isActive() && !session.lastError()) {
+    <div class="holo-idle">
+      <b>Hand tracking is off</b>
+      <p>Press HANDS to allow the camera. Frames are processed on this machine and never leave it.</p>
+    </div>
+  }
+</div>

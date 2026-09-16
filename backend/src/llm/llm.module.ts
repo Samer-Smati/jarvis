@@ -7,6 +7,7 @@ import { EnsureLlmService } from './ensure-llm.service';
 import { LlmSettingEntity } from './entities/llm-setting.entity';
 import { GroqProvider } from './groq.provider';
 import { GeminiProvider } from './gemini.provider';
+import { NousProvider } from './nous.provider';
 import { OpenRouterProvider } from './openrouter.provider';
 import { XaiProvider } from './xai.provider';
 import { LlmService } from './llm.service';
@@ -24,6 +25,7 @@ import { TaskRouterService } from './task-router.service';
     GroqProvider,
     GeminiProvider,
     OpenRouterProvider,
+    NousProvider,
     XaiProvider,
     CloudflareProvider,
     LmStudioProvider,
