@@ -68,3 +68,5 @@ bundled/
 .cursor/
 .vercel
 .env*
+public-ssh-key
+public-ssh-key.pub

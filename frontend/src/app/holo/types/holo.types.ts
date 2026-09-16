@@ -52,6 +52,7 @@ export const LANDMARK = {
   thumbTip: 4,
   indexMcp: 5,
   indexTip: 8,
+  middleMcp: 9,
   middleTip: 12,
   ringTip: 16,
   pinkyTip: 20,
