@@ -13,6 +13,18 @@ describe('free-provider-pool.util', () => {
 
   beforeEach(() => {
     process.env = { ...env };
+    // .envrc loads backend/.env into the shell, so a developer's real keys would
+    // otherwise leak in and add providers these cases never configured.
+    for (const key of [
+      'GEMINI_API_KEY',
+      'GROQ_API_KEY',
+      'OPENROUTER_API_KEY',
+      'CLOUDFLARE_API_TOKEN',
+      'CLOUDFLARE_ACCOUNT_ID',
+      'LLM_PROVIDER',
+    ]) {
+      delete process.env[key];
+    }
     resetProviderCooldowns();
   });
 

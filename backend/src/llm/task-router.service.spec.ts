@@ -14,7 +14,13 @@ describe('TaskRouterService budget and context caps', () => {
     router = new TaskRouterService();
   });
 
+  afterEach(() => {
+    delete process.env.JARVIS_SERVERLESS;
+  });
+
   it('downgrades to reasoning on serverless when daily budget exceeded with user notice', () => {
+    // Budget downgrade targets 'reasoning' only on serverless; desktop drops to 'quick_qa'.
+    process.env.JARVIS_SERVERLESS = '1';
     router.setBudgetState(600_000);
     const route = router.resolve('refactor orchestrator.service.ts', undefined, 500);
 
