@@ -63,6 +63,84 @@ export interface HoloConfig {
     /** Rotation below this (radians) is treated as noise. */
     rotationDeadzone: number;
   };
+  /** The scene the gestures act on. World units; the renderer matches these. */
+  scene: {
+    /** Half-extent of the interaction plane in world units — the cursor maps onto it. */
+    halfWidth: number;
+    halfHeight: number;
+    /** Camera distance from the z=0 plane. Drives the perspective a hit test must agree with. */
+    focal: number;
+    /** Vertical field of view in radians, shared with the three.js camera. */
+    fov: number;
+    /** Orb and card hit radii in world units. */
+    orbRadius: number;
+    cardRadius: number;
+    /** Ring the folder orbs are arranged on. */
+    ringRadius: number;
+    /** Radius the cards of an opened orb fan out to. */
+    fanRadius: number;
+    /** Depth range objects are spread across, so the ring reads as 3D. */
+    depthSpread: number;
+    /** Extra slack on a hit radius, so a grab does not demand pixel accuracy. */
+    grabTolerance: number;
+    /** A throw converts normalized hand velocity into world units/sec by this factor. */
+    throwScale: number;
+    /** Per-second velocity retention for thrown objects — below 1 they settle. */
+    damping: number;
+    /** Below this speed (world units/sec) a thrown object is parked. */
+    restSpeed: number;
+    /** Seconds a card takes to ease between layout positions. */
+    settleSeconds: number;
+    /** Client-side floor between two state reports for the same event. */
+    reportThrottleMs: number;
+  };
+  /** Responsive grid organization. Rows and columns are derived, never fixed. */
+  grid: {
+    /** Gap between cells, as a multiple of the largest object radius. */
+    spacing: number;
+    /** Fraction of the interaction plane the grid is allowed to fill. */
+    fill: number;
+    /** Aspect the solver biases towards when choosing rows vs columns. */
+    targetAspect: number;
+  };
+  /** Proximity response — the hand approaching an object before touching it. */
+  proximity: {
+    /** World-unit radius within which an object starts responding to the hand. */
+    radius: number;
+    /** How far the nearest object leans towards the hand, in world units. */
+    lean: number;
+    /** Extra scale at closest approach. */
+    swell: number;
+  };
+  /** Mouse/keyboard fallback. Pointer input is translated into gesture frames, so
+   *  the scene cannot tell which device drove it. */
+  pointer: {
+    /** Pixels the pointer may drift during a click for it to count as a tap. */
+    tapDrift: number;
+    /** Milliseconds a press may last and still count as a tap. */
+    tapMs: number;
+    /** Two clicks closer together than this are a double pinch. */
+    doubleClickMs: number;
+    /** Wheel notch to zoom factor. */
+    wheelSensitivity: number;
+    /** Pixels/second above which releasing a drag throws the object. */
+    flickVelocity: number;
+  };
+  /** Presentation switches. Everything here may be turned off without breaking
+   *  a single interaction — effects are secondary to usability. */
+  effects: {
+    effectsEnabled: boolean;
+    proximityEnabled: boolean;
+    physicsEnabled: boolean;
+    /** Multiplies every easing rate. 0.5 is languid, 2 is snappy. */
+    animationSpeed: number;
+    /** 0..1 emissive/halo strength. */
+    glowIntensity: number;
+    /** Overlay treatment over the camera feed, 0..1 (the CAM control). */
+    cameraIntensity: number;
+    /** Decorative grabbable props. */
+    propsEnabled: boolean;
+  };
 }
 
 export const HOLO_DEFAULT_CONFIG: HoloConfig = {
@@ -112,6 +190,53 @@ export const HOLO_DEFAULT_CONFIG: HoloConfig = {
     maxZoom: 3.2,
     zoomSensitivity: 1,
     rotationDeadzone: 0.05,
+  },
+  // World units are arbitrary but shared: the hit test and the three.js camera
+  // read the same numbers, so what looks grabbable is what grabs.
+  scene: {
+    halfWidth: 4.8,
+    halfHeight: 2.9,
+    focal: 7.5,
+    fov: 0.8,
+    orbRadius: 0.62,
+    cardRadius: 0.42,
+    ringRadius: 2.9,
+    fanRadius: 1.75,
+    depthSpread: 2.4,
+    // A hand held still still wanders a few millimetres; without slack the user
+    // has to chase the orb rather than reach for it.
+    grabTolerance: 0.35,
+    throwScale: 3.2,
+    damping: 0.12,
+    restSpeed: 0.05,
+    settleSeconds: 0.28,
+    reportThrottleMs: 400,
+  },
+  grid: {
+    spacing: 2.6,
+    fill: 0.86,
+    targetAspect: 1.6,
+  },
+  proximity: {
+    radius: 1.5,
+    lean: 0.28,
+    swell: 0.18,
+  },
+  pointer: {
+    tapDrift: 6,
+    tapMs: 320,
+    doubleClickMs: 420,
+    wheelSensitivity: 0.0016,
+    flickVelocity: 900,
+  },
+  effects: {
+    effectsEnabled: true,
+    proximityEnabled: true,
+    physicsEnabled: true,
+    animationSpeed: 1,
+    glowIntensity: 0.7,
+    cameraIntensity: 0.55,
+    propsEnabled: true,
   },
 };
 

@@ -28,6 +28,10 @@ export interface HandGesture {
   /** Normalized units per second. */
   velocity: Vec2;
   pinchDistance: number;
+  /** True on the END frame of a pinch that was short and stayed put. The engine
+   *  already separates taps from drags to decide flicks; exposing it stops every
+   *  consumer re-deriving the same thresholds and drifting out of step. */
+  tap: boolean;
   /** True on the frame a second tap lands inside the double-pinch window. */
   double: boolean;
 }
@@ -41,6 +45,10 @@ export interface FlickEvent {
 
 export interface TwoHandState {
   active: boolean;
+  /** Which pose both hands are holding. Per-hand kinds are suppressed while a
+   *  two-hand grip is active, so without this the scene cannot distinguish a
+   *  bimanual pinch (zoom/pan) from a bimanual fist (organize). */
+  kind: GestureKind.PINCH | GestureKind.GRAB | GestureKind.NONE;
   distance: number;
   /** Distance ratio against gesture start — drives zoom. */
   scale: number;
@@ -85,6 +93,7 @@ export function primaryGesture(frame: GestureFrame): HandGesture | null {
 
 export const IDLE_TWO_HAND: TwoHandState = {
   active: false,
+  kind: GestureKind.NONE,
   distance: 0,
   scale: 1,
   midpoint: { x: 0.5, y: 0.5 },

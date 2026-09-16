@@ -1,12 +1,24 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { BrainService } from '../brain/brain.service';
 import { MemoryService } from '../memory/memory.service';
 import { isServerlessRuntime } from '../skills/project-scope.util';
+import { CalendarEventEntity } from '../skills/entities/calendar-event.entity';
+import { ReminderEntity } from '../skills/entities/reminder.entity';
 import { pagesToTree } from './holo.notes.util';
-import type { HoloFolder, HoloStateReport } from './holo.types';
+import type { HoloFolder, HoloSource, HoloStateReport, HoloWorkspaceGroup } from './holo.types';
+import {
+  calendarToGroup,
+  eventsToGroup,
+  memoriesToGroup,
+  pagesToGroups,
+  projectsToGroup,
+  remindersToGroup,
+} from './holo.workspace.util';
 
 /** Shown when the vault is empty, so the deck always has something to open. */
 const EMPTY_TREE: HoloFolder[] = [
@@ -42,6 +54,10 @@ export class HoloService {
     config: ConfigService,
     private readonly brain: BrainService,
     private readonly memory: MemoryService,
+    @InjectRepository(ReminderEntity)
+    private readonly reminders: Repository<ReminderEntity>,
+    @InjectRepository(CalendarEventEntity)
+    private readonly calendarEvents: Repository<CalendarEventEntity>,
   ) {
     const dataRoot = config.get<string>('DATA_ROOT') ?? join(process.cwd(), 'data');
     this.statePath = join(dataRoot, 'holo', 'holo-state.json');
@@ -61,6 +77,56 @@ export class HoloService {
     } catch (error) {
       this.logger.warn(`Holo tree failed, serving placeholder: ${(error as Error).message}`);
       return EMPTY_TREE;
+    }
+  }
+
+  /**
+   * The spatial workspace for one source. Every branch reads through an existing
+   * JARVIS service or repository — the deck is a view, and owns no data of its
+   * own. A source that fails is skipped rather than failing the whole workspace,
+   * so one empty table cannot blank the deck.
+   */
+  async workspace(source: HoloSource): Promise<HoloWorkspaceGroup[]> {
+    const wanted = (s: HoloSource) => source === 'all' || source === s;
+    const groups: HoloWorkspaceGroup[] = [];
+
+    if (wanted('brain')) {
+      groups.push(...(await this.safely('brain', async () => pagesToGroups(await this.brain.listPages(), pagesToTree))));
+    }
+    if (wanted('projects')) {
+      groups.push(...(await this.safely('projects', async () => projectsToGroup(await this.memory.listProjects()))));
+    }
+    if (wanted('tasks')) {
+      groups.push(
+        ...(await this.safely('tasks', async () =>
+          remindersToGroup(await this.reminders.find({ where: { fired: false } })),
+        )),
+      );
+    }
+    if (wanted('memories')) {
+      groups.push(...(await this.safely('memories', async () => memoriesToGroup(await this.memory.listFacts()))));
+    }
+    if (wanted('events')) {
+      groups.push(...(await this.safely('events', async () => eventsToGroup(await this.memory.recentEvents(20)))));
+    }
+    if (wanted('calendar')) {
+      groups.push(
+        ...(await this.safely('calendar', async () => calendarToGroup(await this.calendarEvents.find()))),
+      );
+    }
+
+    return groups;
+  }
+
+  private async safely(
+    label: string,
+    load: () => Promise<HoloWorkspaceGroup[]>,
+  ): Promise<HoloWorkspaceGroup[]> {
+    try {
+      return await load();
+    } catch (error) {
+      this.logger.warn(`Holo workspace source "${label}" failed: ${(error as Error).message}`);
+      return [];
     }
   }
 

@@ -136,6 +136,7 @@ export class GestureEngine {
 
     const previous = track.kind;
     let phase = Phase.HOLD;
+    let tap = false;
     let doubleTap = false;
     let flick: FlickEvent | null = null;
 
@@ -151,6 +152,7 @@ export class GestureEngine {
         const wasTap = heldFor <= this.config.gestures.tapMs && travelled <= this.config.gestures.tapDrift;
 
         if (wasTap) {
+          tap = true;
           doubleTap =
             track.lastTapAt !== null && now - track.lastTapAt <= this.config.gestures.doublePinchMs;
           track.lastTapAt = now;
@@ -180,6 +182,7 @@ export class GestureEngine {
         position: grip,
         velocity,
         pinchDistance: pinch,
+        tap,
         double: doubleTap,
       },
       flick,
@@ -304,6 +307,7 @@ export class GestureEngine {
       position: last ? last.point : { x: 0.5, y: 0.5 },
       velocity: { x: 0, y: 0 },
       pinchDistance: 1,
+      tap: false,
       double: false,
     };
   }
@@ -319,6 +323,14 @@ export class GestureEngine {
       this.twoHandOrigin = null;
       return { ...IDLE_TWO_HAND };
     }
+
+    // Both fists is a different intent from both pinches; a mixed grip is
+    // ambiguous and stays unclassified rather than guessing at one of them.
+    const kind = engaged.every((g) => g.kind === GestureKind.GRAB)
+      ? GestureKind.GRAB
+      : engaged.every((g) => g.kind === GestureKind.PINCH)
+        ? GestureKind.PINCH
+        : GestureKind.NONE;
 
     const distance = m.twoHandDistance(left.landmarks, right.landmarks);
     const angle = m.twoHandAngle(left.landmarks, right.landmarks);
@@ -345,6 +357,7 @@ export class GestureEngine {
 
     return {
       active: true,
+      kind,
       distance,
       scale,
       midpoint: centre,

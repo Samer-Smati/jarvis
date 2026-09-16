@@ -1,6 +1,8 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { HoloService } from './holo.service';
-import type { HoloFolder, HoloStateReport } from './holo.types';
+import type { HoloFolder, HoloSource, HoloStateReport, HoloWorkspaceGroup } from './holo.types';
+
+const SOURCES: HoloSource[] = ['brain', 'projects', 'tasks', 'memories', 'events', 'calendar', 'all'];
 
 interface HoloStateBody {
   event?: unknown;
@@ -18,6 +20,17 @@ export class HoloController {
   @Get('tree')
   tree(): Promise<HoloFolder[]> {
     return this.holo.tree();
+  }
+
+  /**
+   * The spatial workspace for one JARVIS source — what `SHOW_PROJECTS` and its
+   * siblings resolve to. An unrecognised source falls back to the brain vault
+   * rather than erroring: the deck should always have something to show.
+   */
+  @Get('workspace')
+  workspace(@Query('source') source?: string): Promise<HoloWorkspaceGroup[]> {
+    const wanted = SOURCES.includes(source as HoloSource) ? (source as HoloSource) : 'brain';
+    return this.holo.workspace(wanted);
   }
 
   @Get('props')
